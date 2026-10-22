@@ -1,0 +1,11 @@
+# Override: plain HTTP on 8080 (no TLS; no JA4/HTTP2 fingerprints).
+#   docker compose -f docker-compose.yml -f compose.plain.yml up -d
+services:
+  api:
+    environment:
+      NAZR_TLS_MODE: plain
+      NAZR_LISTEN_ADDR: ":8080"
+      NAZR_HTTP_ADDR: ""
+    ports: !override
+      - "8080:8080"
+      - "127.0.0.1:9090:9090"

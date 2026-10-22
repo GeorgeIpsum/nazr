@@ -1,0 +1,80 @@
+name: nazr
+
+services:
+  certgen:
+    image: alpine/openssl
+    entrypoint: ["/bin/sh", "/certgen.sh"]
+    volumes:
+      - ./certgen.sh:/certgen.sh:ro
+      - certs:/certs
+    restart: "no"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nazr
+      POSTGRES_PASSWORD: nazr
+      POSTGRES_DB: nazr
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nazr -d nazr"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Dev profile only: expose Postgres on localhost.
+  postgres-dev-port:
+    image: alpine/socat
+    profiles: ["dev"]
+    command: ["TCP-LISTEN:5432,fork,reuseaddr", "TCP:postgres:5432"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../../apps/api
+      args:
+        VERSION: ${NAZR_VERSION:-dev}
+    image: nazr-api:${NAZR_VERSION:-dev}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NAZR_DATABASE_URL: ${NAZR_DATABASE_URL:-postgres://nazr:nazr@postgres:5432/nazr?sslmode=disable}
+      NAZR_TLS_MODE: ${NAZR_TLS_MODE:-terminate}
+      NAZR_TLS_CERT_FILE: ${NAZR_TLS_CERT_FILE:-/certs/cert.pem}
+      NAZR_TLS_KEY_FILE: ${NAZR_TLS_KEY_FILE:-/certs/key.pem}
+      NAZR_DATA_DIR: ${NAZR_DATA_DIR:-/data}
+      NAZR_AUTO_MIGRATE: ${NAZR_AUTO_MIGRATE:-true}
+      NAZR_METRICS_ADDR: ${NAZR_METRICS_ADDR:-0.0.0.0:9090}
+      NAZR_LOG_FORMAT: ${NAZR_LOG_FORMAT:-json}
+      NAZR_HTTP_ADDR: ${NAZR_HTTP_ADDR:-:80}
+      NAZR_REDIS_URL: ${NAZR_REDIS_URL:-}
+    ports:
+      - "443:443"
+      - "80:80"
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - certs:/certs:ro
+      - nazrdata:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      certgen:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  certs:
+  pgdata:
+  nazrdata:

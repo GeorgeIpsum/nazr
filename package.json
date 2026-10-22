@@ -11,7 +11,8 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "biome format --write .",
-    "lint:biome": "biome check ."
+    "lint:biome": "biome check .",
+    "smoke:compose": "bash deploy/compose/smoke.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",
