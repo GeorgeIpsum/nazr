@@ -1,18 +1,13 @@
 import getMediaQueries from "./index";
 
 const origMatchMedia = window.matchMedia;
-const origDpr = window.devicePixelRatio;
 
 function mockMatch(truthy: string[]) {
     window.matchMedia = jest.fn((q: string) => ({ matches: truthy.includes(q) })) as any;
 }
-function setDpr(v: number) {
-    Object.defineProperty(window, "devicePixelRatio", { value: v, configurable: true });
-}
 
 afterEach(() => {
     window.matchMedia = origMatchMedia;
-    setDpr(origDpr);
 });
 
 test("resolves null when window.matchMedia is undefined", async () => {
@@ -45,7 +40,6 @@ test("reports 'none' when nothing matches", async () => {
         colorScheme: "none",
         displayMode: "none",
         reducedData: "none",
-        dprBucket: String(Math.round(origDpr * 100) / 100),
     });
 });
 
@@ -67,10 +61,14 @@ test("maps the other features to their matching values", async () => {
     expect(r.reducedData).toBe("no-preference");
 });
 
-test("dprBucket is '2' for DPR 2 and rounds to 2 decimals", async () => {
+test("emits exactly the six media-query keys (no devicePixelRatio signal)", async () => {
     mockMatch([]);
-    setDpr(2);
-    expect(((await getMediaQueries()) as any).dprBucket).toBe("2");
-    setDpr(1.3333333);
-    expect(((await getMediaQueries()) as any).dprBucket).toBe("1.33");
+    expect(Object.keys((await getMediaQueries()) as object).sort()).toEqual([
+        "colorGamut",
+        "colorScheme",
+        "displayMode",
+        "dynamicRange",
+        "reducedData",
+        "videoDynamicRange",
+    ]);
 });

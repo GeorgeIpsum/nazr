@@ -19,7 +19,6 @@ export default async function getMediaQueries(): Promise<componentInterface | nu
             result[key] =
                 values.find((v) => window.matchMedia(`(${feature}: ${v})`).matches) ?? "none";
         }
-        result.dprBucket = String(Math.round((window.devicePixelRatio || 0) * 100) / 100);
         return result;
     } catch {
         return null;
