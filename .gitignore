@@ -1,0 +1,13 @@
+node_modules
+dist
+types
+.turbo
+coverage
+*.log
+.env*
+!.env.example
+apps/api/bin
+apps/api/.data
+deploy/terraform/**/.terraform
+*.tfstate*
+.superpowers/

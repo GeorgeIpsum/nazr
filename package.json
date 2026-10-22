@@ -1,0 +1,21 @@
+{
+  "name": "nazr",
+  "private": true,
+  "packageManager": "pnpm@10.27.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "format": "biome format --write .",
+    "lint:biome": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.2",
+    "turbo": "^2.11.10",
+    "typescript": "^5.9.0"
+  }
+}
