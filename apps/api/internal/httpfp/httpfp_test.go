@@ -82,8 +82,9 @@ func TestComponentJA4HIsCookieFree(t *testing.T) {
 		t.Fatalf("fixture must carry cookies: %s", full)
 	}
 	c := Component(r, order)
-	if c["ja4h"] != parts[0]+"_"+parts[1] || JA4HStable(r, order) != c["ja4h"] {
-		t.Fatalf("component ja4h %v, want %s_%s", c["ja4h"], parts[0], parts[1])
+	stableA := parts[0][:4] + "nn" + parts[0][6:]
+	if c["ja4h"] != stableA+"_"+parts[1] || JA4HStable(r, order) != c["ja4h"] {
+		t.Fatalf("component ja4h %v, want %s_%s", c["ja4h"], stableA, parts[1])
 	}
 	r.Header.Set("Cookie", "session=rotated; _ga=other")
 	if Component(r, order)["ja4h"] != c["ja4h"] {
@@ -91,6 +92,51 @@ func TestComponentJA4HIsCookieFree(t *testing.T) {
 	}
 	if JA4HFull(r, order) == full {
 		t.Fatal("cookie rotation should change the full ja4h")
+	}
+	r.Header.Set("Referer", "https://other.test/page")
+	if Component(r, order)["ja4h"] != c["ja4h"] {
+		t.Fatal("a different referer changed the component ja4h")
+	}
+}
+
+func TestJA4HStableIgnoresCookieAndReferer(t *testing.T) {
+	order := []string{"Host", "User-Agent", "Accept", "Accept-Language"}
+	build := func(cookie, referer bool) (*http.Request, []string) {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Host", "x.test")
+		r.Header.Set("User-Agent", "UA")
+		r.Header.Set("Accept", "*/*")
+		r.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		o := append([]string{}, order...)
+		if cookie {
+			r.Header.Set("Cookie", "a=1; b=2")
+			o = append(o, "Cookie")
+		}
+		if referer {
+			r.Header.Set("Referer", "https://example.com/")
+			o = append(o, "Referer")
+		}
+		return r, o
+	}
+	var stables []string
+	for _, f := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
+		r, o := build(f[0], f[1])
+		s := JA4HStable(r, o)
+		if s[4:6] != "nn" {
+			t.Fatalf("flags not normalized: %q", s)
+		}
+		stables = append(stables, s)
+	}
+	for _, s := range stables[1:] {
+		if s != stables[0] {
+			t.Fatalf("stable forms differ: %v", stables)
+		}
+	}
+	r1, o1 := build(false, false)
+	r4, o4 := build(true, true)
+	f1, f4 := JA4HFull(r1, o1), JA4HFull(r4, o4)
+	if f1 == f4 || f1[4:6] != "nn" || f4[4:6] != "cr" {
+		t.Fatalf("full forms: %q %q", f1, f4)
 	}
 }
 

@@ -126,7 +126,7 @@ There is no `info.country` because no geo source was loaded, and no `tls` or `h2
 
 - `thumbmark`: murmur128 hex hash computed by the server over `merge(client components, filter(server components))`. The filter uses the same stabilization rules as the client; browser-specific rules use the client's `components.system.browser`. The client and server therefore agree on the hash.
 - `components`: the server-observed components, unfiltered. Keys: `tls`, `h2`, `header`, `ip` (see [signals.md](signals.md)). A key is absent when it could not be observed.
-- `components.header.ja4h`: the cookie-free JA4H, `ja4h_a_ja4h_b`. The cookie hashes (`ja4h_c`, `ja4h_d`) change whenever a cookie is set or rotated, so they stay out of the thumbmark; the complete four-part JA4H is stored in `events.ja4h`.
+- `components.header.ja4h`: the cookie-free JA4H, `ja4h_a_ja4h_b`. The cookie hashes (`ja4h_c`, `ja4h_d`) change whenever a cookie is set or rotated, so they stay out of the thumbmark. The stable form also normalizes the cookie-present and referer-present flags in `ja4h_a` to `n`, so the thumbmark does not change when a site sets its first cookie or when the referrer differs. The complete four-part JA4H, with the real flags, is stored in `events.ja4h`.
 - `info.ip_address` and `info.country` are omitted entirely (not zero-valued) when the address or country is unknown. The stock client tolerates both being absent.
 - `info.ip_address.ip_identifier`: first 16 hex characters of `sha256(NAZR_IP_HASH_SALT + address)`, a stable handle for grouping without exposing the address.
 - `info.classification`, `info.signals`: see [signals.md](signals.md). `signals` contains every evaluated signal, true or false.

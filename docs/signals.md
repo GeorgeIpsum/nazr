@@ -23,7 +23,7 @@ A component whose browser API is unavailable is omitted; `privacy` is always pre
 | `header` | always | `ja4h` (cookie-free `ja4h_a_ja4h_b`; see below), `order` (lowercased), `userAgent`, `accept`, `acceptEncoding`, `acceptLanguage` (`raw`, `q`), `clientHints`; absent headers are omitted |
 | `ip` | the client address is known | `address`, `version`, `asn`, `as_org`, `country`, `region`, `city`, `tor`, `vpn`, `datacenter`, `private_relay` |
 
-`header.ja4h` drops JA4H's last two parts, the hashes of cookie names and cookie name=value pairs: a site setting or rotating a cookie would otherwise change the thumbmark of the same browser. The full four-part value is kept in `events.ja4h`. The `a` part still records whether a Cookie or Referer header is present.
+`header.ja4h` drops JA4H's last two parts, the hashes of cookie names and cookie name=value pairs: a site setting or rotating a cookie would otherwise change the thumbmark of the same browser. The full four-part value is kept in `events.ja4h`. The cookie-present and referer-present flags in the `a` part are also normalized to `n`, so the thumbmark does not change when a site sets its first cookie or when the referrer differs; `events.ja4h` keeps the real flags.
 
 `tls` is the same on every connection from the same browser. Chromium permutes its TLS extension order per connection, so `tls.extensions` is sorted (as JA4 does) and JA3, which hashes the wire order, is left out of the component: the server stores the JA3 hash on the event only (`events.ja3_hash`). Session resumption is disabled in `terminate` mode because a resuming ClientHello adds `pre_shared_key` and would change JA4 for returning browsers.
 
