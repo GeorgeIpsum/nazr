@@ -3,8 +3,10 @@ import { hash } from "../../utils/hash";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-function fmt(r: DOMRect): string {
-    return [r.x, r.y, r.width, r.height]
+// Coordinates are emitted relative to the probe container so scroll position,
+// body margin and other page layout cannot change the result.
+function fmt(r: DOMRect, base: DOMRect): string {
+    return [r.x - base.x, r.y - base.y, r.width, r.height]
         .map((n) => (Number.isFinite(n) ? n : 0).toFixed(2))
         .join(",");
 }
@@ -14,7 +16,7 @@ export default async function getClientRects(): Promise<componentInterface | nul
     if (!body) return null;
 
     const container = document.createElement("div");
-    container.style.cssText = "position:absolute; left:-9999px; top:-9999px; visibility:hidden";
+    container.style.cssText = "position:fixed; left:-9999px; top:-9999px; visibility:hidden";
 
     try {
         const box = document.createElement("div");
@@ -46,7 +48,10 @@ export default async function getClientRects(): Promise<componentInterface | nul
         container.append(box, span, rotated, p, svg);
         body.appendChild(container);
 
-        const rects = [box, span, rotated, em, svg].map((el) => fmt(el.getBoundingClientRect()));
+        const base = container.getBoundingClientRect();
+        const rects = [box, span, rotated, em, svg].map((el) =>
+            fmt(el.getBoundingClientRect(), base),
+        );
         return { rects, hash: hash(rects.join("|")) };
     } finally {
         container.remove();
