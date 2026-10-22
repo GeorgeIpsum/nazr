@@ -4,6 +4,8 @@ The compose stack in `deploy/compose` runs nazr, PostgreSQL and a one-shot certi
 
 ## Quick start
 
+Prerequisites: Docker with Compose v2.20 or newer (for `depends_on.required`), plus `curl` and `jq` for the smoke script.
+
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
 pnpm smoke:compose
@@ -15,7 +17,7 @@ The API is then at `https://localhost` (port 443, with a 308 redirect from port 
 docker compose -f deploy/compose/docker-compose.yml exec api /nazr keys create --label mysite
 ```
 
-`pnpm smoke:compose` (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, and then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` and checks `/thumbmark` again.
+`pnpm smoke:compose` (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` checks `/thumbmark` again and asserts Redis holds `nazr:*` keys. It also fails if `permission denied` appears in the API logs. On exit it runs `down -v` on the whole stack; set `KEEP=1` to leave it running for debugging.
 
 ## Profiles
 
@@ -28,7 +30,7 @@ docker compose -f deploy/compose/docker-compose.yml exec api /nazr keys create -
 
 ## Configuration
 
-Compose defaults are inline in `docker-compose.yml`. Copy `deploy/compose/.env.example` to `deploy/compose/.env` and uncomment lines to override them; every `NAZR_*` variable is listed (see [configuration.md](configuration.md)). Set `NAZR_VERSION` to change the image tag and reported version.
+Compose defaults are inline in `docker-compose.yml`. Copy `deploy/compose/.env.example` to `deploy/compose/.env` and uncomment lines to override them; every `NAZR_*` variable is listed (see [configuration.md](configuration.md)). Images are pinned to specific tags (`postgres:17.11-alpine`, `redis:7.4.11-alpine`, `alpine/openssl:3.5.9`, `alpine/socat:1.8.1.3`); bump them deliberately. When `redis` is enabled the API waits for Redis to be healthy. Set `NAZR_VERSION` to change the image tag and reported version.
 
 ## TLS certificate
 

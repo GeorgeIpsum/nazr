@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # End-to-end smoke test for the compose stack. Assumes the stack is already up
 # (docker compose -f deploy/compose/docker-compose.yml up -d --build).
+# The stack is torn down on exit (down -v); KEEP=1 leaves it running.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 ROOT="$(cd ../.. && pwd)"
 BODY="$ROOT/apps/api/testdata/requests/stock-client-body.json"
 COMPOSE=(docker compose -f docker-compose.yml)
+
+for tool in curl jq docker; do
+  command -v "$tool" >/dev/null || { echo "FAIL: required tool not found: $tool" >&2; exit 1; }
+done
+
+cleanup() {
+  if [ "${KEEP:-0}" = 1 ]; then
+    echo "KEEP=1: leaving the stack running"
+  else
+    "${COMPOSE[@]}" --profile redis --profile dev down -v >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 PASSED=0
 fail() { echo "FAIL: $*" >&2; echo "RESULT: FAIL (${PASSED} checks passed before failure)" >&2; exit 1; }
@@ -52,20 +66,22 @@ check_api() {
     ok "[$pass] second visit isNew=false, same visitorId"
     curl -sf http://127.0.0.1:9090/metrics | grep -q nazr_requests_total || fail "[$pass] /metrics lacks nazr_requests_total"
     ok "[$pass] /metrics has nazr_requests_total"
-  else
-    ok "[$pass] /thumbmark 200 with redis limiter and key cache"
   fi
+  if "${COMPOSE[@]}" logs api 2>&1 | grep -q 'permission denied'; then
+    fail "[$pass] 'permission denied' found in API logs"
+  fi
+  ok "[$pass] no 'permission denied' in API logs"
 }
 
 check_api base
 
 echo "--- redis pass ---"
-NAZR_REDIS_URL=redis://redis:6379 "${COMPOSE[@]}" --profile redis up -d
+NAZR_REDIS_URL=redis://redis:6379 "${COMPOSE[@]}" --profile redis up -d >/dev/null 2>&1
 check_api redis
-code=$(curl -sk --http2 -o /dev/null -w '%{http_code}' -X POST https://localhost/thumbmark \
-  -H "x-api-key: $("${COMPOSE[@]}" exec -T api /nazr keys create --label smoke-redis2 | head -n1 | tr -d '\r\n')" \
-  -H 'content-type: application/json' --data-binary "@$BODY")
-[ "$code" = 200 ] || fail "[redis] /thumbmark returned $code"
-ok "[redis] /thumbmark status 200"
+keys=$("${COMPOSE[@]}" exec -T redis redis-cli dbsize | tr -dc '0-9')
+[ "${keys:-0}" -ge 1 ] || fail "[redis] redis dbsize is ${keys:-empty}, expected >= 1"
+ok "[redis] redis dbsize=$keys"
+[ -n "$("${COMPOSE[@]}" exec -T redis redis-cli --scan --pattern 'nazr:*' | head -n1)" ] || fail "[redis] no nazr:* keys in redis"
+ok "[redis] nazr:* keys present"
 
 echo "RESULT: PASS ($PASSED checks)"
