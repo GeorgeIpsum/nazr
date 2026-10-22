@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 // base './' keeps the built dist/ relocatable: it works from /demo/ on the Go
 // server or from any static host.

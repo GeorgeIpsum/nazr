@@ -12,7 +12,8 @@
       window.__stockDone = false;
       new ThumbmarkJS.Thumbmark({
         api_key: q.get("key"),
-        api_endpoint: q.get("endpoint") + "/thumbmark",
+        // origin only: the stock client appends /thumbmark when the pathname is "/"
+        api_endpoint: q.get("endpoint"),
         logging: false,
       })
         .get()

@@ -62,8 +62,8 @@ function panel(title: string, ...children: Child[]): HTMLElement {
 
 function meter(level: number): HTMLElement {
   const m = el("div", { class: "meter", title: `danger_level ${level} / 5` });
-  for (let i = 0; i <= 5; i++) {
-    m.append(el("span", { class: `seg${i <= level && level > 0 ? ` on l${level}` : ""}` }));
+  for (let i = 0; i < 5; i++) {
+    m.append(el("span", { class: `seg${i < level ? ` on l${level}` : ""}` }));
   }
   return m;
 }
@@ -108,13 +108,7 @@ function banner(m: ViewModel): HTMLElement {
       );
     }
   } else if (m.readyzError) {
-    b.append(
-      el(
-        "span",
-        { class: "chip bad" },
-        `readyz unavailable (${m.readyzError})`,
-      ),
-    );
+    b.append(el("span", { class: "chip bad" }, `readyz unavailable (${m.readyzError})`));
   }
   const r = m.result;
   if (r && !r.error?.length && !(r.components as Record<string, unknown>)?.tls) {

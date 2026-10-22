@@ -5,7 +5,7 @@
 - Node 22 (`.node-version`) and pnpm 10
 - Go 1.26
 - Docker (compose smoke test, API tests that start Postgres)
-- Terraform 1.14 and tflint (only for `deploy/terraform`)
+- Terraform ≥ 1.9 (CI uses 1.14.x) and tflint (only for `deploy/terraform`)
 
 ## Commands
 

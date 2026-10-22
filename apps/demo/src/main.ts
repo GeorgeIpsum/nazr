@@ -59,7 +59,8 @@ async function run(): Promise<void> {
   try {
     const tm = new Thumbmark({
       api_key: simple.checked ? undefined : apiKey.value.trim() || undefined,
-      api_endpoint: `${base()}/thumbmark`,
+      // origin only: the client appends /thumbmark, /beacon and /log itself
+      api_endpoint: base(),
       logging: false,
       performance: true,
       cache_api_call: false,

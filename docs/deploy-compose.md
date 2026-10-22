@@ -4,12 +4,14 @@ The compose stack in `deploy/compose` runs nazr, PostgreSQL and a one-shot certi
 
 ## Quick start
 
-Prerequisites: Docker with Compose v2.20 or newer (for `depends_on.required`), plus `curl` and `jq` for the smoke script.
+Prerequisites: Docker with Compose v2.24.4 or newer (for `env_file.required` and the `!override` tag), plus `curl` and `jq` for the smoke script.
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
-curl -sk https://localhost/readyz
+for i in $(seq 30); do curl -skf https://localhost/readyz && break; sleep 1; done
 ```
+
+Compose healthchecks already gate the API: it starts only after PostgreSQL is healthy and the certificate has been generated. `up -d` returns before the API is listening and has migrated, so the loop polls `/readyz` for up to 30 seconds.
 
 The API is then at `https://localhost` (port 443, with a 308 redirect from port 80). Metrics are on `http://127.0.0.1:9090/metrics`, bound to localhost only. Create an API key with:
 
@@ -17,12 +19,12 @@ The API is then at `https://localhost` (port 443, with a 308 redirect from port 
 docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label mysite
 ```
 
-To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack. It tears the stack and its data down on exit (including any key you created); use `KEEP=1 pnpm smoke:compose` to keep it. The script (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` checks `/thumbmark` again and asserts Redis holds `nazr:*` keys. It also fails if `permission denied` appears in the API logs. On exit it runs `down -v` on the whole stack; set `KEEP=1` to leave it running for debugging.
+To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack: one freshly brought up with `up -d --build` for the test. By default (`KEEP=0`) it runs `down -v` on the whole stack on exit, deleting its data and any key you created; `KEEP=1 pnpm smoke:compose` leaves it running for debugging. The script (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` checks `/thumbmark` again and asserts Redis holds `nazr:*` keys. It also fails if `permission denied` appears in the API logs.
 
 ## Profiles
 
 - `dev`: publishes PostgreSQL on `127.0.0.1:5432` (`--profile dev`). Without it, 5432 is not exposed.
-- `redis`: starts `redis:7-alpine`. Set `NAZR_REDIS_URL=redis://redis:6379` to use it for the shared rate limiter and key cache:
+- `redis`: starts `redis:7.4.11-alpine`. Set `NAZR_REDIS_URL=redis://redis:6379` to use it for the shared rate limiter and key cache:
 
   ```bash
   NAZR_REDIS_URL=redis://redis:6379 docker compose -f deploy/compose/docker-compose.yml --profile redis up -d
@@ -55,7 +57,9 @@ To use a real certificate:
 The endpoint is `https://localhost`. The demo (`apps/demo`, a Vite app) calls it from the browser:
 
 ```bash
+pnpm install && pnpm --filter @nazr/thumbmark build    # the demo imports the built client
 KEY=$(docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label demo | head -1)
+echo "$KEY"                      # printed once; paste it into the demo
 pnpm --filter @nazr/demo dev     # http://localhost:5173
 ```
 
