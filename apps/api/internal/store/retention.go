@@ -26,7 +26,7 @@ func (s *Store) Prune(ctx context.Context, eventsBefore, logsBefore time.Time, b
 			}
 			n := tag.RowsAffected()
 			total += n
-			if n == 0 {
+			if n < int64(batch) {
 				break
 			}
 		}

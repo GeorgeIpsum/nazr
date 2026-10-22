@@ -24,11 +24,21 @@ type Store struct {
 
 // Open connects to Postgres and, when redisURL is non-empty, to Redis.
 func Open(ctx context.Context, databaseURL, redisURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("store: parse database url: %w", err)
+	}
+	cfg.MaxConns = 16
+	cfg.MaxConnLifetime = 30 * time.Minute
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: open postgres: %w", err)
 	}
 	s := &Store{pool: pool}
+	if err := s.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("store: ping postgres: %w", err)
+	}
 	if redisURL != "" {
 		opt, err := redis.ParseURL(redisURL)
 		if err != nil {

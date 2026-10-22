@@ -62,6 +62,11 @@ func (s *Store) RecordVisit(ctx context.Context, keyID, visitorID, thumbmark str
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Serialize count recomputation per (key, thumbmark); taken before the
+	// visitor row lock so lock ordering is consistent.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, keyID, thumbmark); err != nil {
+		return 0, 0, err
+	}
 	// Lock the visitor row to serialize concurrent visits of the same visitor.
 	var locked string
 	if err := tx.QueryRow(ctx,

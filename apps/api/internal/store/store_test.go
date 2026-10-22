@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -112,6 +113,13 @@ func TestMigrateIdempotent(t *testing.T) {
 	for i := range 2 {
 		if err := s.Migrate(ctx); err != nil {
 			t.Fatalf("migrate #%d: %v", i+1, err)
+		}
+		if v, err := s.MigrationVersion(ctx); err != nil || v != 1 {
+			t.Fatalf("version after #%d: %d %v", i+1, v, err)
+		}
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM api_keys`).Scan(&n); err != nil {
+			t.Fatalf("api_keys: %v", err)
 		}
 	}
 	if err := s.Ping(ctx); err != nil {
@@ -229,6 +237,10 @@ func TestRecordVisitCounts(t *testing.T) {
 	if err != nil || sharing != 2 || total != 2 {
 		t.Fatalf("v2: sharing=%d total=%d err=%v", sharing, total, err)
 	}
+	var distinct int64
+	if err := s.pool.QueryRow(ctx, `SELECT distinct_visitors FROM thumbmark_counts WHERE api_key_id=$1::uuid AND thumbmark='tm'`, k.ID).Scan(&distinct); err != nil || distinct != 2 {
+		t.Fatalf("thumbmark_counts=%d err=%v", distinct, err)
+	}
 	g, _ := s.GetVisitor(ctx, k.ID, v1)
 	if g.RequestCount != 2 {
 		t.Fatalf("request_count=%d", g.RequestCount)
@@ -302,5 +314,45 @@ func TestUAJA4Threshold(t *testing.T) {
 	got, _ = s.UAJA4Families(ctx, "other", 1)
 	if len(got) != 0 {
 		t.Fatalf("other: %v", got)
+	}
+}
+
+func TestRecordVisitConcurrentSharedThumbmark(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	now := time.Now().UTC()
+	const n = 8
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = newID()
+		if _, err := s.CreateVisitor(ctx, k.ID, ids[i], now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	sharing := make([]int64, n)
+	errs := make([]error, n)
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sharing[i], _, errs[i] = s.RecordVisit(ctx, k.ID, ids[i], "tm", now)
+		}()
+	}
+	wg.Wait()
+	var maxSharing int64
+	for i := range ids {
+		if errs[i] != nil {
+			t.Fatalf("visit %d: %v", i, errs[i])
+		}
+		maxSharing = max(maxSharing, sharing[i])
+	}
+	var distinct int64
+	if err := s.pool.QueryRow(ctx, `SELECT distinct_visitors FROM thumbmark_counts WHERE api_key_id=$1::uuid AND thumbmark='tm'`, k.ID).Scan(&distinct); err != nil || distinct != n {
+		t.Fatalf("distinct=%d err=%v", distinct, err)
+	}
+	if maxSharing != n {
+		t.Fatalf("max sharing=%d", maxSharing)
 	}
 }
