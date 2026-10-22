@@ -1,44 +1,96 @@
 # nazr
 
-Browser fingerprinting service: a Go API, a Vite demo, and a forked TypeScript client, in one Turborepo monorepo.
+[![CI](https://github.com/GeorgeIpsum/nazr/actions/workflows/ci.yml/badge.svg)](https://github.com/GeorgeIpsum/nazr/actions/workflows/ci.yml)
 
-## Quick start
+nazr is a self-hostable browser fingerprinting service: a Go API that is wire-compatible with the hosted ThumbmarkJS API, a fork of the ThumbmarkJS client with extra signals, a demo page, and deployment packaging (Docker Compose and an AWS Terraform module). It combines client-side components with what the server observes about the connection itself (TLS ClientHello, HTTP/2 settings, header order, IP intelligence) to produce a stable thumbmark, a visitor id and a bot/danger classification.
 
-From source (needs Go, Node with pnpm, and PostgreSQL):
+## Compatibility promise
 
-```bash
-pnpm install
-pnpm --filter @nazr/api build              # builds apps/api/bin/nazr
-
-export NAZR_DATABASE_URL='postgres://user:pass@localhost:5432/nazr?sslmode=disable'
-export NAZR_TLS_MODE=plain NAZR_LISTEN_ADDR=127.0.0.1:8080 NAZR_DATA_DIR=./data
-
-apps/api/bin/nazr migrate
-apps/api/bin/nazr keys create --label local   # prints the API key once
-apps/api/bin/nazr serve
-```
-
-Then point the client at it:
+The stock `@thumbmarkjs/thumbmarkjs` client works against nazr by setting `api_endpoint` (origin only, no path):
 
 ```ts
-import { Thumbmark } from "@nazr/thumbmark";
+import { Thumbmark } from "@thumbmarkjs/thumbmarkjs";
 
 const tm = new Thumbmark({
-  api_key: "nzr_...",
-  api_endpoint: "http://127.0.0.1:8080",
+  api_key: "your-api-key",
+  api_endpoint: "https://nazr.example.com",
   logging: false,
 });
 console.log(await tm.get());
 ```
 
-`plain` mode is for local development. Production deployments use `terminate` (default) or `proxied`; see the connection modes in [docs/protocol.md](docs/protocol.md#connection-modes-and-fingerprint-capture).
-- Docker Compose: coming in the next plan.
-- Terraform (AWS): coming in the next plan.
+The fork `@nazr/thumbmark` adds self-host defaults, five more components, and `simple_request` for deployments where a proxy injects the key:
 
-## Documentation
+```ts
+import { Thumbmark } from "@nazr/thumbmark";
 
-- [docs/protocol.md](docs/protocol.md): routes, request and response, errors, CORS, TLS modes, client setup
-- [docs/signals.md](docs/signals.md): components, scoring table, signals, IP list sources
+const tm = new Thumbmark({
+  api_endpoint: "https://nazr.example.com",
+  simple_request: true, // no api_key in the browser; the proxy adds it
+  logging: false,
+});
+```
+
+See the [client README](packages/thumbmark/README.md) and [protocol.md](docs/protocol.md).
+
+## Quick start (60 seconds, Docker Compose)
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml up -d --build
+docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label first
+pnpm smoke:compose   # optional: end-to-end check; tears the stack down on exit
+```
+
+The API is at `https://localhost` with a self-signed certificate (use `curl -k`). Key creation prints the key once.
+
+## Deploy
+
+- [Docker Compose](docs/deploy-compose.md): single host, self-signed or ACME certificate, optional Redis
+- [AWS (Terraform)](docs/deploy-aws.md): NLB TCP passthrough, ECS Fargate, RDS, ACME ([module README](deploy/terraform/aws/README.md))
+- [From source](docs/deploy-source.md): Postgres prerequisite, local `plain` mode, a single VM with ACME
+
+## Reference
+
+- [docs/protocol.md](docs/protocol.md): routes, request and response, errors, CORS, connection modes
+- [docs/signals.md](docs/signals.md): components, classification table, IP list sources
 - [docs/configuration.md](docs/configuration.md): every `NAZR_*` variable
-- [packages/thumbmark/README.md](packages/thumbmark/README.md): the `@nazr/thumbmark` client
-- [docs/](docs/): design spec and implementation plans
+
+## Signal status
+
+| Area | Status |
+|---|---|
+| Client components (18) | 13 from upstream (`audio`, `canvas`, `fonts`, `hardware`, `locales`, `math`, `permissions`, `plugins`, `screen`, `speech`, `system`, `webgl`, `webrtc`) plus 5 added by the fork (`webgpu`, `clienthints`, `clientrects`, `mediaqueries`, `privacy`) |
+| TLS | JA4 in the fingerprint; JA3 recorded in events only |
+| HTTP/2 | Akamai-style fingerprint |
+| HTTP headers | JA4H (cookie-free in the fingerprint), header order |
+| IP intelligence | MaxMind geo/ASN, Apple Private Relay, Tor exits, datacenter and VPN lists (v4 and v6); optional FoxIO JA4DB behind a token |
+| Deferred | JA4T/TCP, QUIC/HTTP3, extension detection, Private Access Tokens |
+
+## TLS modes
+
+`NAZR_TLS_MODE` decides what the server can see. Details in [protocol.md](docs/protocol.md#connection-modes-and-fingerprint-capture).
+
+| Mode | Captured | Use when |
+|---|---|---|
+| `terminate` (default) | JA4 (JA3 in events), HTTP/2 fingerprint, header order for HTTP/2 | nazr is the TLS endpoint (NLB passthrough, a VM with ACME, Compose). Full signal set |
+| `proxied` | JA4 from a header (`x-ja4`) only; header order as the proxy forwards it | TLS ends at a proxy that computes and forwards JA4. **The listener must be reachable only through the proxy**: anyone who can connect directly can forge the JA4 header and the client IP |
+| `plain` | HTTP/1.1 header order only | Local development and tests |
+
+## Licensing
+
+The repository is GPL-3.0 ([LICENSE](LICENSE)). `packages/thumbmark` is a fork of [ThumbmarkJS](https://github.com/thumbmarkjs/thumbmarkjs) and carries upstream's MIT notice in [LICENSE.upstream](packages/thumbmark/LICENSE.upstream); the fork's own additions are GPL-3.0.
+
+## Project layout
+
+```
+apps/api/            Go API (cmd/nazr: serve, migrate, keys, lists)
+apps/demo/           Vite demo page; Playwright e2e in e2e/
+packages/thumbmark/  @nazr/thumbmark, the ThumbmarkJS fork
+deploy/compose/      Docker Compose stack and smoke script
+deploy/terraform/aws Terraform module (NLB, ECS Fargate, RDS)
+docs/                protocol, signals, configuration, deploy guides
+docs/superpowers/    design spec and implementation plans
+.github/workflows/   CI and release
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to work on it.
