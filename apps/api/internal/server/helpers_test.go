@@ -31,6 +31,7 @@ import (
 
 type fakeStore struct {
 	mu         sync.Mutex
+	findCalls  int
 	keys       map[string]*store.APIKey // by hash
 	byID       map[string]*store.APIKey
 	events     []store.Event
@@ -69,6 +70,7 @@ func (f *fakeStore) Ping(context.Context) error {
 func (f *fakeStore) FindKeyByHash(_ context.Context, hash string) (*store.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.findCalls++
 	return f.keys[hash], nil
 }
 
@@ -246,6 +248,12 @@ func defaultConfig(t *testing.T) config.Config {
 
 func newEnv(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
 	t.Helper()
+	return newEnvCache(t, mut, nil)
+}
+
+// newEnvCache is newEnv with a key cache wired into the server.
+func newEnvCache(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache) *env {
+	t.Helper()
 	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1,
 		intel: &fakeIntel{
 			lookup: ipintel.Lookup{ASN: 64496, ASOrg: "Example Networks", Country: "US", CountryName: "United States",
@@ -264,7 +272,7 @@ func newEnv(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
 		Cfg: e.cfg, Store: e.store, Intel: e.intel,
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
-		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: nil,
+		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache,
 		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return testNow }, Rand: func() float64 { return e.rand },
 	})
 	return e

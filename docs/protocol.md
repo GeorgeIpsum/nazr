@@ -177,7 +177,7 @@ Because the route is unauthenticated, anyone can seed observations; see the warn
 
 ## `POST /log`
 
-Always 204. The body is discarded unless `NAZR_LOG_RETENTION` is set; then a valid JSON body is stored and pruned on that retention. If a valid, unrevoked `x-api-key` accompanies the request, the log is tied to that key. No authentication is required.
+204, 413 `payload_too_large` for a body over 16 KiB, or 429 `rate_limited` (with `Retry-After`) when the client IP exceeds `NAZR_DEFAULT_RATE_LIMIT` requests per minute, the same per-IP limit as `/beacon`. The body is discarded unless `NAZR_LOG_RETENTION` is set; then a valid JSON body is stored and pruned on that retention. If a valid, unrevoked `x-api-key` accompanies the request, the log is tied to that key; the key is resolved through the same cache as authenticated routes. No authentication is required.
 
 ## Connection modes and fingerprint capture
 
@@ -268,7 +268,7 @@ The implementation is the source of truth where it differs from section 4 of the
 - `info.ip_address` and `info.country` are omitted, not zero-valued, when unknown.
 - `components` in the response are the unfiltered server set. The spec's wording that the client filters them still holds, but the server hashes with `components.system.browser` from the client request, since the server components carry no browser identity.
 - The error code set is larger than the spec lists: `unauthorized`, `key_revoked`, `origin_not_allowed`, `payload_too_large`, `rate_limited`, `store_unavailable`, `internal`, `not_found`, `bad_request`. 503 carries `Retry-After: 2`; 429 carries `Retry-After` in seconds.
-- `/beacon` and `/log` always answer 204 (or 429 for `/beacon`); malformed bodies are ignored rather than rejected.
+- `/beacon` and `/log` answer 204 for malformed bodies rather than rejecting them; both can answer 429, and `/log` answers 413 over 16 KiB.
 - `/readyz` does not check migration currency (spec 4.5 says "migrations current").
 - Wrong method on a known path returns the JSON 404 rather than 405.
 - `collect.source` is `none` (there is no JA4 to report); `header` is never emitted.

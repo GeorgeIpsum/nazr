@@ -45,16 +45,24 @@ func (s *Store) FindVisitorByThumbmark(ctx context.Context, keyID, thumbmark str
 		 ORDER BY t.last_seen DESC LIMIT 1`, keyID, thumbmark, since))
 }
 
-// CreateVisitor inserts a new visitor.
+// CreateVisitor inserts a new visitor and bumps api_keys.visitor_count in
+// the same statement (one transaction).
 func (s *Store) CreateVisitor(ctx context.Context, keyID, id string, now time.Time) (*Visitor, error) {
 	return scanVisitor(s.pool.QueryRow(ctx,
-		`INSERT INTO visitors (id, api_key_id, first_seen, last_seen, request_count)
-		 VALUES ($1, $2::uuid, $3, $3, 0) RETURNING `+visitorCols, id, keyID, now))
+		`WITH v AS (
+		   INSERT INTO visitors (id, api_key_id, first_seen, last_seen, request_count)
+		   VALUES ($1, $2::uuid, $3, $3, 0) RETURNING `+visitorCols+`
+		 ), k AS (
+		   UPDATE api_keys SET visitor_count = visitor_count + 1
+		   WHERE id = $2::uuid AND EXISTS (SELECT 1 FROM v)
+		 )
+		 SELECT `+visitorCols+` FROM v`, id, keyID, now))
 }
 
 // RecordVisit bumps the visitor, upserts its thumbmark row and recomputes the
 // thumbmark's distinct-visitor count, all in one transaction. It returns the
-// number of visitors sharing the thumbmark and the visitor total under the key.
+// number of visitors sharing the thumbmark and the visitor total under the key
+// (api_keys.visitor_count).
 func (s *Store) RecordVisit(ctx context.Context, keyID, visitorID, thumbmark string, now time.Time) (sharing, total int64, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -100,7 +108,7 @@ func (s *Store) RecordVisit(ctx context.Context, keyID, visitorID, thumbmark str
 		return 0, 0, err
 	}
 	if err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM visitors WHERE api_key_id = $1::uuid`, keyID).Scan(&total); err != nil {
+		`SELECT visitor_count FROM api_keys WHERE id = $1::uuid`, keyID).Scan(&total); err != nil {
 		return 0, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {

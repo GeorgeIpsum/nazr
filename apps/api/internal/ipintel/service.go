@@ -79,6 +79,8 @@ const (
 	kindTor     = "tor"
 	kindJA4DB   = "ja4db"
 
+	// retryAfterFailure is the first retry delay after a failed refresh; it
+	// doubles per consecutive failure, capped at the source's Interval.
 	retryAfterFailure = 10 * time.Minute
 )
 
@@ -89,9 +91,10 @@ type entry struct {
 	src  Source // nil for sources skipped at construction
 
 	fetchMu     sync.Mutex // held for a whole refresh; prevents concurrent fetches
-	mu          sync.Mutex // guards status and lastAttempt; held only briefly
+	mu          sync.Mutex // guards status, failures and nextAttempt; held briefly
 	status      SourceStatus
-	lastAttempt time.Time
+	failures    int       // consecutive failed refreshes
+	nextAttempt time.Time // no scheduled refresh before this after a failure
 	tbl         atomic.Pointer[tableHolder]
 }
 
@@ -311,7 +314,7 @@ func (s *Service) tick(ctx context.Context) {
 			now := s.cfg.Now()
 			e.mu.Lock()
 			due := !e.status.FetchedAt.Add(e.src.Interval()).After(now) &&
-				!e.lastAttempt.Add(retryAfterFailure).After(now)
+				!e.nextAttempt.After(now)
 			e.mu.Unlock()
 			if due {
 				_ = s.refresh(ctx, e)
@@ -325,9 +328,6 @@ func (s *Service) tick(ctx context.Context) {
 // e.fetchMu. On failure the previous table stays in place.
 func (s *Service) refresh(ctx context.Context, e *entry) error {
 	name := e.src.Name()
-	e.mu.Lock()
-	e.lastAttempt = s.cfg.Now()
-	e.mu.Unlock()
 	changed, err := e.src.Fetch(ctx, s.cfg.DataDir)
 	if err == nil && (changed || e.table() == nil) {
 		err = s.loadCached(e)
@@ -343,12 +343,30 @@ func (s *Service) refresh(ctx context.Context, e *entry) error {
 	defer e.mu.Unlock()
 	if err != nil {
 		e.status.LastError = err.Error()
-		s.log.Warn("ipintel: refresh failed", "source", name, "err", err)
+		e.failures++
+		delay := backoff(e.failures, e.src.Interval())
+		if throttled(err) {
+			delay = e.src.Interval() // 429/403: the source asked us to stay away
+		}
+		e.nextAttempt = s.cfg.Now().Add(delay)
+		s.log.Warn("ipintel: refresh failed", "source", name, "err", err, "retry_in", delay)
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	e.status.FetchedAt = s.cfg.Now()
 	e.status.LastError = ""
+	e.failures = 0
+	e.nextAttempt = time.Time{}
 	return nil
+}
+
+// backoff is the retry delay after the n-th consecutive failure:
+// retryAfterFailure doubled n-1 times, capped at interval.
+func backoff(n int, interval time.Duration) time.Duration {
+	d := retryAfterFailure
+	for i := 1; i < n && d < interval; i++ {
+		d *= 2
+	}
+	return min(d, interval)
 }
 
 // RefreshAll fetches every source regardless of age, concurrently. A source

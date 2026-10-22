@@ -124,7 +124,7 @@ func (f fetcher) downloadFile(ctx context.Context, dataDir, name, file, url, bea
 		st.FetchedAt = f.now()
 		return false, writeState(dataDir, name, st)
 	case resp.StatusCode != http.StatusOK:
-		return false, fmt.Errorf("%s: unexpected status %d", name, resp.StatusCode)
+		return false, &StatusError{Op: name + ": unexpected status", Code: resp.StatusCode}
 	}
 
 	tmp, err := os.CreateTemp(dataDir, "."+file+"-*.tmp")
@@ -154,3 +154,18 @@ func (f fetcher) downloadFile(ctx context.Context, dataDir, name, file, url, bea
 }
 
 var errEmpty = errors.New("no usable rows")
+
+// StatusError is a non-success HTTP status from a list source. The scheduler
+// treats 429 and 403 as "back off for a full interval".
+type StatusError struct {
+	Op   string // e.g. "tor: unexpected status"
+	Code int
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("%s %d", e.Op, e.Code) }
+
+// throttled reports whether err carries an HTTP 429 or 403.
+func throttled(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && (se.Code == http.StatusTooManyRequests || se.Code == http.StatusForbidden)
+}

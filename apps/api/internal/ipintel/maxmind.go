@@ -121,7 +121,7 @@ func (s *maxmindSource) Fetch(ctx context.Context, dataDir string) (bool, error)
 	}
 	head.Body.Close()
 	if head.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("%s: HEAD status %d", s.edition, head.StatusCode)
+		return false, &StatusError{Op: s.edition + ": HEAD status", Code: head.StatusCode}
 	}
 	lm, lmErr := http.ParseTime(head.Header.Get("Last-Modified"))
 	if haveFile && lmErr == nil && !st.LastModified.IsZero() && !lm.After(st.LastModified) {
@@ -183,7 +183,7 @@ func (s *maxmindSource) download(ctx context.Context, w io.Writer) (string, erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: GET status %d", s.edition, resp.StatusCode)
+		return "", &StatusError{Op: s.edition + ": GET status", Code: resp.StatusCode}
 	}
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
@@ -200,7 +200,7 @@ func (s *maxmindSource) remoteSum(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: sha256 status %d", s.edition, resp.StatusCode)
+		return "", &StatusError{Op: s.edition + ": sha256 status", Code: resp.StatusCode}
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {

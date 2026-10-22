@@ -2,6 +2,7 @@ package ipintel
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -120,5 +121,74 @@ func TestSchedulerStopsOnContextCancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if src.count() != n {
 		t.Error("fetches continued after cancel")
+	}
+}
+
+func TestSchedulerExponentialBackoffCappedAtInterval(t *testing.T) {
+	clk := &clock{t: t0}
+	src := &fakeSource{name: "fake", interval: 6 * time.Hour, err: context.DeadlineExceeded}
+	s := newService(Config{DataDir: t.TempDir(), Now: clk.now})
+	s.add(kindTor, src)
+	ctx := context.Background()
+	s.tick(ctx) // failure 1 at t0: next retry +10m
+	// Each step: just before the delay nothing happens; at the delay one
+	// more fetch fails and the delay doubles, until it reaches the interval.
+	for i, d := range []time.Duration{10 * time.Minute, 20 * time.Minute, 40 * time.Minute, 80 * time.Minute, 160 * time.Minute, 320 * time.Minute, 6 * time.Hour, 6 * time.Hour} {
+		n := src.count()
+		clk.advance(d - time.Second)
+		s.tick(ctx)
+		if src.count() != n {
+			t.Fatalf("step %d: retried before %v", i, d)
+		}
+		clk.advance(time.Second)
+		s.tick(ctx)
+		if src.count() != n+1 {
+			t.Fatalf("step %d: no retry after %v (fetches %d)", i, d, src.count())
+		}
+	}
+	src.mu.Lock()
+	src.err = nil
+	src.mu.Unlock()
+	clk.advance(6 * time.Hour)
+	s.tick(ctx)
+	if st := s.Status()["fake"]; st.LastError != "" {
+		t.Fatalf("not recovered: %+v", st)
+	}
+	// After a success the backoff starts over at 10 minutes.
+	src.mu.Lock()
+	src.err = context.DeadlineExceeded
+	src.mu.Unlock()
+	clk.advance(6 * time.Hour)
+	s.tick(ctx)
+	n := src.count()
+	clk.advance(10 * time.Minute)
+	s.tick(ctx)
+	if src.count() != n+1 {
+		t.Fatal("backoff not reset after success")
+	}
+}
+
+func TestSchedulerThrottledWaitsFullInterval(t *testing.T) {
+	for _, code := range []int{429, 403} {
+		clk := &clock{t: t0}
+		src := &fakeSource{name: "fake", interval: 6 * time.Hour,
+			err: fmt.Errorf("wrapped: %w", &StatusError{Op: "fake: unexpected status", Code: code})}
+		s := newService(Config{DataDir: t.TempDir(), Now: clk.now})
+		s.add(kindTor, src)
+		ctx := context.Background()
+		s.tick(ctx)
+		clk.advance(6*time.Hour - time.Second)
+		s.tick(ctx)
+		if src.count() != 1 {
+			t.Fatalf("%d: retried within the interval (%d fetches)", code, src.count())
+		}
+		clk.advance(time.Second)
+		s.tick(ctx)
+		if src.count() != 2 {
+			t.Fatalf("%d: no retry after the interval", code)
+		}
+		if st := s.Status()["fake"]; st.LastError != fmt.Sprintf("wrapped: fake: unexpected status %d", code) {
+			t.Fatalf("last error %q", st.LastError)
+		}
 	}
 }

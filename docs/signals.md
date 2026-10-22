@@ -89,7 +89,7 @@ Warning: `/beacon` is unauthenticated (it is sent with `sendBeacon`, which canno
 
 ## IP lists
 
-Sources load from `NAZR_DATA_DIR` on boot, so the server serves immediately, and then refresh in the background. Tables are swapped atomically. A failed or invalid download never replaces the cached copy, and the scheduler retries after 10 minutes. Downloads are conditional (`ETag` / `If-Modified-Since`) and parsed before they replace the cached file.
+Sources load from `NAZR_DATA_DIR` on boot, so the server serves immediately, and then refresh in the background. Tables are swapped atomically. A failed or invalid download never replaces the cached copy. The scheduler retries with exponential backoff: 10 minutes after the first failure, doubling per consecutive failure, capped at the source's refresh interval, and reset by a success. An HTTP 429 or 403 from a source defers its next attempt by a full refresh interval at once. Downloads are conditional (`ETag` / `If-Modified-Since`) and parsed before they replace the cached file.
 
 | Source name | URL | Interval | Sets |
 |---|---|---|---|

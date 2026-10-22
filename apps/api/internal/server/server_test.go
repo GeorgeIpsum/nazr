@@ -427,6 +427,55 @@ func TestLogDiscardedByDefault(t *testing.T) {
 	}
 }
 
+func TestLogLimitsAndKeyCache(t *testing.T) {
+	e := newEnvCache(t, func(c *config.Config, _ *fakeStore) {
+		c.LogRetention = 24 * time.Hour
+		c.DefaultRateLimit = 3
+	}, auth.NewKeyCache(time.Minute, nil))
+	send := func(body, key string) int {
+		r := httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(body))
+		r.RemoteAddr = "198.51.100.9:1000"
+		if key != "" {
+			r.Header.Set("x-api-key", key)
+		}
+		return e.do(r).Code
+	}
+	if c := send(`{"a":1}`, e.key); c != 204 {
+		t.Fatalf("first %d", c)
+	}
+	if c := send(`{"a":2}`, e.key); c != 204 {
+		t.Fatalf("second %d", c)
+	}
+	if e.store.findCalls != 1 {
+		t.Fatalf("FindKeyByHash called %d times, want 1 (key cache bypassed)", e.store.findCalls)
+	}
+	if len(e.store.logKeys) != 2 || e.store.logKeys[1] == nil || *e.store.logKeys[1] != keyID {
+		t.Fatalf("log keys %v", e.store.logKeys)
+	}
+	big := `{"a":"` + strings.Repeat("x", 16<<10) + `"}`
+	if c := send(big, ""); c != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized log %d, want 413", c)
+	}
+	if len(e.store.logs) != 2 {
+		t.Fatal("oversized log stored")
+	}
+	if c := send(`{"a":3}`, ""); c != http.StatusTooManyRequests {
+		t.Fatalf("fourth %d, want 429", c)
+	}
+	if c := send(`{}`, "nzr_garbage"); c != http.StatusTooManyRequests || e.store.findCalls != 1 {
+		t.Fatalf("%d / find calls %d", c, e.store.findCalls)
+	}
+}
+
+func TestLogMalformedKeySkipsLookup(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.LogRetention = time.Hour })
+	r := httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(`{}`))
+	r.Header.Set("x-api-key", "not-a-key")
+	if w := e.do(r); w.Code != 204 || e.store.findCalls != 0 || len(e.store.logs) != 1 || e.store.logKeys[0] != nil {
+		t.Fatalf("%d calls=%d logs=%v", w.Code, e.store.findCalls, e.store.logKeys)
+	}
+}
+
 func TestReadyzReportsSources(t *testing.T) {
 	e := newEnv(t, nil)
 	e.intel.status = map[string]ipintel.SourceStatus{

@@ -11,10 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/oklog/ulid/v2"
+	"github.com/pressly/goose/v3"
 	"github.com/testcontainers/testcontainers-go"
 	tcpg "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"nazr/api/migrations"
 )
 
 var (
@@ -107,6 +111,61 @@ func newUnmigrated(t *testing.T) *Store {
 
 func newID() string { return ulid.Make().String() }
 
+// latestMigration is the highest migration in migrations/.
+const latestMigration = 2
+
+func TestVisitorCountBackfillAndIncrement(t *testing.T) {
+	s := newUnmigrated(t)
+	ctx := context.Background()
+	db := stdlib.OpenDBFromPool(s.pool)
+	defer db.Close()
+	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	var keyID string
+	if err := s.pool.QueryRow(ctx, `INSERT INTO api_keys (key_hash, prefix, label) VALUES ('h', 'pppppppp', 'l') RETURNING id::text`).Scan(&keyID); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := s.pool.Exec(ctx, `INSERT INTO visitors (id, api_key_id, first_seen, last_seen, request_count) VALUES ($1, $2::uuid, now(), now(), 0)`, newID(), keyID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int64 {
+		var n int64
+		if err := s.pool.QueryRow(ctx, `SELECT visitor_count FROM api_keys WHERE id = $1::uuid`, keyID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(); n != 3 {
+		t.Fatalf("backfilled visitor_count = %d, want 3", n)
+	}
+	v := newID()
+	if _, err := s.CreateVisitor(ctx, keyID, v, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 4 {
+		t.Fatalf("visitor_count after CreateVisitor = %d, want 4", n)
+	}
+	if _, err := s.CreateVisitor(ctx, keyID, v, time.Now()); err == nil {
+		t.Fatal("duplicate visitor id accepted")
+	}
+	if n := count(); n != 4 {
+		t.Fatalf("failed insert bumped visitor_count to %d", n)
+	}
+	if _, total, err := s.RecordVisit(ctx, keyID, v, "tm", time.Now()); err != nil || total != 4 {
+		t.Fatalf("RecordVisit total = %d, err %v", total, err)
+	}
+}
+
 func TestMigrateIdempotent(t *testing.T) {
 	s := newUnmigrated(t)
 	ctx := context.Background()
@@ -114,7 +173,7 @@ func TestMigrateIdempotent(t *testing.T) {
 		if err := s.Migrate(ctx); err != nil {
 			t.Fatalf("migrate #%d: %v", i+1, err)
 		}
-		if v, err := s.MigrationVersion(ctx); err != nil || v != 1 {
+		if v, err := s.MigrationVersion(ctx); err != nil || v != latestMigration {
 			t.Fatalf("version after #%d: %d %v", i+1, v, err)
 		}
 		var n int

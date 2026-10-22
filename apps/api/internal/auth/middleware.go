@@ -123,6 +123,17 @@ func (c *KeyCache) Invalidate(hash string) {
 	}
 }
 
+// LookupKey resolves a plaintext x-api-key through cache (which may be nil)
+// and r, as Middleware does, without enforcing revocation, origin or rate
+// limits. A malformed or unknown key yields nil, nil.
+func LookupKey(ctx context.Context, cache *KeyCache, r KeyResolver, plain string) (*store.APIKey, error) {
+	plain = strings.TrimSpace(plain)
+	if !keyFormat.MatchString(plain) {
+		return nil, nil
+	}
+	return cache.resolve(ctx, r, HashKey(plain))
+}
+
 // resolve returns the cached key for hash, falling back to Redis and then r.
 // Only existing keys are cached; unknown keys always hit the resolver.
 func (c *KeyCache) resolve(ctx context.Context, r KeyResolver, hash string) (*store.APIKey, error) {
