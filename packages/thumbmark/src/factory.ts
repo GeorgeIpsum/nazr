@@ -19,6 +19,7 @@ import getMath from "./components/math";
 import getMediaQueries from "./components/mediaqueries";
 import getPermissions from "./components/permissions";
 import getPlugins from "./components/plugins";
+import getPrivacy from "./components/privacy";
 import getScreen from "./components/screen";
 import getSpeech from "./components/speech";
 import getSystem from "./components/system";
