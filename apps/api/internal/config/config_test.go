@@ -144,3 +144,45 @@ func TestRedactedHidesSecrets(t *testing.T) {
 		t.Errorf("unset secret = %q, want empty", got)
 	}
 }
+
+func TestValidateRejectsHalfSetCertPairs(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want []string
+	}{
+		{map[string]string{"NAZR_TLS_CERT_PEM": "cert"}, []string{"NAZR_TLS_CERT_PEM", "NAZR_TLS_KEY_PEM", "both or neither"}},
+		{map[string]string{"NAZR_TLS_KEY_PEM": "key"}, []string{"NAZR_TLS_CERT_PEM", "NAZR_TLS_KEY_PEM"}},
+		{map[string]string{"NAZR_TLS_CERT_FILE": "/c.pem"}, []string{"NAZR_TLS_CERT_FILE", "NAZR_TLS_KEY_FILE", "both or neither"}},
+		{map[string]string{"NAZR_TLS_KEY_FILE": "/k.pem"}, []string{"NAZR_TLS_CERT_FILE", "NAZR_TLS_KEY_FILE"}},
+	} {
+		c, err := Load(lookupFrom(tc.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = c.Validate()
+		for _, w := range tc.want {
+			if err == nil || !strings.Contains(err.Error(), w) {
+				t.Errorf("%v: want error containing %q, got %v", tc.env, w, err)
+			}
+		}
+	}
+	c, _ := Load(lookupFrom(map[string]string{"NAZR_TLS_CERT_FILE": "/c.pem", "NAZR_TLS_KEY_FILE": "/k.pem"}))
+	if err := c.Validate(); err != nil {
+		t.Fatalf("full file pair rejected: %v", err)
+	}
+}
+
+func TestACMEDirDefaultsUnderDataDir(t *testing.T) {
+	c, _ := Load(lookupFrom(map[string]string{"NAZR_ACME_DOMAINS": "a.example.com", "NAZR_DATA_DIR": "/srv/nazr"}))
+	if c.ACMEDir != "/srv/nazr/acme" {
+		t.Fatalf("ACMEDir = %q", c.ACMEDir)
+	}
+	c, _ = Load(lookupFrom(map[string]string{"NAZR_ACME_DOMAINS": "a.example.com", "NAZR_ACME_DIR": "/x"}))
+	if c.ACMEDir != "/x" {
+		t.Fatalf("explicit ACMEDir overridden: %q", c.ACMEDir)
+	}
+	c, _ = Load(lookupFrom(nil))
+	if c.ACMEDir != "" {
+		t.Fatalf("ACMEDir set without ACME: %q", c.ACMEDir)
+	}
+}

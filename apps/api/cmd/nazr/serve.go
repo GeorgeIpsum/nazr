@@ -158,7 +158,7 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		return err
 	}
 
-	if !(cfg.TLSMode == "terminate" && cfg.TLSCertPEM == "" && cfg.TLSCertFile != "" && cfg.TLSKeyFile != "") {
+	if !certs.UsesFileCerts(cfg) {
 		// Only the file-based cert watcher handles SIGHUP; otherwise a stray
 		// one would hit Go's default action and kill the server.
 		signal.Ignore(syscall.SIGHUP)

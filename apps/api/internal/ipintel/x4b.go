@@ -6,10 +6,19 @@ import (
 	"time"
 )
 
-const (
-	defaultDatacenterURL = "https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv4.txt"
-	defaultVPNURL        = "https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv4.txt"
+// Default X4BNet lists: IPv4 and IPv6 for each kind.
+var (
+	defaultDatacenterURLs = []string{
+		"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv4.txt",
+		"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv6.txt",
+	}
+	defaultVPNURLs = []string{
+		"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv4.txt",
+		"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv6.txt",
+	}
+)
 
+const (
 	kindDatacenter = "datacenter"
 	kindVPN        = "vpn"
 )

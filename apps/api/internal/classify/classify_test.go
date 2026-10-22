@@ -115,6 +115,35 @@ func TestUATLSMismatch(t *testing.T) {
 	}
 }
 
+func TestUATLSMismatchIOS(t *testing.T) {
+	for _, u := range []string{
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.6478.54 Mobile/15E148 Safari/604.1",
+		"Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/127.0 Mobile/15E148 Safari/605.1.15",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/126.0 Version/17.0 Mobile/15E148 Safari/604.1",
+	} {
+		in := clean()
+		in.UserAgent = u
+		in.JA4Families = []string{"safari"}
+		if Classify(in).Signals["ua_tls_mismatch"] {
+			t.Errorf("iOS browser vs safari corpus flagged: %s", u)
+		}
+		in.JA4Families = []string{"chrome"}
+		if !Classify(in).Signals["ua_tls_mismatch"] {
+			t.Errorf("iOS browser vs chrome-only corpus not flagged: %s", u)
+		}
+	}
+}
+
+func TestCurlObservedH2Pinned(t *testing.T) {
+	// Observed from curl 8.x against `nazr serve` (task-14 smoke).
+	if !slices.Contains(knownAutomationH2, "3:100;4:10485760;2:0|1048510465|0|m,s,a,p") {
+		t.Fatal("observed curl h2 fingerprint missing")
+	}
+	if !slices.Contains(knownAutomationH2, "3:100;4:10485760;2:0|1048510465|0|m,p,a,s") {
+		t.Fatal("documented curl h2 fingerprint missing")
+	}
+}
+
 func TestMissingAcceptLanguage(t *testing.T) {
 	in := clean()
 	in.AcceptLanguagePresent = false

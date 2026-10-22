@@ -139,3 +139,20 @@ func TestACMEConfigBuildsManager(t *testing.T) {
 		t.Fatal("min version")
 	}
 }
+
+func TestUsesFileCerts(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  config.Config
+		want bool
+	}{
+		{config.Config{TLSMode: "terminate", TLSCertFile: "c", TLSKeyFile: "k"}, true},
+		{config.Config{TLSMode: "terminate", TLSCertFile: "c"}, false},
+		{config.Config{TLSMode: "terminate", TLSCertFile: "c", TLSKeyFile: "k", TLSCertPEM: "p", TLSKeyPEM: "q"}, false},
+		{config.Config{TLSMode: "terminate", TLSCertFile: "c", TLSKeyFile: "k", TLSCertPEM: "p"}, true},
+		{config.Config{TLSMode: "plain", TLSCertFile: "c", TLSKeyFile: "k"}, false},
+	} {
+		if got := UsesFileCerts(tc.cfg); got != tc.want {
+			t.Errorf("%+v: got %v want %v", tc.cfg, got, tc.want)
+		}
+	}
+}

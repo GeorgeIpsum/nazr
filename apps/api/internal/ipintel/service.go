@@ -177,9 +177,9 @@ func New(c Config) (*Service, error) {
 	} else {
 		s.add(kindJA4DB, &ja4dbSource{fetcher: f, url: c.JA4DBURL, token: c.JA4DBToken})
 	}
-	lists := func(kind string, urls []string, def string) {
+	lists := func(kind string, urls, def []string) {
 		if len(urls) == 0 {
-			urls = []string{def}
+			urls = def
 		}
 		for i, u := range urls {
 			name := kind
@@ -193,8 +193,8 @@ func New(c Config) (*Service, error) {
 			s.add(kind, &cidrListSource{fetcher: f, kind: kind, name: name, url: u})
 		}
 	}
-	lists(kindDatacenter, c.DatacenterURLs, defaultDatacenterURL)
-	lists(kindVPN, c.VPNURLs, defaultVPNURL)
+	lists(kindDatacenter, c.DatacenterURLs, defaultDatacenterURLs)
+	lists(kindVPN, c.VPNURLs, defaultVPNURLs)
 	return s, nil
 }
 

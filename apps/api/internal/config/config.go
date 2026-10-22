@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -89,6 +90,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			f.Set(reflect.ValueOf(cleanList(f.Interface().([]string))))
 		}
 	}
+	if c.ACMEDir == "" && len(c.ACMEDomains) > 0 {
+		c.ACMEDir = filepath.Join(c.DataDir, "acme")
+	}
 	return c, nil
 }
 
@@ -112,6 +116,12 @@ func (c Config) Validate() error {
 	}
 	if len(c.ACMEDomains) > 0 && (c.TLSCertPEM != "" || c.TLSKeyPEM != "") {
 		errs = append(errs, errors.New("NAZR_ACME_DOMAINS cannot be combined with NAZR_TLS_CERT_PEM/NAZR_TLS_KEY_PEM"))
+	}
+	if (c.TLSCertPEM == "") != (c.TLSKeyPEM == "") {
+		errs = append(errs, errors.New("NAZR_TLS_CERT_PEM and NAZR_TLS_KEY_PEM: set both or neither"))
+	}
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		errs = append(errs, errors.New("NAZR_TLS_CERT_FILE and NAZR_TLS_KEY_FILE: set both or neither"))
 	}
 	switch c.StoreIP {
 	case "raw", "hash":

@@ -53,7 +53,7 @@ Header order is captured per request (each request's own HTTP/2 header block or 
 - `private_relay`: the client IP is in Apple's Private Relay egress list. It contributes 0 danger, following Apple's guidance that relay users are not a threat signal; it only sets `private_relay` and overrides geo.
 - `webdriver`: `components.privacy.webdriver` is `true`.
 - `headless_ua`: the User-Agent contains (case-insensitive) one of `headlesschrome`, `phantomjs`, `electron`, `puppeteer`, `playwright`, `selenium`.
-- `ua_tls_mismatch`: a JA4 is known, the UA family is a browser, and none of the families known for that JA4 matches it. Chromium derivatives (Edge, Opera, Brave, Samsung) collapse onto Chrome. See below.
+- `ua_tls_mismatch`: a JA4 is known, the UA family is a browser, and none of the families known for that JA4 matches it. Chromium derivatives (Edge, Opera, Brave, Samsung) collapse onto Chrome. On iOS and iPadOS (UA contains `iPhone`, `iPad`, `iPod`, `CriOS/`, `FxiOS/` or `EdgiOS/`) every browser uses WebKit and Apple's TLS stack, so the UA is compared as `safari`. See below.
 - `h2_automation`: the request's Akamai HTTP/2 fingerprint is in the automation set. Only `terminate` mode with HTTP/2 can fire it.
 - `missing_accept_language`: no `Accept-Language` header and the UA family is a browser.
 - `timezone_country_mismatch`: the IP country is known, `locales.timezone` maps to one or more countries (from the IANA `zone1970.tab`), and the IP country is not one of them.
@@ -63,12 +63,13 @@ Browser families are `chrome`, `edge`, `firefox`, `safari`, `opera`, `samsung`, 
 
 ### `h2_automation`
 
-The set holds two Akamai-format fingerprints (`settings|window_update|priorities|pseudo_header_order`):
+The set holds three Akamai-format fingerprints (`settings|window_update|priorities|pseudo_header_order`):
 
 | Client | Fingerprint | Source |
 |---|---|---|
 | Go `net/http` (x/net/http2 defaults) | `2:0;4:4194304;5:16384;6:10485760\|1073741824\|0\|a,m,p,s` | Observed in the `internal/conn` test `TestH2ClientGetsTLSAndH2` |
 | curl (nghttp2 defaults) | `3:100;4:10485760;2:0\|1048510465\|0\|m,p,a,s` | Taken from curl/nghttp2 documentation, not observed |
+| curl 8.x (nghttp2) | `3:100;4:10485760;2:0\|1048510465\|0\|m,s,a,p` | Observed from `curl --http2` against `nazr serve` in terminate mode |
 
 Treat the set as a heuristic: it is small, and a client that changes its HTTP/2 settings escapes it.
 
@@ -96,13 +97,13 @@ Sources load from `NAZR_DATA_DIR` on boot, so the server serves immediately, and
 | `GeoLite2-ASN` | `https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz` | 24h | `asn`, `as_org` |
 | `apple` | `https://mask-api.icloud.com/egress-ip-ranges.csv` (`NAZR_APPLE_RELAY_URL`) | 24h | `private_relay`; overrides geo |
 | `tor` | `https://check.torproject.org/torbulkexitlist` (`NAZR_TOR_EXIT_URL`) | 6h | `tor` |
-| `datacenter` | `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv4.txt` (`NAZR_DATACENTER_URLS`) | 24h | `datacenter` |
-| `vpn` | `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv4.txt` (`NAZR_VPN_URLS`) | 24h | `vpn` |
+| `datacenter`, `datacenter-2` | `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv4.txt` and `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/datacenter/ipv6.txt` (`NAZR_DATACENTER_URLS`) | 24h | `datacenter` |
+| `vpn`, `vpn-2` | `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv4.txt` and `https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv6.txt` (`NAZR_VPN_URLS`) | 24h | `vpn` |
 | `ja4db` | none; `NAZR_JA4DB_URL` required | 7d | JA4 to application families |
 
 Notes:
 
-- With more than one URL in `NAZR_DATACENTER_URLS` or `NAZR_VPN_URLS`, sources are named `datacenter`, `datacenter-2`, `datacenter-3`, and likewise for `vpn`.
+- With more than one URL in `NAZR_DATACENTER_URLS` or `NAZR_VPN_URLS` (the defaults have two each: IPv4 then IPv6), sources are named `datacenter`, `datacenter-2`, `datacenter-3`, and likewise for `vpn`. Disabling the kind (`datacenter`, `vpn`) skips all of them.
 - MaxMind needs both `NAZR_MAXMIND_ACCOUNT_ID` and `NAZR_MAXMIND_LICENSE_KEY`; without both the editions are skipped (reported as `no credentials`). Each process downloads at most once per 24 hours per edition, and only when the HEAD `Last-Modified` is newer than the cached copy. The tarball's sha256 is checked against MaxMind's published digest, and on any failure the previous database is kept. MaxMind limits an account to 30 downloads per day, so persist `NAZR_DATA_DIR` on a volume to avoid re-downloading on every restart.
 - The Apple relay CSV overrides MaxMind geo for relay IPs: `country`, `region` and `city` come from Apple, and the country name and continent are cleared if Apple's country differs from MaxMind's. Region formats differ: Apple publishes `GB-EN`, MaxMind `GB-ENG`. Do not compare regions across the two.
 - `NAZR_LISTS_DISABLE` takes source names or kinds (`maxmind`, `apple`, `tor`, `datacenter`, `vpn`, `ja4db`), comma separated, case-insensitive. Disabled sources show `last_error: "disabled"` in `/readyz`.

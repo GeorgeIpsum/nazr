@@ -225,7 +225,7 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
 | Request | Response |
 |---|---|
 | `GET /admin/keys` | 200, array of keys (never secrets) |
-| `POST /admin/keys` body `{"label": "site", "allowed_origins": ["https://example.com"], "rate_limit_per_minute": 120}` | 201, key object including `key`, the plaintext, shown once. `label` is required |
+| `POST /admin/keys` body `{"label": "site", "allowed_origins": ["https://example.com"], "rate_limit_per_minute": 120}` | 201, key object including `key`, the plaintext, shown once. `label` is required. Each `allowed_origins` entry must be `*` or `scheme://host[:port]` (the host may start with `*.`); anything else is a 400 `bad_request` naming the entry |
 | `DELETE /admin/keys/{id}` | 204, or 404 `not_found` |
 
 Revocation takes effect within the key-cache TTL (60 seconds), because the cache is keyed by key hash and is not invalidated on revoke. The same operations are available offline as `nazr keys create|list|revoke`.

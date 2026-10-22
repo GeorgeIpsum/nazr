@@ -41,6 +41,10 @@ func keysCmd(sub string, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "nazr keys create: --rate must be positive")
 			return 2
 		}
+		if err := auth.ValidateOrigins(strings.Split(origins, ",")); err != nil {
+			fmt.Fprintln(stderr, "nazr keys create: --origins:", err)
+			return 2
+		}
 	case "revoke":
 		if fs.NArg() != 1 {
 			fmt.Fprintln(stderr, "usage: nazr keys revoke <id>")

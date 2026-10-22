@@ -22,13 +22,13 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_HTTP_ADDR` | string | `:80` | Plain-HTTP listener for ACME HTTP-01 and a 308 redirect to HTTPS. Used only when `NAZR_TLS_MODE=terminate`; set empty to disable |
 | `NAZR_METRICS_ADDR` | string | `127.0.0.1:9090` | Prometheus `/metrics` listener; empty disables it |
 | `NAZR_TLS_MODE` | `terminate`, `proxied`, `plain` | `terminate` | See [connection modes](protocol.md#connection-modes-and-fingerprint-capture) |
-| `NAZR_TLS_CERT_PEM` | string | empty | Inline certificate chain (terminate mode) |
+| `NAZR_TLS_CERT_PEM` | string | empty | Inline certificate chain (terminate mode). Set it together with `NAZR_TLS_KEY_PEM` or not at all; a half-set pair fails validation |
 | `NAZR_TLS_KEY_PEM` | string, secret | empty | Inline private key. Inline PEM wins over files, files over ACME |
-| `NAZR_TLS_CERT_FILE` | path | empty | Certificate file, reloaded on `SIGHUP` and every 12 hours |
+| `NAZR_TLS_CERT_FILE` | path | empty | Certificate file, reloaded on `SIGHUP` and every 12 hours. Set it together with `NAZR_TLS_KEY_FILE` or not at all; a half-set pair fails validation |
 | `NAZR_TLS_KEY_FILE` | path | empty | Private key file |
 | `NAZR_ACME_DOMAINS` | list | empty | Domains for automatic Let's Encrypt certificates. Cannot be combined with inline PEM |
 | `NAZR_ACME_EMAIL` | string | empty | Contact address for the ACME account |
-| `NAZR_ACME_DIR` | path | empty | Certificate cache directory. Set it to a persistent volume, or certificates are re-issued on restart |
+| `NAZR_ACME_DIR` | path | `<NAZR_DATA_DIR>/acme` when ACME is active | Certificate cache directory. Keep it on a persistent volume, or certificates are re-issued on restart |
 | `NAZR_PROXY_PROTOCOL` | bool | `false` | Read a PROXY protocol v2 header for the client address |
 | `NAZR_TRUSTED_PROXIES` | list of IPs or CIDRs | empty | Proxied mode: hops skipped when walking `NAZR_CLIENT_IP_HEADER` from the right |
 | `NAZR_CLIENT_IP_HEADER` | string | `x-forwarded-for` | Proxied mode: header carrying the client IP |
@@ -52,8 +52,8 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_MAXMIND_EDITIONS` | list | `GeoLite2-City,GeoLite2-ASN` | Editions to download |
 | `NAZR_APPLE_RELAY_URL` | URL | empty (built-in Apple URL) | Override the Private Relay CSV URL |
 | `NAZR_TOR_EXIT_URL` | URL | empty (built-in Tor Project URL) | Override the Tor exit list URL |
-| `NAZR_DATACENTER_URLS` | list of URLs | empty (built-in X4BNet list) | Replace the datacenter CIDR lists |
-| `NAZR_VPN_URLS` | list of URLs | empty (built-in X4BNet list) | Replace the VPN CIDR lists |
+| `NAZR_DATACENTER_URLS` | list of URLs | empty (built-in X4BNet `datacenter/ipv4.txt` and `datacenter/ipv6.txt`) | Replace the datacenter CIDR lists |
+| `NAZR_VPN_URLS` | list of URLs | empty (built-in X4BNet `vpn/ipv4.txt` and `vpn/ipv6.txt`) | Replace the VPN CIDR lists |
 | `NAZR_JA4DB_URL` | URL | empty | FoxIO JA4 database URL. Opt-in; the source is disabled when empty. Needs an account at ja4db.foxio.io |
 | `NAZR_JA4DB_TOKEN` | string, secret | empty | Bearer token sent to `NAZR_JA4DB_URL` |
 | `NAZR_LISTS_DISABLE` | list | empty | Source names or kinds to skip entirely; see [IP lists](signals.md#ip-lists) |

@@ -538,8 +538,13 @@ func TestAdminKeys(t *testing.T) {
 	}
 	wantError(t, e.do(req("GET", "/admin/keys", "", "")), 403, "unauthorized")
 	wantError(t, e.do(req("POST", "/admin/keys", `{}`, "s3cret")), 400, "bad_request")
+	w := e.do(req("POST", "/admin/keys", `{"label":"shop","allowed_origins":["https://ok.example","shop.example/path"]}`, "s3cret"))
+	wantError(t, w, 400, "bad_request")
+	if !strings.Contains(w.Body.String(), "shop.example/path") {
+		t.Fatalf("error does not name the bad origin: %s", w.Body.String())
+	}
 
-	w := e.do(req("POST", "/admin/keys", `{"label":"shop","allowed_origins":["https://shop.example"],"rate_limit_per_minute":120}`, "s3cret"))
+	w = e.do(req("POST", "/admin/keys", `{"label":"shop","allowed_origins":["https://shop.example"],"rate_limit_per_minute":120}`, "s3cret"))
 	if w.Code != 201 {
 		t.Fatalf("create %d: %s", w.Code, w.Body.String())
 	}

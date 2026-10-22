@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -24,6 +25,14 @@ import (
 // reloadInterval is how often file-backed certificates are re-read, in
 // addition to SIGHUP.
 const reloadInterval = 12 * time.Hour
+
+// UsesFileCerts reports whether Setup serves certificates from
+// NAZR_TLS_CERT_FILE/NAZR_TLS_KEY_FILE (and so reloads them on SIGHUP): terminate
+// mode, both file paths set, and no complete inline PEM pair (which wins).
+func UsesFileCerts(cfg config.Config) bool {
+	return cfg.TLSMode == "terminate" && cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" &&
+		!(cfg.TLSCertPEM != "" && cfg.TLSKeyPEM != "")
+}
 
 // Load returns the TLS config for cfg: nil, nil unless TLSMode is "terminate".
 // Precedence is inline PEM, then files, then ACME. Background reloading stops
@@ -54,7 +63,7 @@ func Setup(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tls.Co
 		}
 		base.Certificates = []tls.Certificate{c}
 		return base, nil, nil
-	case cfg.TLSCertFile != "" && cfg.TLSKeyFile != "":
+	case UsesFileCerts(cfg):
 		var cur atomic.Pointer[tls.Certificate]
 		reload := func() error {
 			c, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
@@ -77,9 +86,13 @@ func Setup(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tls.Co
 		}
 		return base, nil, nil
 	case len(cfg.ACMEDomains) > 0:
+		dir := cfg.ACMEDir
+		if dir == "" { // config.Load already defaults it; kept for direct callers
+			dir = filepath.Join(cfg.DataDir, "acme")
+		}
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(cfg.ACMEDir),
+			Cache:      autocert.DirCache(dir),
 			HostPolicy: autocert.HostWhitelist(cfg.ACMEDomains...),
 			Email:      cfg.ACMEEmail,
 		}

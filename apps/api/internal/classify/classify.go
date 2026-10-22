@@ -49,8 +49,11 @@ var knownAutomationH2 = []string{
 	// Go net/http (x/net/http2 defaults), observed with internal/conn
 	// TestH2ClientGetsTLSAndH2.
 	"2:0;4:4194304;5:16384;6:10485760|1073741824|0|a,m,p,s",
-	// curl (nghttp2) defaults, as documented in the task brief.
+	// curl (nghttp2) defaults, as documented by curl/nghttp2.
 	"3:100;4:10485760;2:0|1048510465|0|m,p,a,s",
+	// curl 8.x (nghttp2) as observed against `nazr serve` in terminate mode
+	// (task-14 smoke): nghttp2 sends :scheme before :authority.
+	"3:100;4:10485760;2:0|1048510465|0|m,s,a,p",
 }
 
 var browserFamilies = []string{"chrome", "edge", "firefox", "safari", "opera", "samsung", "brave"}
@@ -88,6 +91,20 @@ var rules = []rule{
 	}},
 }
 
+// iosMarkers identify iOS/iPadOS user agents. Every browser there must use
+// WebKit and Apple's TLS stack, so its JA4 is Safari's whatever the UA says.
+var iosMarkers = []string{"iphone", "ipad", "ipod", "crios/", "fxios/", "edgios/"}
+
+func isIOS(userAgent string) bool {
+	l := strings.ToLower(userAgent)
+	for _, m := range iosMarkers {
+		if strings.Contains(l, m) {
+			return true
+		}
+	}
+	return false
+}
+
 func uaTLSMismatch(in Input) bool {
 	if len(in.JA4Families) == 0 {
 		return false
@@ -97,6 +114,9 @@ func uaTLSMismatch(in Input) bool {
 		return false
 	}
 	want := tlsFamily(fam)
+	if isIOS(in.UserAgent) {
+		want = "safari"
+	}
 	for _, f := range in.JA4Families {
 		if tlsFamily(strings.ToLower(f)) == want {
 			return false

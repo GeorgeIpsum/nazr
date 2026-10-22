@@ -65,6 +65,10 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeBadRequest, `"rate_limit_per_minute" must be positive`)
 		return
 	}
+	if err := auth.ValidateOrigins(req.AllowedOrigins); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, `"allowed_origins": `+err.Error())
+		return
+	}
 	var origins []string
 	for _, o := range req.AllowedOrigins {
 		if o = strings.TrimSpace(o); o != "" && !slices.Contains(origins, o) {

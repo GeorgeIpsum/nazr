@@ -1,6 +1,7 @@
 package ipintel
 
 import (
+	"maps"
 	"net/netip"
 	"testing"
 )
@@ -100,5 +101,26 @@ func TestComponentAndIdentifier(t *testing.T) {
 	}
 	if want := sum([]byte("salt203.0.113.5"))[:16]; id != want {
 		t.Errorf("id = %q, want %q", id, want)
+	}
+}
+
+func TestDefaultCIDRListsIncludeIPv6(t *testing.T) {
+	s, err := New(Config{DataDir: t.TempDir(), Disabled: []string{"maxmind", "apple", "tor"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for name, e := range s.entries {
+		if c, ok := e.src.(*cidrListSource); ok {
+			got[name] = c.url
+		}
+	}
+	base := "https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/"
+	want := map[string]string{
+		"datacenter": base + "datacenter/ipv4.txt", "datacenter-2": base + "datacenter/ipv6.txt",
+		"vpn": base + "vpn/ipv4.txt", "vpn-2": base + "vpn/ipv6.txt",
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("lists %v, want %v", got, want)
 	}
 }
