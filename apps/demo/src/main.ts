@@ -7,6 +7,8 @@ import { clearVisitor, loadState, saveState } from "./state";
 // Exposed always so the e2e test can recompute the thumbmark in-page.
 (window as unknown as { __nazr: unknown }).__nazr = { stableStringify, hash };
 
+(window as unknown as { __nazrLast: unknown }).__nazrLast = null;
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const endpoint = $<HTMLInputElement>("endpoint");
 const apiKey = $<HTMLInputElement>("apiKey");
@@ -60,11 +62,13 @@ async function run(): Promise<void> {
       api_endpoint: `${base()}/thumbmark`,
       logging: false,
       performance: true,
+      cache_api_call: false,
       simple_request: simple.checked,
     });
     const next: ThumbmarkResponse = await tm.get();
     model.previous = model.result?.thumbmark && !model.result.error?.length ? model.result : null;
     model.result = next;
+    (window as unknown as { __nazrLast: unknown }).__nazrLast = next;
     model.diff = model.previous ? diffResults(model.previous, next) : null;
     state.endpoint = endpoint.value;
     state.apiKey = apiKey.value;

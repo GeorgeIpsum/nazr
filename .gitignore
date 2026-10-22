@@ -13,3 +13,4 @@ apps/api/.data
 deploy/terraform/**/.terraform
 *.tfstate*
 .superpowers/
+apps/demo/test-results

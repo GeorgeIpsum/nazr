@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>stock client</title>
+  </head>
+  <body>
+    <!-- e2e fixture: the unmodified upstream client from jsDelivr, pointed at the nazr API. -->
+    <script src="https://cdn.jsdelivr.net/npm/@thumbmarkjs/thumbmarkjs@1.12.0/dist/thumbmark.umd.js"></script>
+    <script>
+      const q = new URLSearchParams(location.search);
+      window.__stockDone = false;
+      new ThumbmarkJS.Thumbmark({
+        api_key: q.get("key"),
+        api_endpoint: q.get("endpoint") + "/thumbmark",
+        logging: false,
+      })
+        .get()
+        .then((r) => {
+          window.__stockResult = r;
+        })
+        .catch((e) => {
+          window.__stockError = String(e);
+        })
+        .finally(() => {
+          window.__stockDone = true;
+        });
+    </script>
+  </body>
+</html>
