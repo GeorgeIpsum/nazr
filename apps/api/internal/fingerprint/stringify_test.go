@@ -109,3 +109,24 @@ func TestStringEscaping(t *testing.T) {
 		t.Error("must not HTML-escape")
 	}
 }
+
+func TestStringifyNativeTypes(t *testing.T) {
+	v := map[string]any{"u": uint32(65536), "i8": int8(-3), "u64": uint64(7), "i": 5, "s": []string{"a"}}
+	want := `{"i":5,"i8":-3,"s":["a"],"u":65536,"u64":7}`
+	if got := StableStringify(v); got != want {
+		t.Errorf("got %s", got)
+	}
+}
+
+func TestStringifyUnsupportedPanics(t *testing.T) {
+	for _, v := range []any{map[string]string{"a": "b"}, struct{}{}, float32(1)} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%T: expected panic", v)
+				}
+			}()
+			StableStringify(v)
+		}()
+	}
+}

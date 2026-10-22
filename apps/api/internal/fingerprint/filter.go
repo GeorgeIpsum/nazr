@@ -2,9 +2,12 @@ package fingerprint
 
 import (
 	"encoding/json"
+	"math"
+	"nazr/api/internal/jsnum"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Options mirrors the include/exclude/stabilize filtering options.
@@ -39,7 +42,7 @@ func stringList(v any) []string {
 var versionedBrowser = regexp.MustCompile(`(.+?)(>=)(\d+)`)
 
 // browserOf reads components.system.browser.{name,version} like the
-// server-side path of getExcludeList. ok is false for an unknown major version.
+// server-side path of getExcludeList. ok is false when parseInt would give NaN.
 func browserOf(c Components) (name string, major int, ok bool) {
 	sys, _ := c["system"].(map[string]any)
 	b, _ := sys["browser"].(map[string]any)
@@ -51,31 +54,65 @@ func browserOf(c Components) (name string, major int, ok bool) {
 	if ver == "" {
 		ver = "unknown"
 	}
-	first, _, _ := strings.Cut(ver, ".")
+	major, ok = parseMajor(ver)
+	return strings.ToLower(n), major, ok
+}
+
+// parseMajor mirrors parseInt(v.split(".")[0] || "0", 10). ok is false for NaN.
+// Overflow clamps to math.MaxInt (or MinInt).
+func parseMajor(version string) (int, bool) {
+	first, _, _ := strings.Cut(version, ".")
 	if first == "" {
 		first = "0"
 	}
-	end := 0
-	for end < len(first) && first[end] >= '0' && first[end] <= '9' {
-		end++
+	first = strings.TrimLeftFunc(first, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' })
+	neg := false
+	if first != "" && (first[0] == '+' || first[0] == '-') {
+		neg = first[0] == '-'
+		first = first[1:]
 	}
-	if end == 0 {
-		return strings.ToLower(n), 0, false // parseInt -> NaN
+	n, digits := 0, 0
+	overflow := false
+	for ; digits < len(first) && first[digits] >= '0' && first[digits] <= '9'; digits++ {
+		d := int(first[digits] - '0')
+		if n > (math.MaxInt-d)/10 {
+			overflow = true
+		} else if !overflow {
+			n = n*10 + d
+		}
 	}
-	m, err := strconv.Atoi(first[:end])
-	return strings.ToLower(n), m, err == nil
+	if digits == 0 {
+		return 0, false
+	}
+	if overflow {
+		n = math.MaxInt
+	}
+	if neg {
+		n = -n
+	}
+	return n, true
 }
 
+// scalarString mirrors String(v) for a truthy JSON scalar; falsy values give "".
 func scalarString(v any) string {
 	switch x := v.(type) {
 	case string:
 		return x
 	case json.Number:
-		return x.String()
+		f, err := strconv.ParseFloat(x.String(), 64)
+		if err != nil || f == 0 {
+			return ""
+		}
+		return jsnum.Format(f)
 	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
+		if x == 0 {
+			return ""
+		}
+		return jsnum.Format(x)
 	case bool:
-		return strconv.FormatBool(x)
+		if x {
+			return "true"
+		}
 	}
 	return ""
 }

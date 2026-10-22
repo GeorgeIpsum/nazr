@@ -2,6 +2,7 @@ package fingerprint
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,11 +38,25 @@ func write(sb *strings.Builder, v any) {
 		sb.WriteString(jsnum.Format(f)) // +-Inf (overflow) formats as null
 	case float64:
 		sb.WriteString(jsnum.Format(x))
-	case float32:
-		sb.WriteString(jsnum.Format(float64(x)))
 	case int:
-		sb.WriteString(jsnum.Format(float64(x)))
+		writeInt(sb, int64(x))
+	case int8:
+		writeInt(sb, int64(x))
+	case int16:
+		writeInt(sb, int64(x))
+	case int32:
+		writeInt(sb, int64(x))
 	case int64:
+		writeInt(sb, x)
+	case uint:
+		sb.WriteString(jsnum.Format(float64(x)))
+	case uint8:
+		sb.WriteString(jsnum.Format(float64(x)))
+	case uint16:
+		sb.WriteString(jsnum.Format(float64(x)))
+	case uint32:
+		sb.WriteString(jsnum.Format(float64(x)))
+	case uint64:
 		sb.WriteString(jsnum.Format(float64(x)))
 	case []string:
 		sb.WriteByte('[')
@@ -82,8 +97,12 @@ func write(sb *strings.Builder, v any) {
 		}
 		sb.WriteByte('}')
 	default:
-		sb.WriteString("null")
+		panic(fmt.Sprintf("fingerprint: StableStringify: unsupported type %T", v))
 	}
+}
+
+func writeInt(sb *strings.Builder, n int64) {
+	sb.WriteString(jsnum.Format(float64(n)))
 }
 
 func isRange(err error) bool {

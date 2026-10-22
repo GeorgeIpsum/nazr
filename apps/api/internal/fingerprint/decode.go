@@ -14,6 +14,8 @@ type Components = map[string]any
 var (
 	// ErrTooLarge is returned by Decode when the body exceeds the limit.
 	ErrTooLarge = errors.New("fingerprint: body too large")
+	// ErrTrailingData is returned by Decode when data follows the top-level value.
+	ErrTrailingData = errors.New("fingerprint: unexpected data after top-level value")
 	// ErrNotObject is returned by Decode when the top-level value is not an object.
 	ErrNotObject = errors.New("fingerprint: top-level JSON value is not an object")
 )
@@ -28,6 +30,7 @@ func Decode(r io.Reader, limit int64) (Components, error) {
 	if int64(len(data)) > limit {
 		return nil, ErrTooLarge
 	}
+	data, rewritten := protectSurrogates(data)
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var v any
@@ -35,11 +38,14 @@ func Decode(r io.Reader, limit int64) (Components, error) {
 		return nil, err
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return nil, errors.New("fingerprint: unexpected data after top-level value")
+		return nil, ErrTrailingData
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
 		return nil, ErrNotObject
+	}
+	if rewritten {
+		m = restoreSurrogates(m).(map[string]any)
 	}
 	return m, nil
 }

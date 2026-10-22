@@ -63,3 +63,40 @@ func TestOptionsFromRequest(t *testing.T) {
 		t.Error("nil opts")
 	}
 }
+
+func TestParseMajor(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	cases := []struct {
+		in   string
+		want int
+		ok   bool
+	}{
+		{" 17", 17, true}, {"+17", 17, true}, {"17.1", 17, true}, {"abc", 0, false},
+		{"", 0, true}, {"-3", -3, true}, {"99999999999999999999", maxInt, true},
+		{"unknown", 0, false},
+	}
+	for _, c := range cases {
+		if got, ok := parseMajor(c.in); got != c.want || ok != c.ok {
+			t.Errorf("parseMajor(%q) = %d,%v want %d,%v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestSafariVersionRule(t *testing.T) {
+	for _, c := range []struct {
+		ver  any
+		drop bool
+	}{
+		{" 17", true}, {"+17", true}, {"17.1", true}, {"abc", false}, {"", false},
+		{"99999999999999999999", true}, {"16.9", false}, {json.Number("1.7e1"), true},
+	} {
+		in := Components{
+			"system": map[string]any{"browser": map[string]any{"name": "Safari", "version": c.ver}},
+			"canvas": map[string]any{"h": "x"},
+		}
+		_, kept := Filter(in, Options{Stabilize: []string{"private"}})["canvas"]
+		if kept == c.drop {
+			t.Errorf("version %v: canvas kept=%v", c.ver, kept)
+		}
+	}
+}
