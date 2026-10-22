@@ -30,6 +30,7 @@ type summary struct {
 	TLSError    string   `json:"tls_error"`
 	H2          *h2sum   `json:"h2"`
 	HeaderOrder []string `json:"header_order"`
+	HeaderKeys  []string `json:"header_keys"`
 	RemoteAddr  string   `json:"remote_addr"`
 	ReqTLS      bool     `json:"req_tls"`
 	Proto       string   `json:"proto"`
@@ -47,9 +48,16 @@ func summaryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := h.Snapshot()
+	_, _ = io.Copy(io.Discard, r.Body)
+	keys := []string{}
+	for k := range r.Header {
+		keys = append(keys, strings.ToLower(k))
+	}
+	slices.Sort(keys)
 	s := summary{
 		TLS:         v.TLS != nil,
-		HeaderOrder: v.HeaderOrder,
+		HeaderOrder: h.OrderFor(r),
+		HeaderKeys:  keys,
 		RemoteAddr:  v.RemoteAddr.String(),
 		ReqTLS:      r.TLS != nil,
 		Proto:       r.Proto,

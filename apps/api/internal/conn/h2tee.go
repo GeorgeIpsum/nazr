@@ -11,22 +11,28 @@ import (
 	"nazr/api/internal/h2fp"
 )
 
-// h2Conn is the decrypted side of an h2 connection: it feeds the first bytes
-// read into an h2fp.Parser. Embedding *tls.Conn keeps ConnectionState
-// available, so the HTTP/2 server still populates r.TLS.
+// h2Conn is the decrypted side of an h2 connection: it feeds every byte read
+// into an h2fp.Parser for the connection's lifetime (the fingerprint comes
+// from the first frames, the header order of each request from its own
+// header block). Embedding *tls.Conn keeps ConnectionState available, so the
+// HTTP/2 server still populates r.TLS.
 type h2Conn struct {
 	*tls.Conn
-	holder *Holder
-	p      *h2fp.Parser // nil once finished; only the h2 read loop touches it
+	holder   *Holder
+	p        *h2fp.Parser // nil once stopped; only the h2 read loop touches it
+	reported bool         // the fingerprint has been stored on holder
 }
 
 func (c *h2Conn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if c.p != nil {
-		if n > 0 && feedH2(c.p, c.holder, b[:n]) {
+		if n > 0 && feedH2(c.p, c.holder, &c.reported, b[:n]) {
 			c.p = nil
 		} else if err != nil {
-			finishH2(c.p, c.holder)
+			if !c.reported {
+				c.reported = true
+				finishH2(c.p, c.holder)
+			}
 			c.p = nil
 		}
 	}
@@ -41,6 +47,16 @@ func ConfigureServer(srv *http.Server, h2limit int) error {
 	h2srv := &http2.Server{}
 	if err := http2.ConfigureServer(srv, h2srv); err != nil {
 		return err
+	}
+	// The client's HPACK encoder is bounded by the table size this server
+	// advertises (SETTINGS_HEADER_TABLE_SIZE), so the tee's decoder uses the
+	// same value x/net/http2 resolves for its own decoder.
+	tableSize := uint32(h2fp.DefaultHeaderTableSize)
+	if srv.HTTP2 != nil && srv.HTTP2.MaxDecoderHeaderTableSize > 0 {
+		tableSize = uint32(srv.HTTP2.MaxDecoderHeaderTableSize)
+	}
+	if h2srv.MaxDecoderHeaderTableSize > 0 {
+		tableSize = h2srv.MaxDecoderHeaderTableSize
 	}
 	srv.TLSNextProto["h2"] = func(hs *http.Server, tc *tls.Conn, h http.Handler) {
 		ctx := context.Background()
@@ -59,7 +75,7 @@ func ConfigureServer(srv *http.Server, h2limit int) error {
 			if h2limit > 0 {
 				limit = h2limit
 			}
-			c.p = h2fp.NewParser(limit)
+			c.p = h2fp.NewParserSize(limit, tableSize)
 		}
 		h2srv.ServeConn(c, &http2.ServeConnOpts{Context: ctx, BaseConfig: hs, Handler: h})
 	}

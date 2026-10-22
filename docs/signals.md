@@ -23,7 +23,7 @@ A component whose browser API is unavailable is omitted; `privacy` is always pre
 | `header` | always | `ja4h`, `order` (lowercased), `userAgent`, `accept`, `acceptEncoding`, `acceptLanguage` (`raw`, `q`), `clientHints`; absent headers are omitted |
 | `ip` | the client address is known | `address`, `version`, `asn`, `as_org`, `country`, `region`, `city`, `tor`, `vpn`, `datacenter`, `private_relay` |
 
-Header order depends on the TLS mode: `plain` captures HTTP/1.1 header order only; `terminate` captures it for HTTP/2 but not for HTTP/1.1 over TLS, where `ja4h` falls back to sorted header names; `proxied` sees whatever order the proxy forwards. See [Connection modes](protocol.md#connection-modes-and-fingerprint-capture).
+Header order is captured per request (each request's own HTTP/2 header block or HTTP/1.1 head) and depends on the TLS mode: `plain` captures HTTP/1.1 header order only; `terminate` captures it for HTTP/2 but not for HTTP/1.1 over TLS, where `ja4h` falls back to sorted header names; `proxied` sees whatever order the proxy forwards. See [Connection modes](protocol.md#connection-modes-and-fingerprint-capture).
 
 ## Classification
 

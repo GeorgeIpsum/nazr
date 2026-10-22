@@ -171,9 +171,10 @@ func marshalJSON(v any) (json.RawMessage, error) {
 }
 
 // serverComponents builds the server-observed components (unfiltered) and
-// returns the JA4 in effect ("" when none). Every value is a type
+// returns the JA4 in effect ("" when none). order is the request's own wire
+// header order (nil: httpfp falls back to sorted keys). Every value is a type
 // fingerprint.StableStringify accepts.
-func serverComponents(r *http.Request, view conn.HolderView, cfg config.Config, addr netip.Addr, lookup ipintel.Lookup) (map[string]any, string) {
+func serverComponents(r *http.Request, view conn.HolderView, order []string, cfg config.Config, addr netip.Addr, lookup ipintel.Lookup) (map[string]any, string) {
 	sc := map[string]any{}
 	ja4 := ""
 	tr := view.TLS
@@ -193,7 +194,7 @@ func serverComponents(r *http.Request, view conn.HolderView, cfg config.Config, 
 	if view.H2 != nil {
 		sc["h2"] = view.H2.Component()
 	}
-	sc["header"] = httpfp.Component(r, view.HeaderOrder)
+	sc["header"] = httpfp.Component(r, order)
 	if addr.IsValid() {
 		sc["ip"] = ipintel.Component(addr, lookup)
 	}
@@ -282,7 +283,7 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	if s.Intel != nil && addr.IsValid() {
 		lookup = s.Intel.Lookup(addr)
 	}
-	sc, ja4 := serverComponents(r, view, s.Cfg, addr, lookup)
+	sc, ja4 := serverComponents(r, view, requestOrder(r), s.Cfg, addr, lookup)
 	hasTLS := view.TLS != nil || ja4 != ""
 
 	opts := fingerprint.OptionsFromRequest(body.options)

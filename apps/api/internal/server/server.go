@@ -107,9 +107,31 @@ func New(d Deps) http.Handler {
 }
 
 // route applies the per-request chain shared by every route:
-// recover -> request ID -> metrics.
+// recover -> request ID -> header order -> metrics.
 func (s *server) route(name string, h http.Handler) http.Handler {
-	return s.recoverer(s.requestID(withMetrics(name, h)))
+	return s.recoverer(s.requestID(headerOrder(withMetrics(name, h))))
+}
+
+type orderKey struct{}
+
+// headerOrder claims the request's wire header order from the connection
+// holder (conn.Holder.OrderFor) for every request, whichever route it hits,
+// so a request that is rejected early or is not fingerprinted cannot leave
+// its entry queued for a later request with the same header names.
+func headerOrder(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		order := holderFromContext(r.Context()).OrderFor(r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), orderKey{}, order)))
+	})
+}
+
+// requestOrder returns the header order claimed by headerOrder, or claims it
+// now when the request did not pass through route. nil means no capture.
+func requestOrder(r *http.Request) []string {
+	if o, ok := r.Context().Value(orderKey{}).([]string); ok {
+		return o
+	}
+	return holderFromContext(r.Context()).OrderFor(r)
 }
 
 type requestIDKey struct{}

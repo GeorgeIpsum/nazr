@@ -186,14 +186,15 @@ Always 204. The body is discarded unless `NAZR_LOG_RETENTION` is set; then a val
 | Mode | TLS | Captured | Client IP |
 |---|---|---|---|
 | `terminate` (default) | Terminated by nazr (inline PEM, files, or ACME) | JA4 and JA3 from the ClientHello, HTTP/2 fingerprint, header order for HTTP/2 | Connection address (or PROXY protocol v2 when `NAZR_PROXY_PROTOCOL` is set) |
-| `proxied` | Terminated upstream | JA4 read from `NAZR_JA4_HEADER` (default `x-ja4`); no HTTP/2 fingerprint | `NAZR_CLIENT_IP_HEADER` (default `x-forwarded-for`) |
+| `proxied` | Terminated upstream | JA4 read from `NAZR_JA4_HEADER` (default `x-ja4`); HTTP/1.1 header order as the proxy forwards it; no HTTP/2 fingerprint | `NAZR_CLIENT_IP_HEADER` (default `x-forwarded-for`) |
 | `plain` | None | HTTP/1.1 header order only | Connection address |
 
 Details and limits:
 
 - `terminate`: HTTP/1.1 over TLS does not capture header order (Go's HTTP/1 server does not expose it behind `crypto/tls`), so `header.order` is the sorted header set and `ja4h` is computed from sorted header names. HTTP/2 connections keep the real order. Non-TLS bytes arriving on the TLS listener close the connection.
 - `proxied`: the client IP is the rightmost address in the header that is not inside `NAZR_TRUSTED_PROXIES`; when every entry is trusted the leftmost is used, and an unparseable entry falls back to the connection address. Headers are trusted regardless of the peer, so the listener must be reachable only through the proxy. Anyone who can connect directly can forge `x-ja4` and the client IP.
-- `plain`: header order is captured from the first request head on each connection; later keep-alive requests on that connection report the same order.
+- `plain` and `proxied`: header order is captured for every HTTP/1.1 request head on a connection, so keep-alive connections a proxy reuses across different end users still give each request its own order. Sniffing stops for the rest of a connection after a chunked request body, a protocol upgrade or a head over 32 KiB; later requests on it fall back to sorted names.
+- Header order is per request in every mode. Each HTTP/2 header block is HPACK-decoded (with the connection's dynamic table) and each HTTP/1.1 head is queued; a request takes the queued entry whose method and header names match its own. When nothing matches, `header.order` is the sorted header set and `ja4h` uses sorted names. This keeps `header.order`, `ja4h` and so the thumbmark the same whether or not a CORS preflight opened the connection first.
 - Server timeouts bound slow clients: `ReadHeaderTimeout` 10s, `ReadTimeout` 30s, `WriteTimeout` 30s, `IdleTimeout` 120s, 64 KiB of headers. They are what stops slowloris-style connections, which would otherwise hold the lazy ClientHello capture open.
 - `NAZR_HTTP_ADDR` is used only in `terminate` mode: it serves ACME HTTP-01 challenges and answers everything else with a 308 redirect to HTTPS.
 - Signals: `SIGHUP` reloads file-based certificates (`NAZR_TLS_CERT_FILE` and `NAZR_TLS_KEY_FILE`), which are also re-read every 12 hours; a failed reload keeps the previous certificate. In every other configuration `SIGHUP` is ignored. `SIGINT` and `SIGTERM` drain connections for up to 15 seconds.

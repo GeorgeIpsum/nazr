@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +45,11 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	e := newEnv(t, nil)
 	body := stockBody(t)
 	body["metadata"] = map[string]any{"order": "A-17", "n": json.Number("3")}
-	holder := fullHolder(t)
+	// The request's own wire order (with Origin) must be the one used: a
+	// stale entry queued first, for different header names, is skipped.
+	order := append(slices.Clone(testHeaderOrder), "Origin")
+	holder := fullHolderOrder(t, []string{"x-stale"})
+	holder.PushOrder(http.MethodPost, order)
 	r := thumbmarkReq(t, e.key, marshal(t, body))
 	r.Header.Set("Origin", "https://shop.example")
 	r = r.WithContext(WithHolder(r.Context(), holder))
@@ -59,7 +65,7 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	server := map[string]any{
 		"tls":    holder.TLS.Component(),
 		"h2":     holder.H2.Component(),
-		"header": httpfp.Component(r, testHeaderOrder),
+		"header": httpfp.Component(r, order),
 		"ip":     ipintel.Component(addr, e.intel.lookup),
 	}
 	client := body["components"].(map[string]any)
@@ -82,7 +88,7 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	if got := path(resp, "components", "h2", "fingerprint"); got != holder.H2.Fingerprint {
 		t.Fatalf("h2.fingerprint %v", got)
 	}
-	if got := path(resp, "components", "header", "ja4h"); got != httpfp.JA4H(r, testHeaderOrder) {
+	if got := path(resp, "components", "header", "ja4h"); got != httpfp.JA4H(r, order) {
 		t.Fatalf("header.ja4h %v", got)
 	}
 	if got := path(resp, "components", "ip", "address"); got != "203.0.113.42" {
@@ -606,7 +612,7 @@ func TestServerComponentsStringifiable(t *testing.T) {
 	r := thumbmarkReq(t, "", nil)
 	r.Header.Set("Sec-CH-UA", `"Chromium";v="126"`)
 	view := fullHolder(t).Snapshot()
-	sc, _ := serverComponents(r, view, cfg, netip.MustParseAddr("2001:db8::1"),
+	sc, _ := serverComponents(r, view, testHeaderOrder, cfg, netip.MustParseAddr("2001:db8::1"),
 		ipintel.Lookup{ASN: 1, Tor: true, Country: "DE"})
 	for _, k := range []string{"tls", "h2", "header", "ip"} {
 		if sc[k] == nil {
@@ -623,7 +629,7 @@ func TestServerComponentsStringifiable(t *testing.T) {
 	}
 	cfg.TLSMode = "proxied"
 	r.Header.Set("x-ja4", "t13d_x")
-	sc, _ = serverComponents(r, conn.HolderView{}, cfg, netip.Addr{}, ipintel.Lookup{})
+	sc, _ = serverComponents(r, conn.HolderView{}, nil, cfg, netip.Addr{}, ipintel.Lookup{})
 	_ = fingerprint.StableStringify(sc)
 	if _, ok := sc["ip"]; ok {
 		t.Fatal("invalid address must not produce an ip component")
@@ -668,5 +674,33 @@ func TestMetricsHandler(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %s", want)
 		}
+	}
+}
+
+func TestEveryRouteClaimsItsHeaderOrder(t *testing.T) {
+	// A request rejected before /thumbmark runs (403, unknown key) still
+	// consumes its queued order, so the next request with the same names
+	// gets its own entry rather than the rejected request's.
+	e := newEnv(t, nil)
+	h := &conn.Holder{RemoteAddr: netip.MustParseAddrPort("203.0.113.42:5555")}
+	rejected := []string{"x-api-key", "authorization", "accept-encoding", "accept-language", "accept", "user-agent", "content-type"}
+	h.PushOrder(http.MethodPost, rejected)
+	h.PushOrder(http.MethodPost, testHeaderOrder)
+	r := thumbmarkReq(t, "nzr_unknown", marshal(t, stockBody(t)))
+	if w := e.do(r.WithContext(WithHolder(r.Context(), h))); w.Code != http.StatusForbidden {
+		t.Fatalf("status %d", w.Code)
+	}
+	r = thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	w := e.do(r.WithContext(WithHolder(r.Context(), h)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	got := path(decodeResp(t, w), "components", "header", "order")
+	want := []any{}
+	for _, n := range testHeaderOrder {
+		want = append(want, strings.ToLower(n))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("order %v, want %v", got, want)
 	}
 }

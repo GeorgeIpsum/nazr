@@ -385,9 +385,15 @@ func chromeH2() *h2fp.Result {
 
 var testHeaderOrder = []string{"Host", "Content-Length", "User-Agent", "Content-Type", "Accept", "Accept-Encoding", "Accept-Language", "Authorization", "X-Api-Key"}
 
-func fullHolder(t *testing.T) *conn.Holder {
-	return &conn.Holder{TLS: goTLSResult(t), H2: chromeH2(), HeaderOrder: testHeaderOrder,
+// fullHolder returns a holder with TLS and h2 captures and one queued header
+// order: testHeaderOrder, which matches a thumbmarkReq carrying an API key.
+func fullHolder(t *testing.T) *conn.Holder { return fullHolderOrder(t, testHeaderOrder) }
+
+func fullHolderOrder(t *testing.T, order []string) *conn.Holder {
+	h := &conn.Holder{TLS: goTLSResult(t), H2: chromeH2(),
 		RemoteAddr: netip.MustParseAddrPort("203.0.113.42:5555")}
+	h.PushOrder(http.MethodPost, order)
+	return h
 }
 
 // filterLikeClient mirrors the client's filterThumbmarkData over the API
