@@ -64,6 +64,7 @@ func newIntel(cfg config.Config, logger *slog.Logger) (*ipintel.Service, error) 
 		JA4DBURL:          cfg.JA4DBURL,
 		JA4DBToken:        cfg.JA4DBToken,
 		Disabled:          cfg.ListsDisable,
+		HTTPClient:        &http.Client{Timeout: 5 * time.Minute}, // MaxMind City is ~70 MB
 		Logger:            logger,
 	})
 }
@@ -157,6 +158,13 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		return err
 	}
 
+	if !(cfg.TLSMode == "terminate" && cfg.TLSCertPEM == "" && cfg.TLSCertFile != "" && cfg.TLSKeyFile != "") {
+		// Only the file-based cert watcher handles SIGHUP; otherwise a stray
+		// one would hit Go's default action and kill the server.
+		signal.Ignore(syscall.SIGHUP)
+		logger.Debug("SIGHUP is ignored")
+	}
+
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return err
@@ -202,7 +210,9 @@ func runServer(cfg config.Config, logw io.Writer) error {
 	case cfg.HTTPAddr != "" && cfg.TLSMode == "terminate":
 		hl, err := net.Listen("tcp", cfg.HTTPAddr)
 		if err != nil {
-			_ = ln.Close()
+			stop()
+			shutdown(servers, logger)
+			wg.Wait()
 			return err
 		}
 		hs := &http.Server{

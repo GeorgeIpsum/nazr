@@ -67,7 +67,11 @@ func Setup(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tls.Co
 		if err := reload(); err != nil {
 			return nil, nil, errors.New("certs: loading TLS files: " + err.Error())
 		}
-		go watch(ctx, reload, logger)
+		// Register synchronously: a SIGHUP arriving before the goroutine is
+		// scheduled would otherwise hit the default action and kill us.
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go watch(ctx, hup, reload, logger)
 		base.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return cur.Load(), nil
 		}
@@ -88,9 +92,7 @@ func Setup(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tls.Co
 
 // watch calls reload on SIGHUP and every reloadInterval until ctx ends. A
 // failed reload keeps the previous certificate.
-func watch(ctx context.Context, reload func() error, logger *slog.Logger) {
-	hup := make(chan os.Signal, 1)
-	signal.Notify(hup, syscall.SIGHUP)
+func watch(ctx context.Context, hup chan os.Signal, reload func() error, logger *slog.Logger) {
 	defer signal.Stop(hup)
 	t := time.NewTicker(reloadInterval)
 	defer t.Stop()
@@ -125,6 +127,10 @@ func redirectHandler(host string) http.Handler {
 		h := host
 		if h == "" {
 			h = r.Host
+			if h == "" {
+				http.Error(w, "missing Host header", http.StatusBadRequest)
+				return
+			}
 			if hh, _, err := net.SplitHostPort(h); err == nil {
 				h = hh // the HTTP port is meaningless on the https side
 				if strings.Contains(h, ":") {
