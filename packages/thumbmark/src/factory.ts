@@ -45,6 +45,10 @@ export const tm_component_promises = {
     webrtc: getWebRTC,
     speech: getSpeech,
     webgpu: getWebGPU,
+    clienthints: getClientHints,
+    clientrects: getClientRects,
+    mediaqueries: getMediaQueries,
+    privacy: getPrivacy,
 };
 
 // the component interface is the form of the JSON object the function's promise must return
