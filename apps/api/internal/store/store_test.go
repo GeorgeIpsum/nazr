@@ -112,7 +112,7 @@ func newUnmigrated(t *testing.T) *Store {
 func newID() string { return ulid.Make().String() }
 
 // latestMigration is the highest migration in migrations/.
-const latestMigration = 2
+const latestMigration = 3
 
 func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 	s := newUnmigrated(t)
@@ -347,6 +347,33 @@ func TestInsertEventAndPrune(t *testing.T) {
 	n, err = s.Prune(ctx, now.Add(time.Minute), now.Add(time.Minute), 10)
 	if err != nil || n != 3 { // 1 event + 2 logs
 		t.Fatalf("prune2: %d %v", n, err)
+	}
+}
+
+func TestHasRecentEvent(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "e", Prefix: "eeeeeeee"})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: k.ID, VisitorID: newID(), Thumbmark: "tm",
+		IPHash: "iph", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		ip, tm string
+		since  time.Time
+		want   bool
+	}{
+		{"iph", "tm", now.Add(-10 * time.Minute), true},
+		{"iph", "tm", now, true},
+		{"iph", "tm", now.Add(time.Second), false},
+		{"other", "tm", now.Add(-time.Hour), false},
+		{"iph", "other", now.Add(-time.Hour), false},
+	} {
+		got, err := s.HasRecentEvent(ctx, tc.ip, tc.tm, tc.since)
+		if err != nil || got != tc.want {
+			t.Errorf("%+v: got %v err %v", tc, got, err)
+		}
 	}
 }
 

@@ -40,14 +40,15 @@ func parseAcceptLanguage(raw string) map[string]any {
 }
 
 // Component returns the `header` fingerprint component. Absent headers are
-// omitted rather than emitted as empty strings.
+// omitted rather than emitted as empty strings. Its ja4h is the cookie-free
+// JA4HStable form; JA4HFull has the complete value.
 func Component(r *http.Request, headerOrder []string) map[string]any {
 	order := []string{}
 	for _, h := range effectiveOrder(r, headerOrder) {
 		order = append(order, strings.ToLower(h))
 	}
 	c := map[string]any{
-		"ja4h":  JA4H(r, headerOrder),
+		"ja4h":  JA4HStable(r, headerOrder),
 		"order": order,
 	}
 	for key, h := range map[string]string{

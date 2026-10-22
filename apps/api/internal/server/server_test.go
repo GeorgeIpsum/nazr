@@ -22,6 +22,7 @@ import (
 	"nazr/api/internal/fingerprint"
 	"nazr/api/internal/httpfp"
 	"nazr/api/internal/ipintel"
+	"nazr/api/internal/store"
 	"nazr/api/internal/tlsfp"
 )
 
@@ -88,7 +89,7 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	if got := path(resp, "components", "h2", "fingerprint"); got != holder.H2.Fingerprint {
 		t.Fatalf("h2.fingerprint %v", got)
 	}
-	if got := path(resp, "components", "header", "ja4h"); got != httpfp.JA4H(r, order) {
+	if got := path(resp, "components", "header", "ja4h"); got != httpfp.JA4HStable(r, order) {
 		t.Fatalf("header.ja4h %v", got)
 	}
 	if got := path(resp, "components", "ip", "address"); got != "203.0.113.42" {
@@ -149,6 +150,11 @@ func TestThumbmarkHappyPath(t *testing.T) {
 		ev.ClientHash != body["clientHash"] || ev.Path != "/" || ev.UserAgent != chromeUA ||
 		len(ev.Classification) == 0 || len(ev.Signals) == 0 || len(ev.Metadata) == 0 || ev.Components != nil {
 		t.Fatalf("event %+v", ev)
+	}
+	// events.ja4h keeps the full fingerprint; the component carries a_b.
+	if ev.JA4H != httpfp.JA4HFull(r, order) || strings.Count(ev.JA4H, "_") != 3 ||
+		!strings.HasPrefix(ev.JA4H, path(resp, "components", "header", "ja4h").(string)+"_") {
+		t.Fatalf("event ja4h %q", ev.JA4H)
 	}
 }
 
@@ -357,8 +363,16 @@ func TestCollectDirectiveSampled(t *testing.T) {
 	}
 }
 
+// seedEvent records a /thumbmark event for thumbmark from addr at time at.
+func seedEvent(e *env, addr, thumbmark string, at time.Time) {
+	e.store.events = append(e.store.events, store.Event{
+		Thumbmark: thumbmark, IPHash: ipintel.Identifier(netip.MustParseAddr(addr), e.cfg.IPHashSalt), CreatedAt: at,
+	})
+}
+
 func TestBeaconRecordsObservation(t *testing.T) {
 	e := newEnv(t, nil)
+	seedEvent(e, "192.0.2.1", "abc", testNow.Add(-time.Minute)) // httptest's RemoteAddr
 	tr := &tlsfp.Result{JA4: "t13d1516h2_8daaf6152771_02713d6af862"}
 	body := `{"ua":"` + chromeUA + `","thumbmark":"abc","ja4":"t13d_body","ja4_source":"client"}`
 	r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(body))
@@ -383,10 +397,42 @@ func TestBeaconRecordsObservation(t *testing.T) {
 	}
 }
 
+func TestBeaconRequiresRecentMatchingEvent(t *testing.T) {
+	e := newEnv(t, nil)
+	body := `{"ua":"` + chromeUA + `","thumbmark":"abc","ja4":"t13d_body"}`
+	send := func(remote string) {
+		r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(body))
+		r.RemoteAddr = remote
+		if w := e.do(r); w.Code != 204 {
+			t.Fatalf("status %d", w.Code)
+		}
+	}
+	send("192.0.2.1:1") // no event at all
+	seedEvent(e, "192.0.2.1", "abc", testNow.Add(-11*time.Minute))
+	send("192.0.2.1:1") // event too old
+	seedEvent(e, "192.0.2.2", "abc", testNow)
+	send("192.0.2.1:1") // event from another IP
+	seedEvent(e, "192.0.2.1", "other", testNow)
+	send("192.0.2.1:1") // event for another thumbmark
+	if len(e.store.obs) != 0 {
+		t.Fatalf("unmatched beacons recorded: %v", e.store.obs)
+	}
+	seedEvent(e, "192.0.2.1", "abc", testNow.Add(-10*time.Minute))
+	send("192.0.2.1:1")
+	if len(e.store.obs) != 1 || e.store.obs[0] != [2]string{"t13d_body", "chrome"} {
+		t.Fatalf("matched beacon: %v", e.store.obs)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(`{"ua":"x","ja4":"y"}`))
+	if w := e.do(r); w.Code != 204 || len(e.store.obs) != 1 {
+		t.Fatalf("beacon without thumbmark recorded: %v", e.store.obs)
+	}
+}
+
 func TestBeaconRateLimited(t *testing.T) {
 	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
+	seedEvent(e, "198.51.100.7", "tm", testNow)
 	send := func() int {
-		r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(`{"ua":"x","ja4":"y"}`))
+		r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(`{"ua":"x","ja4":"y","thumbmark":"tm"}`))
 		r.RemoteAddr = "198.51.100.7:1000"
 		return e.do(r).Code
 	}

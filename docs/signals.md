@@ -20,8 +20,10 @@ A component whose browser API is unavailable is omitted; `privacy` is always pre
 |---|---|---|
 | `tls` | TLS terminated here (full), or `proxied` mode with a JA4 header (only `ja4`) | `version`, `ja4`, `ja4_r`, `ja3`, `ja3_hash`, `ciphers`, `extensions`, `sig_algs`, `groups`, `sni`, `alpn`. GREASE values are dropped from the lists |
 | `h2` | `terminate` mode, HTTP/2 connection | `fingerprint` (Akamai-style string), `settings`, `window_update`, `priorities`, `pseudo_header_order` |
-| `header` | always | `ja4h`, `order` (lowercased), `userAgent`, `accept`, `acceptEncoding`, `acceptLanguage` (`raw`, `q`), `clientHints`; absent headers are omitted |
+| `header` | always | `ja4h` (cookie-free `ja4h_a_ja4h_b`; see below), `order` (lowercased), `userAgent`, `accept`, `acceptEncoding`, `acceptLanguage` (`raw`, `q`), `clientHints`; absent headers are omitted |
 | `ip` | the client address is known | `address`, `version`, `asn`, `as_org`, `country`, `region`, `city`, `tor`, `vpn`, `datacenter`, `private_relay` |
+
+`header.ja4h` drops JA4H's last two parts, the hashes of cookie names and cookie name=value pairs: a site setting or rotating a cookie would otherwise change the thumbmark of the same browser. The full four-part value is kept in `events.ja4h`. The `a` part still records whether a Cookie or Referer header is present.
 
 Header order is captured per request (each request's own HTTP/2 header block or HTTP/1.1 head) and depends on the TLS mode: `plain` captures HTTP/1.1 header order only; `terminate` captures it for HTTP/2 but not for HTTP/1.1 over TLS, where `ja4h` falls back to sorted header names; `proxied` sees whatever order the proxy forwards. See [Connection modes](protocol.md#connection-modes-and-fingerprint-capture).
 
@@ -80,7 +82,7 @@ The signal needs a corpus mapping JA4 fingerprints to application families. With
 1. The local `ua_ja4_observations` table. A family counts for a JA4 once it has been seen at least `NAZR_UA_JA4_MIN_OBSERVATIONS` times (default 20). In the current implementation the table is fed only by `/beacon`; `/thumbmark` requests do not record observations.
 2. The FoxIO JA4 database. This is opt-in: FoxIO put the database behind an account at ja4db.foxio.io, so there is no default URL. Set `NAZR_JA4DB_URL` and `NAZR_JA4DB_TOKEN` (sent as a Bearer token) to enable it; refresh interval is 7 days.
 
-Warning: `/beacon` is unauthenticated (it is sent with `sendBeacon`, which cannot set headers). A single client can post `{ua, ja4}` pairs repeatedly and seed observations for its own JA4, so that the local corpus reports whatever family it likes and the mismatch never fires for it. Until you have a trusted corpus, set `NAZR_UA_JA4_MIN_OBSERVATIONS` high (for example 1000) or rely only on the FoxIO database. Per-IP rate limiting on `/beacon` slows this down but does not prevent it.
+Warning: `/beacon` is unauthenticated (it is sent with `sendBeacon`, which cannot set headers). As a mitigation, a beacon is recorded only when the same client IP produced a `/thumbmark` event with the beacon's `thumbmark` in the last 10 minutes, and `/beacon` is rate limited per IP. That stops blind posting of `{ua, ja4}` pairs, but a client that calls `/thumbmark` first (which needs an API key, and in terminate mode the JA4 then comes from its own connection) can still seed observations for its own JA4, so the local corpus reports whatever family it likes and the mismatch never fires for it. Until you have a trusted corpus, set `NAZR_UA_JA4_MIN_OBSERVATIONS` high (for example 1000) or rely only on the FoxIO database.
 
 ## Deviations from the design spec
 

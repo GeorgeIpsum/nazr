@@ -83,6 +83,17 @@ func (f *fakeStore) InsertEvent(_ context.Context, e store.Event) error {
 	return nil
 }
 
+func (f *fakeStore) HasRecentEvent(_ context.Context, ipHash, thumbmark string, since time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.events {
+		if e.IPHash == ipHash && e.Thumbmark == thumbmark && !e.CreatedAt.Before(since) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeStore) RecordUAJA4(_ context.Context, ja4, family string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

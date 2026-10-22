@@ -28,7 +28,7 @@ func chromeReq() (*http.Request, []string) {
 
 func TestJA4HChromeLike(t *testing.T) {
 	r, order := chromeReq()
-	got := JA4H(r, order)
+	got := JA4HFull(r, order)
 	parts := strings.Split(got, "_")
 	if len(parts) != 4 {
 		t.Fatalf("got %q", got)
@@ -49,7 +49,7 @@ func TestJA4HChromeLike(t *testing.T) {
 
 func TestJA4HNoCookiesNoReferer(t *testing.T) {
 	r := httptest.NewRequest("POST", "/", nil)
-	got := JA4H(r, []string{"Host", "Accept"})
+	got := JA4HFull(r, []string{"Host", "Accept"})
 	want := "po11nn02" + "0000" + "_" + h12("Host,Accept") + "_000000000000_000000000000"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
@@ -60,7 +60,7 @@ func TestJA4HH2AndPadding(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.ProtoMajor, r.ProtoMinor = 2, 0
 	r.Header.Set("Accept-Language", "fr")
-	got := JA4H(r, []string{"accept-language", ":path"})
+	got := JA4HFull(r, []string{"accept-language", ":path"})
 	if !strings.HasPrefix(got, "ge20nn01fr00_") || !strings.Contains(got, h12("accept-language")) {
 		t.Fatalf("got %q", got)
 	}
@@ -68,9 +68,29 @@ func TestJA4HH2AndPadding(t *testing.T) {
 
 func TestJA4HFallbackDeterministic(t *testing.T) {
 	r, _ := chromeReq()
-	a, b := JA4H(r, nil), JA4H(r, nil)
+	a, b := JA4HFull(r, nil), JA4HFull(r, nil)
 	if a != b || !strings.Contains(a, h12("Accept,Accept-Language,Host,User-Agent")) {
 		t.Fatalf("got %q", a)
+	}
+}
+
+func TestComponentJA4HIsCookieFree(t *testing.T) {
+	r, order := chromeReq()
+	full := JA4HFull(r, order)
+	parts := strings.Split(full, "_")
+	if len(parts) != 4 || parts[2] == emptyHash {
+		t.Fatalf("fixture must carry cookies: %s", full)
+	}
+	c := Component(r, order)
+	if c["ja4h"] != parts[0]+"_"+parts[1] || JA4HStable(r, order) != c["ja4h"] {
+		t.Fatalf("component ja4h %v, want %s_%s", c["ja4h"], parts[0], parts[1])
+	}
+	r.Header.Set("Cookie", "session=rotated; _ga=other")
+	if Component(r, order)["ja4h"] != c["ja4h"] {
+		t.Fatal("cookie rotation changed the component ja4h")
+	}
+	if JA4HFull(r, order) == full {
+		t.Fatal("cookie rotation should change the full ja4h")
 	}
 }
 

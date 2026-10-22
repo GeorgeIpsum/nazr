@@ -27,6 +27,7 @@ type StoreAPI interface {
 	auth.KeyResolver
 	Ping(ctx context.Context) error
 	InsertEvent(ctx context.Context, e store.Event) error
+	HasRecentEvent(ctx context.Context, ipHash, thumbmark string, since time.Time) (bool, error)
 	RecordUAJA4(ctx context.Context, ja4, family string, now time.Time) error
 	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
 	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error

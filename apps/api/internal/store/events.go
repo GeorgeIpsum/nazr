@@ -42,6 +42,16 @@ func (s *Store) InsertEvent(ctx context.Context, e Event) error {
 	return err
 }
 
+// HasRecentEvent reports whether an event with thumbmark from the client IP
+// identified by ipHash was recorded at or after since.
+func (s *Store) HasRecentEvent(ctx context.Context, ipHash, thumbmark string, since time.Time) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM events WHERE thumbmark = $2 AND created_at >= $3 AND ip_hash = $1)`,
+		ipHash, thumbmark, since).Scan(&ok)
+	return ok, err
+}
+
 // InsertClientLog stores a client-side log body, optionally tied to a key.
 func (s *Store) InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error {
 	var k any

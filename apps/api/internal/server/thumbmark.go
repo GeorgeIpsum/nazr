@@ -283,7 +283,8 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	if s.Intel != nil && addr.IsValid() {
 		lookup = s.Intel.Lookup(addr)
 	}
-	sc, ja4 := serverComponents(r, view, requestOrder(r), s.Cfg, addr, lookup)
+	order := requestOrder(r)
+	sc, ja4 := serverComponents(r, view, order, s.Cfg, addr, lookup)
 	hasTLS := view.TLS != nil || ja4 != ""
 
 	opts := fingerprint.OptionsFromRequest(body.options)
@@ -360,10 +361,10 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	ev := store.Event{
 		ID: rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
 		IPHash: ipHash, JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent, Path: body.path,
+		// The component (and so the hash) uses the cookie-free ja4h; the
+		// event keeps the complete fingerprint for analysis.
+		JA4H:     httpfp.JA4HFull(r, order),
 		Metadata: body.metadataRaw, CreatedAt: s.Now().UTC(),
-	}
-	if hdr, ok := sc["header"].(map[string]any); ok {
-		ev.JA4H, _ = hdr["ja4h"].(string)
 	}
 	if s.Cfg.StoreIP == "raw" && addr.IsValid() {
 		a := addr

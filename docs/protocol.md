@@ -79,7 +79,7 @@ X-Request-Id: 01M5J6QG9G9MX939VCQPRHFD3D
     "header": {
       "accept": "*/*",
       "acceptLanguage": { "q": { "en-US": 1 }, "raw": "en-US" },
-      "ja4h": "po11nn09enus_4b194e84c1fa_000000000000_000000000000",
+      "ja4h": "po11nn09enus_4b194e84c1fa",
       "order": ["host", "accept", "x-api-key", "origin", "authorization", "content-type", "user-agent", "accept-language", "content-length"],
       "userAgent": "Mozilla/5.0 (Macintosh) Chrome/130"
     },
@@ -126,6 +126,7 @@ There is no `info.country` because no geo source was loaded, and no `tls` or `h2
 
 - `thumbmark`: murmur128 hex hash computed by the server over `merge(client components, filter(server components))`. The filter uses the same stabilization rules as the client; browser-specific rules use the client's `components.system.browser`. The client and server therefore agree on the hash.
 - `components`: the server-observed components, unfiltered. Keys: `tls`, `h2`, `header`, `ip` (see [signals.md](signals.md)). A key is absent when it could not be observed.
+- `components.header.ja4h`: the cookie-free JA4H, `ja4h_a_ja4h_b`. The cookie hashes (`ja4h_c`, `ja4h_d`) change whenever a cookie is set or rotated, so they stay out of the thumbmark; the complete four-part JA4H is stored in `events.ja4h`.
 - `info.ip_address` and `info.country` are omitted entirely (not zero-valued) when the address or country is unknown. The stock client tolerates both being absent.
 - `info.ip_address.ip_identifier`: first 16 hex characters of `sha256(NAZR_IP_HASH_SALT + address)`, a stable handle for grouping without exposing the address.
 - `info.classification`, `info.signals`: see [signals.md](signals.md). `signals` contains every evaluated signal, true or false.
@@ -171,9 +172,9 @@ X-Request-Id: 01M5J6QGD433NP49SECAYZD7JR
 
 Body: `{"ua": "", "thumbmark": "", "ja4": "", "ja4_source": ""}`, sent with `sendBeacon` or a no-cors fetch as `text/plain`. The route is unauthenticated because `sendBeacon` cannot set headers, so it is rate limited per client IP at `NAZR_DEFAULT_RATE_LIMIT`.
 
-The server records one `ua_ja4_observations` row: the JA4 is taken from the live connection (terminate mode) or from `NAZR_JA4_HEADER` (proxied mode) when present, otherwise from the body, and the UA family is parsed from `ua`. A malformed body is ignored. The answer is 204, or 429 with `Retry-After` when limited.
+The server records one `ua_ja4_observations` row: the JA4 is taken from the live connection (terminate mode) or from `NAZR_JA4_HEADER` (proxied mode) when present, otherwise from the body, and the UA family is parsed from `ua`. The row is recorded only when the same client IP made a `/thumbmark` request that produced the body's `thumbmark` within the last 10 minutes; otherwise, and for a malformed body, the beacon is ignored. The answer is 204, or 429 with `Retry-After` when limited.
 
-Because the route is unauthenticated, anyone can seed observations; see the warning in [signals.md](signals.md#ua_tls_mismatch-and-the-ja4-corpus).
+Because the route is unauthenticated, observations can still be seeded by a client that also calls `/thumbmark`; see the warning in [signals.md](signals.md#ua_tls_mismatch-and-the-ja4-corpus).
 
 ## `POST /log`
 

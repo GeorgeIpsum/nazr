@@ -82,10 +82,13 @@ func cookiePairs(r *http.Request) []cookiePair {
 	return out
 }
 
-// JA4H returns the FoxIO JA4H fingerprint. Header names are hashed exactly as
-// sent (the reference implementation does not change their case), excluding
-// pseudo headers, Cookie and Referer.
-func JA4H(r *http.Request, headerOrder []string) string {
+// JA4HFull returns the complete FoxIO JA4H fingerprint (ja4h_a_b_c_d).
+// Header names are hashed exactly as sent (the reference implementation does
+// not change their case), excluding pseudo headers, Cookie and Referer. The c
+// and d parts hash cookie names and name=value pairs, so they change whenever
+// a cookie is set or rotated; store this value, but hash identity with
+// JA4HStable.
+func JA4HFull(r *http.Request, headerOrder []string) string {
 	method := strings.ToLower(r.Method)
 	if len(method) > 2 {
 		method = method[:2]
@@ -127,4 +130,17 @@ func JA4H(r *http.Request, headerOrder []string) string {
 		c, d = hash12(ns), hash12(ps)
 	}
 	return a + "_" + hash12(names) + "_" + c + "_" + d
+}
+
+// JA4HStable returns the cookie-free form ja4h_a_ja4h_b: the first two parts
+// of JA4HFull. It is what the `header` component carries, so a cookie being
+// set or rotated does not change the thumbmark.
+func JA4HStable(r *http.Request, headerOrder []string) string {
+	full := JA4HFull(r, headerOrder)
+	if i := strings.IndexByte(full, '_'); i >= 0 {
+		if j := strings.IndexByte(full[i+1:], '_'); j >= 0 {
+			return full[:i+1+j]
+		}
+	}
+	return full
 }

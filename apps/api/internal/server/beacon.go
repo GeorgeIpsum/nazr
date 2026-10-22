@@ -8,9 +8,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"nazr/api/internal/ipintel"
 	"nazr/api/internal/ua"
 )
+
+// beaconEventWindow is how recent a matching /thumbmark event must be for a
+// beacon to count.
+const beaconEventWindow = 10 * time.Minute
 
 type beaconBody struct {
 	UA        string `json:"ua"`
@@ -21,8 +27,11 @@ type beaconBody struct {
 
 // handleBeacon records a (JA4, UA family) observation. It is sent with
 // sendBeacon (no custom headers), so it is unauthenticated and rate limited
-// per client IP at NAZR_DEFAULT_RATE_LIMIT. Malformed bodies are ignored:
-// the answer is 204 unless the limiter rejects the request (429).
+// per client IP at NAZR_DEFAULT_RATE_LIMIT. To make seeding the corpus
+// harder, an observation is recorded only when the same client IP produced a
+// /thumbmark event with the body's thumbmark in the last 10 minutes.
+// Malformed or unmatched bodies are ignored: the answer is 204 unless the
+// limiter rejects the request (429).
 func (s *server) handleBeacon(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	addr, view := s.clientIP(r)
@@ -51,13 +60,20 @@ func (s *server) handleBeacon(w http.ResponseWriter, r *http.Request) {
 	default:
 		ja4 = strings.TrimSpace(b.JA4)
 	}
-	if ja4 != "" && strings.TrimSpace(b.UA) != "" {
-		family := ua.Family(b.UA)
+	tm := strings.TrimSpace(b.Thumbmark)
+	if ja4 != "" && strings.TrimSpace(b.UA) != "" && tm != "" && addr.IsValid() {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
-		if err := s.Store.RecordUAJA4(sctx, ja4, family, s.Now().UTC()); err != nil {
-			s.Logger.Warn("server: record ua/ja4 observation failed", "err", err, "request_id", requestIDFrom(ctx))
+		defer cancel()
+		now := s.Now().UTC()
+		seen, err := s.Store.HasRecentEvent(sctx, ipintel.Identifier(addr, s.Cfg.IPHashSalt), tm, now.Add(-beaconEventWindow))
+		switch {
+		case err != nil:
+			s.Logger.Warn("server: beacon event check failed", "err", err, "request_id", requestIDFrom(ctx))
+		case seen:
+			if err := s.Store.RecordUAJA4(sctx, ja4, ua.Family(b.UA), now); err != nil {
+				s.Logger.Warn("server: record ua/ja4 observation failed", "err", err, "request_id", requestIDFrom(ctx))
+			}
 		}
-		cancel()
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
