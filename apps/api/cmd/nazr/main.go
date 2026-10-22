@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"slices"
 
 	"nazr/api/internal/config"
+	"nazr/api/internal/store"
 	"nazr/api/internal/version"
 )
 
@@ -38,7 +40,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "serve":
 		return serve(args[1:], stdout, stderr)
 	case "migrate":
-		return notImplemented(stderr, "migrate")
+		return migrate(stdout, stderr)
 	case "keys":
 		if len(args) < 2 || !slices.Contains([]string{"create", "list", "revoke"}, args[1]) {
 			fmt.Fprint(stderr, usage)
@@ -90,5 +92,35 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	for _, k := range keys {
 		fmt.Fprintf(stdout, "%s=%s\n", k, red[k])
 	}
+	return 0
+}
+
+func migrate(stdout, stderr io.Writer) int {
+	cfg, err := config.Load(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(stderr, "nazr:", err)
+		return 1
+	}
+	if cfg.DatabaseURL == "" {
+		fmt.Fprintln(stderr, "nazr: NAZR_DATABASE_URL is required")
+		return 1
+	}
+	ctx := context.Background()
+	s, err := store.Open(ctx, cfg.DatabaseURL, "")
+	if err != nil {
+		fmt.Fprintln(stderr, "nazr:", err)
+		return 1
+	}
+	defer s.Close()
+	if err := s.Migrate(ctx); err != nil {
+		fmt.Fprintln(stderr, "nazr:", err)
+		return 1
+	}
+	v, err := s.MigrationVersion(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, "nazr:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "migrations applied; version %d\n", v)
 	return 0
 }
