@@ -73,7 +73,7 @@ func TestParseMajor(t *testing.T) {
 	}{
 		{" 17", 17, true}, {"+17", 17, true}, {"17.1", 17, true}, {"abc", 0, false},
 		{"", 0, true}, {"-3", -3, true}, {"99999999999999999999", maxInt, true},
-		{"unknown", 0, false},
+		{"unknown", 0, false}, {"\u008517", 0, false}, {"\u00a017", 17, true},
 	}
 	for _, c := range cases {
 		if got, ok := parseMajor(c.in); got != c.want || ok != c.ok {

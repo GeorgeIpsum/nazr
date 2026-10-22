@@ -130,3 +130,17 @@ func TestStringifyUnsupportedPanics(t *testing.T) {
 		}()
 	}
 }
+
+func TestKeyOrderLoneSurrogates(t *testing.T) {
+	// Expected order from:
+	// node -e 'console.log(JSON.stringify(Object.keys({"\ud83d":1,"\udc00":2,"":3,"\ue000":4,"\uffff":5,"\ud83dx":6}).sort()))'
+	// => ["","\ud83d","\ud83dx","\udc00","\ue000","\uffff"]
+	m, err := Decode(strings.NewReader(`{"\ud83d":1,"\udc00":2,"":3,"\ue000":4,"\uffff":5,"\ud83dx":6}`), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"\":3,\"\\ud83d\":1,\"\\ud83dx\":6,\"\\udc00\":2,\"\ue000\":4,\"\uffff\":5}"
+	if got := StableStringify(m); got != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // Options mirrors the include/exclude/stabilize filtering options.
@@ -65,7 +64,7 @@ func parseMajor(version string) (int, bool) {
 	if first == "" {
 		first = "0"
 	}
-	first = strings.TrimLeftFunc(first, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' })
+	first = strings.TrimLeftFunc(first, isJSSpace)
 	neg := false
 	if first != "" && (first[0] == '+' || first[0] == '-') {
 		neg = first[0] == '-'
@@ -203,4 +202,16 @@ func deepCopy(v any) any {
 		return out
 	}
 	return v
+}
+
+// isJSSpace is the JavaScript WhiteSpace/LineTerminator set (not unicode.IsSpace,
+// which also accepts U+0085).
+func isJSSpace(r rune) bool {
+	switch {
+	case r >= 0x09 && r <= 0x0D, r == 0x20, r == 0xA0, r == 0x1680,
+		r >= 0x2000 && r <= 0x200A, r == 0x2028, r == 0x2029, r == 0x202F,
+		r == 0x205F, r == 0x3000, r == 0xFEFF:
+		return true
+	}
+	return false
 }

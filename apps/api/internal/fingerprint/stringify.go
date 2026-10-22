@@ -83,7 +83,7 @@ func write(sb *strings.Builder, v any) {
 		}
 		units := make(map[string][]uint16, len(keys))
 		for _, k := range keys {
-			units[k] = utf16.Encode([]rune(k))
+			units[k] = utf16Units(k)
 		}
 		sort.Slice(keys, func(i, j int) bool { return lessUnits(units[keys[i]], units[keys[j]]) })
 		sb.WriteByte('{')
@@ -124,8 +124,7 @@ const hexDigits = "0123456789abcdef"
 // writeString escapes s like JavaScript's JSON.stringify: no HTML escaping,
 // U+007F/U+2028/U+2029 left alone, control characters as \u00xx. A lone
 // surrogate (only representable in Go as the invalid UTF-8 form ED A0..BF xx)
-// becomes \udxxx; JSON decoding replaces them with U+FFFD, so this cannot
-// occur for decoded input.
+// becomes \udxxx. Decode produces this form for lone surrogate escapes.
 func writeString(sb *strings.Builder, s string) {
 	sb.WriteByte('"')
 	for i := 0; i < len(s); {
@@ -177,4 +176,26 @@ func writeString(sb *strings.Builder, s string) {
 		i += size
 	}
 	sb.WriteByte('"')
+}
+
+// utf16Units returns the UTF-16 code units of s, treating the WTF-8 form of a
+// lone surrogate (ED A0..BF xx) as the single surrogate unit.
+func utf16Units(s string) []uint16 {
+	out := make([]uint16, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == 0xED && i+2 < len(s) && s[i+1] >= 0xA0 && s[i+1] <= 0xBF && s[i+2]&0xC0 == 0x80 {
+			out = append(out, 0xD000|uint16(s[i+1]&0x3F)<<6|uint16(s[i+2]&0x3F))
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r >= 0x10000 {
+			r1, r2 := utf16.EncodeRune(r)
+			out = append(out, uint16(r1), uint16(r2))
+		} else {
+			out = append(out, uint16(r))
+		}
+		i += size
+	}
+	return out
 }
