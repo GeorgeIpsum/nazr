@@ -183,8 +183,10 @@ it is stored in `client_logs` and pruned on the same retention schedule.
   `NAZR_JA4_HEADER` (default `x-ja4`), JA4H computed locally, `h2` absent.
   Client IP from `NAZR_CLIENT_IP_HEADER` (default `x-forwarded-for`, rightmost
   non-trusted hop, with `NAZR_TRUSTED_PROXIES` CIDRs).
-- `plain`: local dev. No `tls`, no `h2`. Client IP from the socket unless the
-  header is configured.
+- `plain`: local dev. No `tls`, no `h2`. Client IP from the socket (or PROXY
+  v2 when enabled). `NAZR_CLIENT_IP_HEADER` is honoured only in `proxied`
+  mode: it has a default (`x-forwarded-for`), so honouring it in `plain` mode
+  would let any client spoof its address.
 
 Certificates in `terminate` mode come from, in precedence order:
 `NAZR_TLS_CERT_PEM`/`NAZR_TLS_KEY_PEM` (inline, what Terraform injects from

@@ -285,3 +285,11 @@ func TestAdminMiddleware(t *testing.T) {
 		t.Fatalf("right token: %d", rr.Code)
 	}
 }
+
+func TestWriteErrorDoesNotEscapeHTML(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteError(w, 403, "origin_not_allowed", "origin <https://a&b> not allowed")
+	if got := w.Body.String(); got != `{"error":"origin_not_allowed","message":"origin <https://a&b> not allowed"}`+"\n" {
+		t.Fatalf("body %q", got)
+	}
+}

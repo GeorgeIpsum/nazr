@@ -544,8 +544,24 @@ func TestReadyzReportsSources(t *testing.T) {
 
 	e.store.pingErr = errBoom
 	w = e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if w.Code != 200 {
+		t.Fatalf("answer within 1s not reused: %d", w.Code)
+	}
+	e.now = e.now.Add(time.Second)
+	w = e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if w.Code != 503 || decodeResp(t, w)["store"] != "error" {
 		t.Fatalf("store down: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestReadyzTrimsSourceErrors(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DataDir = "/srv/nazr-data/" })
+	e.intel.status = map[string]ipintel.SourceStatus{
+		"tor": {LastError: "tor: open /srv/nazr-data/tor.txt: permission denied\ngoroutine 1 [running]:\nmain.main()"},
+	}
+	resp := decodeResp(t, e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil)))
+	if got := path(resp, "sources", "tor", "last_error"); got != "tor: open <data>/tor.txt: permission denied" {
+		t.Fatalf("last_error %q", got)
 	}
 }
 
@@ -726,6 +742,24 @@ func TestServerComponentsStringifiable(t *testing.T) {
 			}()
 			_ = fingerprint.StableStringify(sc[k])
 		}()
+	}
+	// The header component's shape: cookie-free ja4h (two parts), the
+	// request's own lowercased order, and only present headers.
+	hdr := sc["header"].(map[string]any)
+	want := []string{"ja4h", "order", "userAgent", "accept", "acceptEncoding", "acceptLanguage", "clientHints"}
+	if len(hdr) != len(want) {
+		t.Fatalf("header keys %v, want %v", hdr, want)
+	}
+	for _, k := range want {
+		if _, ok := hdr[k]; !ok {
+			t.Fatalf("header.%s missing: %v", k, hdr)
+		}
+	}
+	if j := hdr["ja4h"].(string); strings.Count(j, "_") != 1 || j != httpfp.JA4HStable(r, testHeaderOrder) {
+		t.Fatalf("header.ja4h %q", j)
+	}
+	if o := hdr["order"].([]string); len(o) != len(testHeaderOrder) || o[0] != "host" {
+		t.Fatalf("header.order %v", o)
 	}
 	cfg.TLSMode = "proxied"
 	r.Header.Set("x-ja4", "t13d_x")

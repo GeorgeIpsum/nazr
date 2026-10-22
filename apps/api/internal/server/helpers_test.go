@@ -244,6 +244,7 @@ type env struct {
 	cfg   config.Config
 	key   string
 	rand  float64
+	now   time.Time // the server's clock; testNow unless a test advances it
 	h     http.Handler
 }
 
@@ -265,7 +266,7 @@ func newEnv(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
 // newEnvCache is newEnv with a key cache wired into the server.
 func newEnvCache(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache) *env {
 	t.Helper()
-	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1,
+	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
 		intel: &fakeIntel{
 			lookup: ipintel.Lookup{ASN: 64496, ASOrg: "Example Networks", Country: "US", CountryName: "United States",
 				ContinentCode: "NA", ContinentName: "North America", Region: "US-NY", City: "New York"},
@@ -284,7 +285,7 @@ func newEnvCache(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
 		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache,
-		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return testNow }, Rand: func() float64 { return e.rand },
+		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
 	})
 	return e
 }

@@ -1,10 +1,26 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
+
+// readyTTL is how long a computed /readyz answer is reused, so probes and
+// scrapers cannot turn it into a store-ping amplifier.
+const readyTTL = time.Second
+
+type readyCache struct {
+	mu      sync.Mutex
+	expires time.Time
+	status  int
+	body    []byte
+}
 
 type sourceStatusJSON struct {
 	Loaded       bool       `json:"loaded"`
@@ -37,13 +53,26 @@ func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 
 // handleReadyz is 200 whenever the store pings, whatever the state of the
 // intelligence sources (which are reported, not gating), and 503 otherwise.
+// The answer is computed at most once per second and reused in between.
 func (s *server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	s.ready.mu.Lock()
+	defer s.ready.mu.Unlock()
+	if now := s.Now(); s.ready.body == nil || !now.Before(s.ready.expires) {
+		s.ready.status, s.ready.body = s.computeReadyz(r.Context())
+		s.ready.expires = now.Add(readyTTL)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(s.ready.status)
+	_, _ = w.Write(s.ready.body)
+}
+
+func (s *server) computeReadyz(ctx context.Context) (int, []byte) {
 	resp := readyzResponse{Version: s.Version, TLSMode: s.Cfg.TLSMode, Store: "ok",
 		Sources: map[string]sourceStatusJSON{}}
 	if s.Intel != nil {
 		for name, st := range s.Intel.Status() {
 			j := sourceStatusJSON{Loaded: st.Loaded, Rows: st.Rows, FetchedAt: timePtr(st.FetchedAt),
-				LastModified: timePtr(st.LastModified), LastError: st.LastError}
+				LastModified: timePtr(st.LastModified), LastError: publicError(st.LastError, s.Cfg.DataDir)}
 			if st.Interval > 0 {
 				j.Interval = st.Interval.String()
 			}
@@ -51,14 +80,31 @@ func (s *server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	status := http.StatusOK
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := s.Store.Ping(ctx); err != nil {
+	if err := s.Store.Ping(pctx); err != nil {
 		s.Logger.Warn("server: readiness store ping failed", "err", err)
 		resp.Store = "error"
 		status = http.StatusServiceUnavailable
 	}
-	writeJSON(w, status, resp)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(resp)
+	return status, buf.Bytes()
+}
+
+// publicError trims a source error for the unauthenticated /readyz: first
+// line only, with the data directory replaced by "<data>".
+func publicError(msg, dataDir string) string {
+	msg, _, _ = strings.Cut(msg, "\n")
+	msg = strings.TrimSpace(msg)
+	if dataDir != "" {
+		if d := filepath.Clean(dataDir); d != "/" && d != "." {
+			msg = strings.ReplaceAll(msg, d, "<data>")
+		}
+	}
+	return msg
 }
 
 func (s *server) handleRoot(w http.ResponseWriter, _ *http.Request) {

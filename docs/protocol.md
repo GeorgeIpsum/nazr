@@ -17,7 +17,7 @@ Every response carries an `X-Request-Id` header (a ULID). On `/thumbmark` the sa
 | `POST /thumbmark` | `x-api-key` | 200 | Compute a fingerprint, classify, resolve the visitor |
 | `OPTIONS /thumbmark`, `/beacon`, `/log` | none | 204 | CORS preflight |
 | `POST /beacon` | none, rate limited per IP | 204 | Record a (JA4, UA family) observation |
-| `POST /log` | none | 204 | Client debug log (stored only if `NAZR_LOG_RETENTION` is set) |
+| `POST /log` | none, rate limited per IP | 204 | Client debug log (stored only if `NAZR_LOG_RETENTION` is set) |
 | `GET /healthz` | none | 200 `ok` | Process is alive |
 | `GET /readyz` | none | 200 JSON | Store reachable; list status |
 | `GET /admin/keys` | admin token | 200 | List keys |
@@ -204,7 +204,7 @@ Details and limits:
 
 `GET /healthz` returns `ok` while the process is up.
 
-`GET /readyz` returns 200 whenever the database answers a ping, regardless of the state of any list source, and 503 (`"store": "error"`) otherwise. It does not check that migrations are current. Sources are reported, not gating:
+`GET /readyz` returns 200 whenever the database answers a ping, regardless of the state of any list source, and 503 (`"store": "error"`) otherwise. It does not check that migrations are current. The answer is computed at most once per second and reused in between. A source's `last_error` is its first line only, with the `NAZR_DATA_DIR` prefix shown as `<data>`. Sources are reported, not gating:
 
 ```json
 {

@@ -65,6 +65,7 @@ type Deps struct {
 
 type server struct {
 	Deps
+	ready readyCache
 }
 
 // New returns the public HTTP handler. /metrics is served separately by

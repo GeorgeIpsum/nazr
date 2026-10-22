@@ -239,7 +239,7 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		}
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", server.NewMetricsHandler())
-		ms := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+		ms := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
 		servers = append(servers, ms)
 		run(ms, ml, "metrics")
 	}
