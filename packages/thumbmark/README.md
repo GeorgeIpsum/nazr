@@ -21,13 +21,21 @@ pnpm add @nazr/thumbmark
 ```ts
 import { Thumbmark } from "@nazr/thumbmark";
 
-const tm = new Thumbmark({ api_endpoint: "https://nazr.example.com/api" });
+const tm = new Thumbmark({
+  api_endpoint: "https://nazr.example.com",
+  api_key: "your-api-key", // or `simple_request: true` when a proxy injects the key
+});
 const result = await tm.get();
-console.log(result.thumbmark);
+console.log(result.thumbmark, result.visitorId);
 ```
 
-When `api_endpoint` is set, the log URL is `<api_endpoint>/log` and the beacon URL
-is `<api_endpoint>/beacon`. A trailing slash on `api_endpoint` is ignored.
+Without `api_key` (or `simple_request`) no server call is made: the thumbmark is
+computed locally, and `info` and `visitorId` are absent from the result.
+
+When `api_endpoint` is set, the thumbmark URL is `<api_endpoint>/thumbmark`, the
+log URL is `<api_endpoint>/log` and the beacon URL is `<api_endpoint>/beacon`. A
+trailing slash on `api_endpoint` is ignored. A path in `api_endpoint` is used
+verbatim as the thumbmark URL, with `/log` and `/beacon` appended to it.
 
 ## Components
 
@@ -35,7 +43,7 @@ Upstream (13): `audio`, `canvas`, `fonts`, `hardware`, `locales`, `math`,
 `permissions`, `plugins`, `screen`, `speech`, `system`, `webgl`, `webrtc`.
 
 Added by nazr (5): `webgpu`, `clienthints`, `clientrects`, `mediaqueries`, `privacy`.
-Each returns `null` when its API is unavailable, so the key is omitted.
+Each returns `null` when its API is unavailable, so the key is omitted, except `privacy`, which always returns an object.
 
 ## Differences from upstream
 
@@ -46,7 +54,7 @@ Each returns `null` when its API is unavailable, so the key is omitted.
   `logThumbmarkData` sends `experimental: null`.
 - Five new components (see above) and matching stabilization rules.
 - Extra result types: `classification.private_relay`, `uniqueness.visitors_sharing`,
-  `uniqueness.visitors_total`, `components.h2`.
+  `uniqueness.visitors_total`.
 - `hash` is additionally exported from the package entry point.
 - ESLint is replaced by Biome; the package manager is pnpm.
 
@@ -61,4 +69,5 @@ this package, so upstream fixes can be reviewed and ported.
 
 ## License
 
-MIT for the upstream-derived code, see [LICENSE.upstream](./LICENSE.upstream).
+The fork's own additions are licensed under the repository's GPL-3.0. Upstream-derived
+code remains MIT, see [LICENSE.upstream](./LICENSE.upstream).

@@ -1,6 +1,7 @@
 import type { componentInterface } from "../factory";
-import { DEFAULT_API_ENDPOINT, type OptionsAfterDefaults, optionsInterface } from "../options";
+import { type OptionsAfterDefaults, optionsInterface } from "../options";
 import { getApiResponseExpiry, getCache, setCache } from "../utils/cache";
+import { resolveApiEndpoint } from "../utils/endpoints";
 import { hash } from "../utils/hash";
 import { stableStringify } from "../utils/stableStringify";
 import { getVersion } from "../utils/version";
@@ -186,17 +187,7 @@ export const getApiPromise = (
     }
 
     // 3. Otherwise, initiate a new API call with timeout.
-    const apiEndpoint = options.api_endpoint || DEFAULT_API_ENDPOINT;
-    let endpoint: string;
-    try {
-        const u = new URL(apiEndpoint);
-        endpoint =
-            u.pathname === "/" && !apiEndpoint.endsWith("/")
-                ? `${u.origin}/thumbmark`
-                : apiEndpoint;
-    } catch {
-        endpoint = `${apiEndpoint}/thumbmark`;
-    }
+    const endpoint = resolveApiEndpoint(options);
     const visitorId = getVisitorId(options);
     // Omit api_key from the body — in normal mode it goes in the x-api-key header; in simple_request mode it is proxy-injected.
     const { api_key: _omitApiKey, ...optionsForBody } = options;
