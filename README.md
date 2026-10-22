@@ -23,12 +23,15 @@ Then point the client at it:
 ```ts
 import { Thumbmark } from "@nazr/thumbmark";
 
-const tm = new Thumbmark({ api_key: "nzr_...", api_endpoint: "http://127.0.0.1:8080", logging: false });
+const tm = new Thumbmark({
+  api_key: "nzr_...",
+  api_endpoint: "http://127.0.0.1:8080",
+  logging: false,
+});
 console.log(await tm.get());
 ```
 
 `plain` mode is for local development. Production deployments use `terminate` (default) or `proxied`; see the connection modes in [docs/protocol.md](docs/protocol.md#connection-modes-and-fingerprint-capture).
-
 - Docker Compose: coming in the next plan.
 - Terraform (AWS): coming in the next plan.
 

@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm lint:biome
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-dist
+          path: apps/demo/dist
+          if-no-files-found: error
+
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: nazr
+          POSTGRES_PASSWORD: nazr
+          POSTGRES_DB: nazr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nazr -d nazr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NAZR_TEST_REQUIRE_DB: "1"
+      NAZR_TEST_DATABASE_URL: postgres://nazr:nazr@localhost:5432/nazr?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nazr/api lint
+      - run: go test -race ./...
+        working-directory: apps/api
+
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nazr/thumbmark fixtures
+      - name: Fixtures are up to date
+        run: git diff --exit-code apps/api/testdata/fixtures
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose -f deploy/compose/docker-compose.yml up -d --build
+      - name: Smoke test
+        env:
+          KEEP: "0"
+        run: bash deploy/compose/smoke.sh
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose/docker-compose.yml logs --no-color || true
+      - name: Tear down
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.yml down -v || true
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: nazr
+          POSTGRES_PASSWORD: nazr
+          POSTGRES_DB: nazr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nazr -d nazr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NAZR_E2E_DATABASE_URL: postgres://nazr:nazr@localhost:5432/nazr?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nazr/thumbmark build
+      - run: pnpm --filter @nazr/demo build
+      - run: pnpm --filter @nazr/api build
+      - run: pnpm --filter @nazr/demo exec playwright install --with-deps chromium
+      - run: pnpm --filter @nazr/demo test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: apps/demo/test-results
+          if-no-files-found: ignore
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.x
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.65.0
+      - name: Format
+        run: terraform fmt -check -recursive deploy/terraform
+      - name: Validate
+        run: |
+          set -euo pipefail
+          for dir in deploy/terraform/aws deploy/terraform/aws/examples/minimal deploy/terraform/aws/examples/existing-vpc; do
+            echo "::group::validate $dir"
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done
+      - name: tflint
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tflint --init --chdir=deploy/terraform/aws
+          tflint --chdir=deploy/terraform/aws --recursive --config "$GITHUB_WORKSPACE/deploy/terraform/aws/.tflint.hcl"
