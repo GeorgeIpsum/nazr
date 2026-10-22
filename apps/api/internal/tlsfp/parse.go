@@ -189,9 +189,7 @@ func parse(hs []byte) (*ClientHello, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(r.b) != 0 {
-		return nil, errors.New("trailing bytes after extensions")
-	}
+	// Bytes after the extensions block (padding, garbage) are tolerated.
 	er := &reader{b: eb}
 	for len(er.b) > 0 {
 		t, err := er.u16()
@@ -214,22 +212,23 @@ func (ch *ClientHello) extension(t uint16, data []byte) error {
 	r := &reader{b: data}
 	switch t {
 	case 0x0000: // server_name
+		// JA4 'd' means the SNI extension is present, whatever it contains.
+		ch.SNI = true
+		if len(data) == 0 {
+			return nil
+		}
 		l, err := r.prefixed16()
 		if err != nil {
 			return err
 		}
 		lr := &reader{b: l}
 		for len(lr.b) > 0 {
-			typ, err := lr.u8()
+			_, err := lr.u8()
 			if err != nil {
 				return err
 			}
-			name, err := lr.prefixed16()
-			if err != nil {
+			if _, err := lr.prefixed16(); err != nil {
 				return err
-			}
-			if typ == 0 && len(name) > 0 {
-				ch.SNI = true
 			}
 		}
 	case 0x0010: // ALPN

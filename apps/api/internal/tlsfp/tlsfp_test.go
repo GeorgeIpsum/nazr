@@ -318,3 +318,82 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+// helloWith builds a ClientHello handshake message with the given raw
+// extensions block contents and trailing bytes after it.
+func helloWith(exts, trailer []byte) []byte {
+	var b []byte
+	b = append(b, 3, 3)
+	b = append(b, make([]byte, 32)...)
+	b = append(b, 0) // session id
+	b = append(b, 0, 2, 0x13, 0x01)
+	b = append(b, 1, 0) // compression
+	b = append(b, byte(len(exts)>>8), byte(len(exts)))
+	b = append(b, exts...)
+	b = append(b, trailer...)
+	return append([]byte{1, byte(len(b) >> 16), byte(len(b) >> 8), byte(len(b))}, b...)
+}
+
+func TestSNIPresenceRule(t *testing.T) {
+	cases := map[string][]byte{
+		"empty body":     {0, 0, 0, 0},
+		"empty list":     {0, 0, 0, 2, 0, 0},
+		"non host_name":  {0, 0, 0, 6, 0, 4, 1, 0, 1, 'x'},
+		"empty hostname": {0, 0, 0, 5, 0, 3, 0, 0, 0},
+	}
+	for name, ext := range cases {
+		ch, err := Parse(helloWith(ext, nil))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !ch.SNI || Fingerprint(ch, 't').JA4[3] != 'd' {
+			t.Errorf("%s: SNI=%v ja4=%s", name, ch.SNI, Fingerprint(ch, 't').JA4)
+		}
+	}
+	ch, err := Parse(helloWith(nil, nil))
+	if err != nil || ch.SNI {
+		t.Fatalf("no ext: %v %v", ch, err)
+	}
+}
+
+func TestParseTrailingBytesAfterExtensions(t *testing.T) {
+	ch, err := Parse(helloWith([]byte{0, 0x0a, 0, 2, 0, 0}, []byte{0, 0, 0, 0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.Extensions) != 1 {
+		t.Fatalf("%v", ch.Extensions)
+	}
+	// truncation inside the extensions block is still an error
+	hs := helloWith([]byte{0, 0x0a, 0, 9, 0, 0}, nil)
+	if _, err := Parse(hs); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func FuzzReadClientHello(f *testing.F) {
+	c, s := net.Pipe()
+	go func() {
+		cl := tls.Client(c, &tls.Config{ServerName: "example.com", NextProtos: []string{"h2", "http/1.1"}, InsecureSkipVerify: true})
+		_ = cl.Handshake()
+	}()
+	_ = s.SetReadDeadline(time.Now().Add(5 * time.Second))
+	raw, _, err := ReadClientHello(s)
+	_ = c.Close()
+	_ = s.Close()
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(raw)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		raw, hs, err := ReadClientHello(bytes.NewReader(b))
+		if len(raw) > len(b) {
+			t.Fatal("over-read")
+		}
+		if err == nil {
+			if _, err := Parse(hs); err == nil {
+				_ = hs
+			}
+		}
+	})
+}

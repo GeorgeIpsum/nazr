@@ -45,6 +45,9 @@ func Fingerprint(ch *ClientHello, transport byte) Result {
 
 	oc := hexJoin(ciphers)
 	oeAll := hexJoin(exts)
+	// FoxIO defines the original-order variants as "less GREASE" only, so
+	// SNI/ALPN stay in the list and the empty rule uses len(exts), not the
+	// count after SNI/ALPN removal.
 	r.JA4Orig = a + "_" + trunc(oc) + "_" + truncE(suffix(oeAll), len(exts))
 	r.JA4RawOrig = a + "_" + oc + "_" + suffix(oeAll)
 
