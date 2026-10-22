@@ -112,7 +112,7 @@ func newUnmigrated(t *testing.T) *Store {
 func newID() string { return ulid.Make().String() }
 
 // latestMigration is the highest migration in migrations/.
-const latestMigration = 3
+const latestMigration = 4
 
 func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 	s := newUnmigrated(t)
@@ -326,6 +326,7 @@ func TestInsertEventAndPrune(t *testing.T) {
 			IPHash: "iph", JA4: "j", JA4H: "jh", H2FP: "h2", UserAgent: "ua", Path: "/",
 			Classification: []byte(`{"bot":false}`), Signals: []byte(`[]`), CreatedAt: now.Add(-age)}
 		if i == 0 {
+			e.JA3Hash = "03117a8ed39ef02427ebbc39f121275c"
 			e.IP = &ip
 			e.Components = []byte(`{"a":1}`)
 			e.Metadata = []byte(`{"b":2}`)
@@ -333,6 +334,24 @@ func TestInsertEventAndPrune(t *testing.T) {
 		if err := s.InsertEvent(ctx, e); err != nil {
 			t.Fatalf("insert %d: %v", i, err)
 		}
+	}
+	// events.ja3_hash holds the JA3 hash when known and NULL otherwise.
+	var ja3s []*string
+	rows, err := s.pool.Query(ctx, `SELECT ja3_hash FROM events WHERE api_key_id = $1::uuid ORDER BY created_at`, k.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v *string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		ja3s = append(ja3s, v)
+	}
+	if rows.Err() != nil || len(ja3s) != 3 || ja3s[0] == nil || *ja3s[0] != "03117a8ed39ef02427ebbc39f121275c" ||
+		ja3s[1] != nil || ja3s[2] != nil {
+		t.Fatalf("ja3_hash rows %v (%v)", ja3s, rows.Err())
 	}
 	if err := s.InsertClientLog(ctx, &k.ID, []byte(`{"m":"x"}`)); err != nil {
 		t.Fatal(err)

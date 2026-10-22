@@ -366,6 +366,11 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 		JA4H:     httpfp.JA4HFull(r, order),
 		Metadata: body.metadataRaw, CreatedAt: s.Now().UTC(),
 	}
+	// JA3 is event-only (not a component): it hashes the extension wire
+	// order, which Chromium permutes per connection.
+	if view.TLS != nil {
+		ev.JA3Hash = view.TLS.JA3Hash
+	}
 	if s.Cfg.StoreIP == "raw" && addr.IsValid() {
 		a := addr
 		ev.IP = &a

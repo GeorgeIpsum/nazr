@@ -199,7 +199,7 @@ func TestComponentTypes(t *testing.T) {
 	ch, _ := Parse(hs)
 	m := Fingerprint(ch, 't').Component()
 	want := map[string]any{
-		"version": "", "ja4": "", "ja4_r": "", "ja3": "", "ja3_hash": "",
+		"version": "", "ja4": "", "ja4_r": "",
 		"ciphers": []string{}, "extensions": []string{}, "sig_algs": []string{}, "groups": []string{},
 		"sni": false, "alpn": []string{},
 	}
@@ -220,11 +220,44 @@ func TestComponentTypes(t *testing.T) {
 			t.Errorf("cipher %q", s)
 		}
 	}
+	for _, k := range []string{"ja3", "ja3_hash"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("%s must not be in the component (event-only)", k)
+		}
+	}
 	e := Fingerprint(&ClientHello{LegacyVersion: 0x0303}, 't').Component()
 	for _, k := range []string{"ciphers", "extensions", "sig_algs", "groups", "alpn"} {
 		if e[k] == nil || len(e[k].([]string)) != 0 {
 			t.Errorf("%s not empty slice", k)
 		}
+	}
+}
+
+// Chromium permutes the extension order on every connection, so the
+// component must not depend on it: extensions are sorted and JA3 (which
+// hashes the wire order) is left out.
+func TestComponentExtensionsSorted(t *testing.T) {
+	base := ClientHello{
+		LegacyVersion:     0x0303,
+		SupportedVersions: []uint16{0x0304, 0x0303},
+		CipherSuites:      hexList(t, "1301,1302,1303"),
+		SNI:               true,
+		ALPN:              []string{"h2"},
+	}
+	a, b := base, base
+	a.Extensions = hexList(t, "0a0a,001b,0000,0033,0010,0017,002d,000d,0005,0023,002b,ff01,000b,000a")
+	b.Extensions = hexList(t, "ff01,000a,0033,000b,0000,001b,2a2a,000d,0023,0010,002b,0005,0017,002d")
+	ra, rb := Fingerprint(&a, 't'), Fingerprint(&b, 't')
+	if ra.JA3Hash == rb.JA3Hash {
+		t.Fatal("fixture: permuted hellos should differ in JA3")
+	}
+	ca, cb := ra.Component(), rb.Component()
+	if !reflect.DeepEqual(ca, cb) {
+		t.Fatalf("components differ:\n%v\n%v", ca, cb)
+	}
+	want := []string{"0000", "0005", "000a", "000b", "000d", "0010", "0017", "001b", "0023", "002b", "002d", "0033", "ff01"}
+	if got := ca["extensions"].([]string); !reflect.DeepEqual(got, want) {
+		t.Fatalf("extensions %v, want %v", got, want)
 	}
 }
 

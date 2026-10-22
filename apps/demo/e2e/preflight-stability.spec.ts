@@ -42,15 +42,12 @@ test("thumbmark is stable with and without a cached preflight, and on a new conn
   const pageB = await ctxB.newPage();
   await openDemo(pageB);
   const third = await run(pageB);
-  // Chromium permutes TLS extension order per connection, so tls.ja3 / tls.ja3_hash legitimately
-  // differ on a new connection (and with them the thumbmark). Everything else must match.
-  // See the task report: this is a product concern, not a preflight regression.
-  const stable = (r: typeof first) => {
-    const { ja3: _a, ja3_hash: _b, ...tls } = r.components.tls as Record<string, unknown>;
-    return { ...r.components, tls };
-  };
-  expect(stable(third)).toEqual(stable(first));
-  expect(third.visitorId).toBeTruthy();
+  // Chromium permutes its TLS extension order per connection; the tls component sorts
+  // extensions and carries no JA3, so a new connection must give the same components,
+  // thumbmark and visitor.
+  expect(third.components).toEqual(first.components);
+  expect(third.thumbmark).toBe(first.thumbmark);
+  expect(third.visitorId).toBe(first.visitorId);
   expectPostHeaders(header(third).order);
   await ctxB.close();
 });

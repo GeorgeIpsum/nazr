@@ -186,12 +186,13 @@ Because the route is unauthenticated, observations can still be seeded by a clie
 
 | Mode | TLS | Captured | Client IP |
 |---|---|---|---|
-| `terminate` (default) | Terminated by nazr (inline PEM, files, or ACME) | JA4 and JA3 from the ClientHello, HTTP/2 fingerprint, header order for HTTP/2 | Connection address (or PROXY protocol v2 when `NAZR_PROXY_PROTOCOL` is set) |
+| `terminate` (default) | Terminated by nazr (inline PEM, files, or ACME) | JA4 from the ClientHello (JA3 hash stored on the event only), HTTP/2 fingerprint, header order for HTTP/2 | Connection address (or PROXY protocol v2 when `NAZR_PROXY_PROTOCOL` is set) |
 | `proxied` | Terminated upstream | JA4 read from `NAZR_JA4_HEADER` (default `x-ja4`); HTTP/1.1 header order as the proxy forwards it; no HTTP/2 fingerprint | `NAZR_CLIENT_IP_HEADER` (default `x-forwarded-for`) |
 | `plain` | None | HTTP/1.1 header order only | Connection address |
 
 Details and limits:
 
+- `terminate`: the `tls` component is built to be identical on every connection from the same browser. Chromium permutes its TLS extension order per connection, so `tls.extensions` is sorted ascending (JA4 sorts for the same reason) and JA3 / JA3 hash, which hash the wire order, are not part of the component or the response; the JA3 hash is kept in `events.ja3_hash`. TLS session tickets are disabled: a resuming TLS 1.3 ClientHello adds `pre_shared_key` (`0x0029`), which changes the JA4 extension count and hash of every returning browser. The cost is one full handshake per new connection, which is small because browsers reuse a single HTTP/2 connection for all requests to an origin.
 - `terminate`: HTTP/1.1 over TLS does not capture header order (Go's HTTP/1 server does not expose it behind `crypto/tls`), so `header.order` is the sorted header set and `ja4h` is computed from sorted header names. HTTP/2 connections keep the real order. Non-TLS bytes arriving on the TLS listener close the connection.
 - `proxied`: the client IP is the rightmost address in the header that is not inside `NAZR_TRUSTED_PROXIES`; when every entry is trusted the leftmost is used, and an unparseable entry falls back to the connection address. Headers are trusted regardless of the peer, so the listener must be reachable only through the proxy. Anyone who can connect directly can forge `x-ja4` and the client IP.
 - `plain` and `proxied`: header order is captured for every HTTP/1.1 request head on a connection, so keep-alive connections a proxy reuses across different end users still give each request its own order. Sniffing stops for the rest of a connection after a chunked request body, a protocol upgrade or a head over 32 KiB; later requests on it fall back to sorted names.
@@ -274,3 +275,4 @@ The implementation is the source of truth where it differs from section 4 of the
 - Wrong method on a known path returns the JSON 404 rather than 405.
 - `collect.source` is `none` (there is no JA4 to report); `header` is never emitted.
 - Preflight uses the global `NAZR_CORS_ORIGINS` for every key; the spec's "request Origin when the key allows it" applies only to real requests.
+- The `tls` component has no `ja3` / `ja3_hash` and its `extensions` list is sorted (the spec lists both JA3 fields and wire-order extensions). Chromium permutes the extension order per connection, so either would change the thumbmark between connections; the JA3 hash is stored in `events.ja3_hash` instead.

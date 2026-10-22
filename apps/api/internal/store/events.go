@@ -13,6 +13,7 @@ type Event struct {
 	IP                                             *netip.Addr
 	IPHash                                         string
 	JA4, JA4H, H2FP, UserAgent, Path               string
+	JA3Hash                                        string // "" stores NULL
 	Classification, Signals, Components, Metadata  json.RawMessage
 	CreatedAt                                      time.Time
 }
@@ -27,18 +28,21 @@ func nullJSON(m json.RawMessage) any {
 
 // InsertEvent stores an event.
 func (s *Store) InsertEvent(ctx context.Context, e Event) error {
-	var ip any
+	var ip, ja3 any
 	if e.IP != nil {
 		ip = *e.IP
 	}
+	if e.JA3Hash != "" {
+		ja3 = e.JA3Hash
+	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO events (id, api_key_id, visitor_id, thumbmark, client_hash, ip, ip_hash,
-		   ja4, ja4h, h2fp, user_agent, path, classification, signals, components, metadata, created_at)
-		 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		   ja4, ja4h, h2fp, user_agent, path, classification, signals, components, metadata, created_at, ja3_hash)
+		 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		e.ID, e.APIKeyID, e.VisitorID, e.Thumbmark, e.ClientHash, ip, e.IPHash,
 		e.JA4, e.JA4H, e.H2FP, e.UserAgent, e.Path,
 		nullJSON(e.Classification), nullJSON(e.Signals), nullJSON(e.Components), nullJSON(e.Metadata),
-		e.CreatedAt)
+		e.CreatedAt, ja3)
 	return err
 }
 

@@ -18,12 +18,14 @@ A component whose browser API is unavailable is omitted; `privacy` is always pre
 
 | Key | Present when | Fields |
 |---|---|---|
-| `tls` | TLS terminated here (full), or `proxied` mode with a JA4 header (only `ja4`) | `version`, `ja4`, `ja4_r`, `ja3`, `ja3_hash`, `ciphers`, `extensions`, `sig_algs`, `groups`, `sni`, `alpn`. GREASE values are dropped from the lists |
+| `tls` | TLS terminated here (full), or `proxied` mode with a JA4 header (only `ja4`) | `version`, `ja4`, `ja4_r`, `ciphers`, `extensions` (sorted ascending), `sig_algs`, `groups`, `sni`, `alpn`. GREASE values are dropped from the lists. JA3 is not included (see below) |
 | `h2` | `terminate` mode, HTTP/2 connection | `fingerprint` (Akamai-style string), `settings`, `window_update`, `priorities`, `pseudo_header_order` |
 | `header` | always | `ja4h` (cookie-free `ja4h_a_ja4h_b`; see below), `order` (lowercased), `userAgent`, `accept`, `acceptEncoding`, `acceptLanguage` (`raw`, `q`), `clientHints`; absent headers are omitted |
 | `ip` | the client address is known | `address`, `version`, `asn`, `as_org`, `country`, `region`, `city`, `tor`, `vpn`, `datacenter`, `private_relay` |
 
 `header.ja4h` drops JA4H's last two parts, the hashes of cookie names and cookie name=value pairs: a site setting or rotating a cookie would otherwise change the thumbmark of the same browser. The full four-part value is kept in `events.ja4h`. The `a` part still records whether a Cookie or Referer header is present.
+
+`tls` is the same on every connection from the same browser. Chromium permutes its TLS extension order per connection, so `tls.extensions` is sorted (as JA4 does) and JA3, which hashes the wire order, is left out of the component: the server stores the JA3 hash on the event only (`events.ja3_hash`). Session resumption is disabled in `terminate` mode because a resuming ClientHello adds `pre_shared_key` and would change JA4 for returning browsers.
 
 Header order is captured per request (each request's own HTTP/2 header block or HTTP/1.1 head) and depends on the TLS mode: `plain` captures HTTP/1.1 header order only; `terminate` captures it for HTTP/2 but not for HTTP/1.1 over TLS, where `ja4h` falls back to sorted header names; `proxied` sees whatever order the proxy forwards. See [Connection modes](protocol.md#connection-modes-and-fingerprint-capture).
 

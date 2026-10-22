@@ -1,6 +1,9 @@
 package tlsfp
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 func hex4(in []uint16) []string {
 	out := make([]string, 0, len(in))
@@ -30,20 +33,26 @@ func versionString(v uint16) string {
 
 // Component returns the `tls` fingerprint component. Value types are fixed:
 // strings, bool, and non-nil []string.
+//
+// The component must be identical across connections from the same browser.
+// Chromium permutes its TLS extension order on every connection, so
+// `extensions` is sorted ascending (as JA4 does) and JA3 / JA3 hash, which
+// hash the wire order, are not part of it: the server stores the JA3 hash on
+// the event only (events.ja3_hash).
 func (r Result) Component() map[string]any {
 	ch := r.Hello
 	if ch == nil {
 		ch = &ClientHello{}
 	}
 	alpn := append([]string{}, ch.ALPN...)
+	exts := hex4(ch.Extensions)
+	slices.Sort(exts) // fixed-width lowercase hex: lexical order is numeric order
 	return map[string]any{
 		"version":    versionString(highestVersion(ch)),
 		"ja4":        r.JA4,
 		"ja4_r":      r.JA4Raw,
-		"ja3":        r.JA3,
-		"ja3_hash":   r.JA3Hash,
 		"ciphers":    hex4(ch.CipherSuites),
-		"extensions": hex4(ch.Extensions),
+		"extensions": exts,
 		"sig_algs":   hex4(ch.SignatureAlgorithms),
 		"groups":     hex4(ch.SupportedGroups),
 		"sni":        ch.SNI,

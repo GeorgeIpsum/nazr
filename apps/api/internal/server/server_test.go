@@ -140,6 +140,14 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("ACAO %q", w.Header().Get("Access-Control-Allow-Origin"))
 	}
+	// JA3 is event-only: it hashes Chromium's per-connection extension order.
+	tlsc := path(resp, "components", "tls").(map[string]any)
+	if _, ok := tlsc["ja3"]; ok {
+		t.Fatalf("tls component carries ja3: %v", tlsc)
+	}
+	if _, ok := tlsc["ja3_hash"]; ok {
+		t.Fatalf("tls component carries ja3_hash: %v", tlsc)
+	}
 
 	if len(e.store.events) != 1 {
 		t.Fatalf("events %d", len(e.store.events))
@@ -147,6 +155,7 @@ func TestThumbmarkHappyPath(t *testing.T) {
 	ev := e.store.events[0]
 	if ev.IP == nil || *ev.IP != addr || ev.IPHash == "" || ev.ID != rid || ev.Thumbmark != want ||
 		ev.APIKeyID != keyID || ev.VisitorID != resp["visitorId"] || ev.JA4 != holder.TLS.JA4 ||
+		ev.JA3Hash == "" || ev.JA3Hash != holder.TLS.JA3Hash ||
 		ev.ClientHash != body["clientHash"] || ev.Path != "/" || ev.UserAgent != chromeUA ||
 		len(ev.Classification) == 0 || len(ev.Signals) == 0 || len(ev.Metadata) == 0 || ev.Components != nil {
 		t.Fatalf("event %+v", ev)

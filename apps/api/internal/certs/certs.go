@@ -54,6 +54,12 @@ func Setup(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tls.Co
 	base := &tls.Config{
 		NextProtos: []string{"h2", "http/1.1"},
 		MinVersion: tls.VersionTLS12,
+		// No session resumption: a resuming TLS 1.3 ClientHello carries
+		// pre_shared_key (0x0029), which changes the JA4 extension count
+		// and hash, and so the thumbmark, for every returning browser. The cost is a full
+		// handshake per new connection; browsers reuse one h2 connection
+		// for all requests to the origin, so that is about one per visit.
+		SessionTicketsDisabled: true,
 	}
 	switch {
 	case cfg.TLSCertPEM != "" && cfg.TLSKeyPEM != "":
