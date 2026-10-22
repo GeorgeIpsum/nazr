@@ -15,6 +15,10 @@ import (
 // scrapers cannot turn it into a store-ping amplifier.
 const readyTTL = time.Second
 
+// readyPingTimeout bounds the store ping, which ignores the request's own
+// cancellation.
+const readyPingTimeout = 2 * time.Second
+
 type readyCache struct {
 	mu      sync.Mutex
 	expires time.Time
@@ -58,7 +62,9 @@ func (s *server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	s.ready.mu.Lock()
 	defer s.ready.mu.Unlock()
 	if now := s.Now(); s.ready.body == nil || !now.Before(s.ready.expires) {
-		s.ready.status, s.ready.body = s.computeReadyz(r.Context())
+		// The answer is cached for every prober, so a prober that
+		// disconnects must not cancel the ping and cache its 503.
+		s.ready.status, s.ready.body = s.computeReadyz(context.WithoutCancel(r.Context()))
 		s.ready.expires = now.Add(readyTTL)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -80,7 +86,7 @@ func (s *server) computeReadyz(ctx context.Context) (int, []byte) {
 		}
 	}
 	status := http.StatusOK
-	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, readyPingTimeout)
 	defer cancel()
 	if err := s.Store.Ping(pctx); err != nil {
 		s.Logger.Warn("server: readiness store ping failed", "err", err)

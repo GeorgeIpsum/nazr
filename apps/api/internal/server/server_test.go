@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -873,5 +874,20 @@ func TestReadinessRoutesCORS(t *testing.T) {
 		if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "" {
 			t.Fatalf("%s unlisted origin: %d ACAO %q", target, w.Code, w.Header().Get("Access-Control-Allow-Origin"))
 		}
+	}
+}
+
+// A prober that disconnects mid-request must not cache a 503 for everyone
+// else: the store ping does not inherit the request's cancellation.
+func TestReadyzIgnoresProberCancellation(t *testing.T) {
+	e := newEnv(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil).WithContext(ctx))
+	if w.Code != 200 {
+		t.Fatalf("cancelled prober got %d: %s", w.Code, w.Body.String())
+	}
+	if w := e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil)); w.Code != 200 {
+		t.Fatalf("next prober got cached %d: %s", w.Code, w.Body.String())
 	}
 }

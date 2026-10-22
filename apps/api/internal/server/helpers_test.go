@@ -57,12 +57,15 @@ func (f *fakeStore) addKey(hash string, k *store.APIKey) {
 	f.byID[k.ID] = k
 }
 
-func (f *fakeStore) Ping(context.Context) error {
+func (f *fakeStore) Ping(ctx context.Context) error {
 	f.mu.Lock()
 	p, err := f.panicPing, f.pingErr
 	f.mu.Unlock()
 	if p {
 		panic("fake store exploded")
+	}
+	if err == nil {
+		err = ctx.Err() // like pgx: a cancelled context fails the ping
 	}
 	return err
 }
