@@ -198,7 +198,8 @@ inline PEM, to avoid ambiguity.
 
 The wrapper reads TLS records from the raw connection until a complete
 `ClientHello` handshake message is buffered (cap 16 KiB; on overflow or a
-non-TLS first byte, capture is abandoned and bytes are replayed untouched).
+non-TLS first byte, the connection is closed; Go's TLS server would reject
+such bytes anyway, so closing early is equivalent and cheaper).
 `tlsfp.Parse` extracts: legacy version, supported_versions, cipher suites,
 extensions in order, SNI presence, ALPN list, signature algorithms, supported
 groups, EC point formats. GREASE values are recognised and excluded from
@@ -321,7 +322,7 @@ type Source interface {
 | Tor exit list          | 6h       | `https://check.torproject.org/torbulkexitlist`                |
 | X4BNet datacenter      | 24h      | `lists_vpn` datacenter ipv4/ipv6 lists                        |
 | X4BNet vpn             | 24h      | `lists_vpn` vpn ipv4/ipv6 lists                               |
-| FoxIO JA4 database     | 7d       | `https://ja4db.com/api/read/` JSON                            |
+| FoxIO JA4 database     | 7d       | opt-in: `NAZR_JA4DB_URL` + `NAZR_JA4DB_TOKEN` (Bearer). FoxIO moved ja4db behind account login on ja4db.foxio.io in 2025; no default URL |
 
 Scheduler: on boot, `Load` each source from `NAZR_DATA_DIR`; start serving;
 then run `Fetch` for stale sources in the background and swap tables
