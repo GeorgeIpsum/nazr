@@ -20,6 +20,7 @@ import getScreen from "./components/screen";
 import getSpeech from "./components/speech";
 import getSystem from "./components/system";
 import getWebGL from "./components/webgl";
+import getWebGPU from "./components/webgpu";
 import getWebRTC from "./components/webrtc";
 
 /**
@@ -39,6 +40,7 @@ export const tm_component_promises = {
     webgl: getWebGL,
     webrtc: getWebRTC,
     speech: getSpeech,
+    webgpu: getWebGPU,
 };
 
 // the component interface is the form of the JSON object the function's promise must return
