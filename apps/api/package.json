@@ -1,0 +1,11 @@
+{
+  "name": "@nazr/api",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "go build -ldflags \"-X nazr/api/internal/version.Version=$(git describe --tags --always)\" -o bin/nazr ./cmd/nazr",
+    "test": "go test ./...",
+    "lint": "test -z \"$(gofmt -l .)\" && go vet ./... && go tool staticcheck ./...",
+    "typecheck": "go build ./..."
+  }
+}
