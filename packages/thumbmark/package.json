@@ -62,7 +62,7 @@
     "scripts": {
         "build": "rm -rf dist/* && rm -rf types/* && rollup -c",
         "test": "jest",
-        "test:e2e": "playwright test",
+        "test:e2e": "bash scripts/make-testpage.sh && playwright test",
         "upstream:diff": "bash scripts/upstream-diff.sh",
     "lint": "biome check .",
         "typecheck": "tsc --noEmit -p tsconfig.test.json"
