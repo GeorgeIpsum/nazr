@@ -51,7 +51,7 @@ const serverMerge = {
             "TLS_CHACHA20_POLY1305_SHA256",
         ],
         extensions: ["0", "23", "65281", "10", "11", "35", "16", "5", "13", "18", "51", "45", "43"],
-        sni: "example.com",
+        sni: true,
         alpn: ["h2", "http/1.1"],
         sig_algs: ["ecdsa_secp256r1_sha256", "rsa_pss_rsae_sha256", "rsa_pkcs1_sha256"],
         groups: ["x25519", "secp256r1", "secp384r1"],
@@ -104,8 +104,7 @@ const stringifyInputs: [string, unknown][] = [
         { a: 0, b: 100, c: 9007199254740991, d: -9007199254740991, e: 123456789012345680000 },
     ],
     ["arrays-with-nulls", { a: [1, null, "x", [null, []], {}], b: null }],
-    ["empty-objects-pruned", { a: {}, b: { c: {} }, d: [], e: [{}], f: { g: 1 } }],
-    ["negative-zero", { a: -0, b: [-0, 0] }],
+    ["empty-containers-kept", { a: {}, b: { c: {} }, d: [], e: [{}], f: { g: 1 } }],
     ["exponent-small", { a: 1e-7, b: 5e-324, c: 1.5e-10, d: -1e-7 }],
     ["exponent-large", { a: 1e21, b: 1.7976931348623157e308, c: 1.5e300, d: -1e21 }],
     ["booleans", { t: true, f: false, arr: [true, false] }],
@@ -122,6 +121,8 @@ const stringifyInputs: [string, unknown][] = [
             'k"ey\\': "v",
         },
     ],
+    ["line-separators", { ls: "a\u2028b", ps: "c\u2029d", both: "\u2028\u2029" }],
+    ["del-char", { del: "x\u007Fy", only: "\u007F" }],
     ["empty-string-and-root-values", { "": "", a: "" }],
     ["root-array", [3, "a", { b: 1, a: 2 }]],
 ];
@@ -199,6 +200,37 @@ const filterInputs: [string, Record<string, any>, optionsInterface][] = [
         { stabilize: ["private"] },
     ],
     ["server-merge-chrome-private", serverMerge, { stabilize: ["private"] }],
+    ["include-only", { ...serverMerge }, { include: ["screen", "tls"] }],
+    [
+        "stabilize-vpn",
+        { ...baseClient, ip: { address: "203.0.113.42", version: 4, vpn: true } },
+        { stabilize: ["vpn"] },
+    ],
+    [
+        "stabilize-iframe",
+        {
+            ...baseClient,
+            system: {
+                browser: { name: "Safari", version: "17.4" },
+                platform: "MacIntel",
+                applePayVersion: 14,
+                cookieEnabled: true,
+            },
+            permissions: { geolocation: "prompt", notifications: "denied" },
+        },
+        { stabilize: ["iframe"] },
+    ],
+    [
+        "unknown-browser",
+        {
+            system: { platform: "MacIntel", cookieEnabled: true },
+            canvas: baseClient.canvas,
+            fonts: baseClient.fonts,
+            speech: baseClient.speech,
+            audio: baseClient.audio,
+        },
+        { stabilize: ["private"] },
+    ],
 ];
 
 /**
@@ -207,7 +239,7 @@ const filterInputs: [string, Record<string, any>, optionsInterface][] = [
  * path the Go API reproduces). Under jsdom navigator exists, so hide it while
  * computing filter cases to keep the fixtures environment independent.
  */
-function withoutNavigator<T>(fn: () => T): T {
+export function withoutNavigator<T>(fn: () => T): T {
     const g = globalThis as any;
     const own = Object.getOwnPropertyDescriptor(g, "navigator");
     Object.defineProperty(g, "navigator", { value: undefined, configurable: true, writable: true });

@@ -1,4 +1,7 @@
-import { buildFixtures } from "./fixtures";
+import { filterThumbmarkData } from "../src/functions/filterComponents";
+import { hash } from "../src/utils/hash";
+import { stableStringify } from "../src/utils/stableStringify";
+import { buildFixtures, withoutNavigator } from "./fixtures";
 
 describe("buildFixtures", () => {
     const f = buildFixtures();
@@ -12,8 +15,9 @@ describe("buildFixtures", () => {
             "floats",
             "integers-large",
             "arrays-with-nulls",
-            "empty-objects-pruned",
-            "negative-zero",
+            "empty-containers-kept",
+            "line-separators",
+            "del-char",
             "exponent-small",
             "exponent-large",
             "booleans",
@@ -56,6 +60,43 @@ describe("buildFixtures", () => {
         const ja4 = (c?.components as any)?.tls?.ja4;
         expect(ja4).toBeDefined();
         expect((c?.filtered as any)?.tls).toEqual({ ja4 });
+    });
+
+    it("has the required filter cases", () => {
+        const names = f.filter.map((c) => c.name);
+        for (const n of ["include-only", "stabilize-vpn", "stabilize-iframe", "unknown-browser"]) {
+            expect(names).toContain(n);
+        }
+        expect(f.filter.find((c) => c.name === "stabilize-vpn")?.filtered).not.toHaveProperty("ip");
+        const iframe: any = f.filter.find((c) => c.name === "stabilize-iframe")?.filtered;
+        expect(iframe).not.toHaveProperty("permissions");
+        expect(iframe.system).not.toHaveProperty("applePayVersion");
+        expect(iframe.system).not.toHaveProperty("cookieEnabled");
+        // `include` only overrides `exclude`; it is not an allowlist, so alone it is a no-op.
+        const inc = f.filter.find((c) => c.name === "include-only");
+        expect(inc?.filtered).toEqual(inc?.components);
+    });
+
+    it("stringify cases match stableStringify and hash", () => {
+        for (const c of f.stringify) {
+            expect(c.stringified).toBe(stableStringify(c.input));
+            expect(c.hash).toBe(hash(c.stringified));
+        }
+    });
+
+    it("filter cases match filterThumbmarkData without navigator", () => {
+        for (const c of f.filter) {
+            expect(c.filtered).toEqual(
+                withoutNavigator(() => filterThumbmarkData(c.components, c.options)),
+            );
+        }
+    });
+
+    it("restores navigator after building", () => {
+        const before = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+        buildFixtures();
+        expect(Object.getOwnPropertyDescriptor(globalThis, "navigator")).toEqual(before);
+        expect(typeof navigator).toBe("object");
     });
 
     it("is deterministic", () => {

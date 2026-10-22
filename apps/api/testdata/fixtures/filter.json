@@ -542,7 +542,7 @@
           "45",
           "43"
         ],
-        "sni": "example.com",
+        "sni": true,
         "alpn": [
           "h2",
           "http/1.1"
@@ -672,7 +672,7 @@
           "45",
           "43"
         ],
-        "sni": "example.com",
+        "sni": true,
         "alpn": [
           "h2",
           "http/1.1"
@@ -797,7 +797,7 @@
           "45",
           "43"
         ],
-        "sni": "example.com",
+        "sni": true,
         "alpn": [
           "h2",
           "http/1.1"
@@ -913,7 +913,7 @@
           "TLS_AES_256_GCM_SHA384",
           "TLS_CHACHA20_POLY1305_SHA256"
         ],
-        "sni": "example.com",
+        "sni": true,
         "alpn": [
           "h2",
           "http/1.1"
@@ -970,6 +970,476 @@
         "vpn": false,
         "datacenter": false,
         "private_relay": false
+      }
+    }
+  },
+  {
+    "name": "include-only",
+    "components": {
+      "system": {
+        "applePayVersion": 0,
+        "browser": {
+          "name": "Chrome",
+          "version": "126.0.0"
+        },
+        "cookieEnabled": true,
+        "hardwareConcurrency": 8,
+        "language": "en-US",
+        "platform": "MacIntel",
+        "productSub": "20030107",
+        "useragent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "vendor": "Google Inc."
+      },
+      "screen": {
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "width": 1728,
+        "height": 1117,
+        "is_touchscreen": false
+      },
+      "locales": {
+        "languages": "en-US",
+        "timezone": "America/New_York"
+      },
+      "math": {
+        "acos": 1.0471975511965979,
+        "asinh": 0.881373587019543,
+        "cosh": 1.5430806348152437
+      },
+      "webgl": {
+        "vendor": "Google Inc. (Apple)",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)"
+      },
+      "tls": {
+        "version": "TLSv1.3",
+        "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+        "ja3": "771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0",
+        "ja3_hash": "cd08e31494f9531f560d64c695473da9",
+        "ciphers": [
+          "TLS_AES_128_GCM_SHA256",
+          "TLS_AES_256_GCM_SHA384",
+          "TLS_CHACHA20_POLY1305_SHA256"
+        ],
+        "extensions": [
+          "0",
+          "23",
+          "65281",
+          "10",
+          "11",
+          "35",
+          "16",
+          "5",
+          "13",
+          "18",
+          "51",
+          "45",
+          "43"
+        ],
+        "sni": true,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "sig_algs": [
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256"
+        ],
+        "groups": [
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      "h2": {
+        "fingerprint": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
+        "settings": {
+          "1": 65536,
+          "2": 0,
+          "4": 6291456,
+          "6": 262144
+        },
+        "window_update": 15663105,
+        "priorities": [],
+        "pseudo_header_order": [
+          ":method",
+          ":authority",
+          ":scheme",
+          ":path"
+        ]
+      },
+      "header": {
+        "ja4h": "ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000",
+        "order": [
+          "host",
+          "connection",
+          "user-agent",
+          "accept",
+          "accept-encoding",
+          "accept-language"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "acceptLanguage": {
+          "raw": "en-US,en;q=0.9",
+          "q": {
+            "en-US": 1,
+            "en": 0.9
+          }
+        }
+      },
+      "ip": {
+        "address": "203.0.113.42",
+        "version": 4,
+        "asn": 64496,
+        "as_org": "Example Networks",
+        "country": "US",
+        "region": "NY",
+        "city": "New York",
+        "tor": false,
+        "vpn": false,
+        "datacenter": false,
+        "private_relay": false
+      }
+    },
+    "options": {
+      "include": [
+        "screen",
+        "tls"
+      ]
+    },
+    "filtered": {
+      "system": {
+        "applePayVersion": 0,
+        "browser": {
+          "name": "Chrome",
+          "version": "126.0.0"
+        },
+        "cookieEnabled": true,
+        "hardwareConcurrency": 8,
+        "language": "en-US",
+        "platform": "MacIntel",
+        "productSub": "20030107",
+        "useragent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "vendor": "Google Inc."
+      },
+      "screen": {
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "width": 1728,
+        "height": 1117,
+        "is_touchscreen": false
+      },
+      "locales": {
+        "languages": "en-US",
+        "timezone": "America/New_York"
+      },
+      "math": {
+        "acos": 1.0471975511965979,
+        "asinh": 0.881373587019543,
+        "cosh": 1.5430806348152437
+      },
+      "webgl": {
+        "vendor": "Google Inc. (Apple)",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)"
+      },
+      "tls": {
+        "version": "TLSv1.3",
+        "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+        "ja3": "771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0",
+        "ja3_hash": "cd08e31494f9531f560d64c695473da9",
+        "ciphers": [
+          "TLS_AES_128_GCM_SHA256",
+          "TLS_AES_256_GCM_SHA384",
+          "TLS_CHACHA20_POLY1305_SHA256"
+        ],
+        "extensions": [
+          "0",
+          "23",
+          "65281",
+          "10",
+          "11",
+          "35",
+          "16",
+          "5",
+          "13",
+          "18",
+          "51",
+          "45",
+          "43"
+        ],
+        "sni": true,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "sig_algs": [
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256"
+        ],
+        "groups": [
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      "h2": {
+        "fingerprint": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
+        "settings": {
+          "1": 65536,
+          "2": 0,
+          "4": 6291456,
+          "6": 262144
+        },
+        "window_update": 15663105,
+        "priorities": [],
+        "pseudo_header_order": [
+          ":method",
+          ":authority",
+          ":scheme",
+          ":path"
+        ]
+      },
+      "header": {
+        "ja4h": "ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000",
+        "order": [
+          "host",
+          "connection",
+          "user-agent",
+          "accept",
+          "accept-encoding",
+          "accept-language"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "acceptLanguage": {
+          "raw": "en-US,en;q=0.9",
+          "q": {
+            "en-US": 1,
+            "en": 0.9
+          }
+        }
+      },
+      "ip": {
+        "address": "203.0.113.42",
+        "version": 4,
+        "asn": 64496,
+        "as_org": "Example Networks",
+        "country": "US",
+        "region": "NY",
+        "city": "New York",
+        "tor": false,
+        "vpn": false,
+        "datacenter": false,
+        "private_relay": false
+      }
+    }
+  },
+  {
+    "name": "stabilize-vpn",
+    "components": {
+      "system": {
+        "browser": {
+          "name": "Chrome",
+          "version": "126.0.0"
+        },
+        "platform": "MacIntel"
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
+      },
+      "math": {
+        "acos": 1.0471975511965979
+      },
+      "ip": {
+        "address": "203.0.113.42",
+        "version": 4,
+        "vpn": true
+      }
+    },
+    "options": {
+      "stabilize": [
+        "vpn"
+      ]
+    },
+    "filtered": {
+      "system": {
+        "browser": {
+          "name": "Chrome",
+          "version": "126.0.0"
+        },
+        "platform": "MacIntel"
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
+      },
+      "math": {
+        "acos": 1.0471975511965979
+      }
+    }
+  },
+  {
+    "name": "stabilize-iframe",
+    "components": {
+      "system": {
+        "browser": {
+          "name": "Safari",
+          "version": "17.4"
+        },
+        "platform": "MacIntel",
+        "applePayVersion": 14,
+        "cookieEnabled": true
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
+      },
+      "math": {
+        "acos": 1.0471975511965979
+      },
+      "permissions": {
+        "geolocation": "prompt",
+        "notifications": "denied"
+      }
+    },
+    "options": {
+      "stabilize": [
+        "iframe"
+      ]
+    },
+    "filtered": {
+      "system": {
+        "browser": {
+          "name": "Safari",
+          "version": "17.4"
+        },
+        "platform": "MacIntel"
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
+      },
+      "math": {
+        "acos": 1.0471975511965979
+      }
+    }
+  },
+  {
+    "name": "unknown-browser",
+    "components": {
+      "system": {
+        "platform": "MacIntel",
+        "cookieEnabled": true
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
+      }
+    },
+    "options": {
+      "stabilize": [
+        "private"
+      ]
+    },
+    "filtered": {
+      "system": {
+        "platform": "MacIntel",
+        "cookieEnabled": true
+      },
+      "canvas": {
+        "commonImageDataHash": "abc123",
+        "dataURL": "data:image/png;base64,AAAA"
+      },
+      "fonts": {
+        "Arial": 120.5,
+        "Helvetica": 98.25
+      },
+      "speech": {
+        "default": "Samantha",
+        "voices": [
+          "Samantha",
+          "Alex"
+        ]
+      },
+      "audio": {
+        "sampleHash": 124.04347527516074,
+        "maxChannels": 6
       }
     }
   }

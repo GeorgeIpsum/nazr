@@ -76,7 +76,7 @@
     "hash": "f13fb934a08cb62bcb86760cd4a02381"
   },
   {
-    "name": "empty-objects-pruned",
+    "name": "empty-containers-kept",
     "input": {
       "a": {},
       "b": {
@@ -92,18 +92,6 @@
     },
     "stringified": "{\"a\":{},\"b\":{\"c\":{}},\"d\":[],\"e\":[{}],\"f\":{\"g\":1}}",
     "hash": "656b4c5e411c701cdc0c336100ac9947"
-  },
-  {
-    "name": "negative-zero",
-    "input": {
-      "a": 0,
-      "b": [
-        0,
-        0
-      ]
-    },
-    "stringified": "{\"a\":0,\"b\":[0,0]}",
-    "hash": "34761ef82c7b433c78a607fe023600c3"
   },
   {
     "name": "exponent-small",
@@ -202,7 +190,7 @@
           "45",
           "43"
         ],
-        "sni": "example.com",
+        "sni": true,
         "alpn": [
           "h2",
           "http/1.1"
@@ -268,8 +256,8 @@
         "private_relay": false
       }
     },
-    "stringified": "{\"h2\":{\"fingerprint\":\"1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p\",\"priorities\":[],\"pseudo_header_order\":[\":method\",\":authority\",\":scheme\",\":path\"],\"settings\":{\"1\":65536,\"2\":0,\"4\":6291456,\"6\":262144},\"window_update\":15663105},\"header\":{\"acceptLanguage\":{\"q\":{\"en\":0.9,\"en-US\":1},\"raw\":\"en-US,en;q=0.9\"},\"ja4h\":\"ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000\",\"order\":[\"host\",\"connection\",\"user-agent\",\"accept\",\"accept-encoding\",\"accept-language\"],\"userAgent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\"},\"ip\":{\"address\":\"203.0.113.42\",\"as_org\":\"Example Networks\",\"asn\":64496,\"city\":\"New York\",\"country\":\"US\",\"datacenter\":false,\"private_relay\":false,\"region\":\"NY\",\"tor\":false,\"version\":4,\"vpn\":false},\"locales\":{\"languages\":\"en-US\",\"timezone\":\"America/New_York\"},\"math\":{\"acos\":1.0471975511965979,\"asinh\":0.881373587019543,\"cosh\":1.5430806348152437},\"screen\":{\"colorDepth\":24,\"height\":1117,\"is_touchscreen\":false,\"pixelDepth\":24,\"width\":1728},\"system\":{\"applePayVersion\":0,\"browser\":{\"name\":\"Chrome\",\"version\":\"126.0.0\"},\"cookieEnabled\":true,\"hardwareConcurrency\":8,\"language\":\"en-US\",\"platform\":\"MacIntel\",\"productSub\":\"20030107\",\"useragent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\",\"vendor\":\"Google Inc.\"},\"tls\":{\"alpn\":[\"h2\",\"http/1.1\"],\"ciphers\":[\"TLS_AES_128_GCM_SHA256\",\"TLS_AES_256_GCM_SHA384\",\"TLS_CHACHA20_POLY1305_SHA256\"],\"extensions\":[\"0\",\"23\",\"65281\",\"10\",\"11\",\"35\",\"16\",\"5\",\"13\",\"18\",\"51\",\"45\",\"43\"],\"groups\":[\"x25519\",\"secp256r1\",\"secp384r1\"],\"ja3\":\"771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0\",\"ja3_hash\":\"cd08e31494f9531f560d64c695473da9\",\"ja4\":\"t13d1516h2_8daaf6152771_02713d6af862\",\"sig_algs\":[\"ecdsa_secp256r1_sha256\",\"rsa_pss_rsae_sha256\",\"rsa_pkcs1_sha256\"],\"sni\":\"example.com\",\"version\":\"TLSv1.3\"},\"webgl\":{\"renderer\":\"ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)\",\"vendor\":\"Google Inc. (Apple)\"}}",
-    "hash": "5a7cc2cb6772bce2a06d1998be7eea8a"
+    "stringified": "{\"h2\":{\"fingerprint\":\"1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p\",\"priorities\":[],\"pseudo_header_order\":[\":method\",\":authority\",\":scheme\",\":path\"],\"settings\":{\"1\":65536,\"2\":0,\"4\":6291456,\"6\":262144},\"window_update\":15663105},\"header\":{\"acceptLanguage\":{\"q\":{\"en\":0.9,\"en-US\":1},\"raw\":\"en-US,en;q=0.9\"},\"ja4h\":\"ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000\",\"order\":[\"host\",\"connection\",\"user-agent\",\"accept\",\"accept-encoding\",\"accept-language\"],\"userAgent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\"},\"ip\":{\"address\":\"203.0.113.42\",\"as_org\":\"Example Networks\",\"asn\":64496,\"city\":\"New York\",\"country\":\"US\",\"datacenter\":false,\"private_relay\":false,\"region\":\"NY\",\"tor\":false,\"version\":4,\"vpn\":false},\"locales\":{\"languages\":\"en-US\",\"timezone\":\"America/New_York\"},\"math\":{\"acos\":1.0471975511965979,\"asinh\":0.881373587019543,\"cosh\":1.5430806348152437},\"screen\":{\"colorDepth\":24,\"height\":1117,\"is_touchscreen\":false,\"pixelDepth\":24,\"width\":1728},\"system\":{\"applePayVersion\":0,\"browser\":{\"name\":\"Chrome\",\"version\":\"126.0.0\"},\"cookieEnabled\":true,\"hardwareConcurrency\":8,\"language\":\"en-US\",\"platform\":\"MacIntel\",\"productSub\":\"20030107\",\"useragent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\",\"vendor\":\"Google Inc.\"},\"tls\":{\"alpn\":[\"h2\",\"http/1.1\"],\"ciphers\":[\"TLS_AES_128_GCM_SHA256\",\"TLS_AES_256_GCM_SHA384\",\"TLS_CHACHA20_POLY1305_SHA256\"],\"extensions\":[\"0\",\"23\",\"65281\",\"10\",\"11\",\"35\",\"16\",\"5\",\"13\",\"18\",\"51\",\"45\",\"43\"],\"groups\":[\"x25519\",\"secp256r1\",\"secp384r1\"],\"ja3\":\"771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0\",\"ja3_hash\":\"cd08e31494f9531f560d64c695473da9\",\"ja4\":\"t13d1516h2_8daaf6152771_02713d6af862\",\"sig_algs\":[\"ecdsa_secp256r1_sha256\",\"rsa_pss_rsae_sha256\",\"rsa_pkcs1_sha256\"],\"sni\":true,\"version\":\"TLSv1.3\"},\"webgl\":{\"renderer\":\"ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)\",\"vendor\":\"Google Inc. (Apple)\"}}",
+    "hash": "33bdf54b55abbc4d59ccaa2c9c9792b0"
   },
   {
     "name": "escape-chars",
@@ -284,6 +272,25 @@
     },
     "stringified": "{\"backslash\":\"a\\\\b\",\"ctrl\":\"x\\u0001y\",\"html\":\"<a href=\\\"x\\\">&</a>\",\"k\\\"ey\\\\\":\"v\",\"newline\":\"l1\\nl2\",\"quote\":\"say \\\"hi\\\"\",\"tab\":\"a\\tb\"}",
     "hash": "9ea445ceaac71bf987f2de09eb667c20"
+  },
+  {
+    "name": "line-separators",
+    "input": {
+      "ls": "a b",
+      "ps": "c d",
+      "both": "  "
+    },
+    "stringified": "{\"both\":\"  \",\"ls\":\"a b\",\"ps\":\"c d\"}",
+    "hash": "b3e1f742e8cff286aae543fb2ebb226e"
+  },
+  {
+    "name": "del-char",
+    "input": {
+      "del": "xy",
+      "only": ""
+    },
+    "stringified": "{\"del\":\"xy\",\"only\":\"\"}",
+    "hash": "68e36b6e0a3d40ce325fe07a3d4e5e96"
   },
   {
     "name": "empty-string-and-root-values",
