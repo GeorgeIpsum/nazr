@@ -126,6 +126,7 @@ export const stabilizationExclusionRules = {
         },
         { exclude: ["tls.extensions"], browsers: ["firefox", "chrome", "safari"] },
         { exclude: ["header.acceptLanguage"], browsers: ["edge", "chrome"] },
+        { exclude: ["clientrects"], browsers: ["firefox", "brave"] },
         { exclude: ["clienthints"], browsers: ["brave"] },
     ],
     iframe: [

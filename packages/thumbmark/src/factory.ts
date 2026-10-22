@@ -11,6 +11,7 @@ import type { optionsInterface } from "./options";
 import getAudio from "./components/audio";
 import getCanvas from "./components/canvas";
 import getClientHints from "./components/clienthints";
+import getClientRects from "./components/clientrects";
 import getFonts from "./components/fonts";
 import getHardware from "./components/hardware";
 import getLocales from "./components/locales";
