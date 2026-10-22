@@ -23,7 +23,10 @@
       "!deploy",
       "!docs",
       "!pnpm-lock.yaml",
-      "!.superpowers"
+      "!.superpowers",
+      "!**/testpage",
+      "!**/test-results",
+      "!apps/api/testdata/fixtures/*.json"
     ]
   },
   "overrides": [
