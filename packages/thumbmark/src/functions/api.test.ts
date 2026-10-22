@@ -1,0 +1,701 @@
+import type { componentInterface } from "../factory";
+import { defaultOptions } from "../options";
+import { getCache, setCache } from "../utils/cache";
+import * as hashModule from "../utils/hash";
+import * as stringifyModule from "../utils/stableStringify";
+import { setVisitorId } from "../utils/visitorId";
+import { type apiResponse, getApiPromise, getCachedApiResponse, setCachedApiResponse } from "./api";
+
+const options = {
+    ...defaultOptions,
+    cache_lifetime_in_ms: 100,
+};
+
+const apiResponse = {
+    identifier: "test",
+} as apiResponse;
+
+describe("setCachedApiResponse", () => {
+    beforeEach(() => {
+        localStorage.clear();
+    });
+
+    test("it should write the apiResponse to the cache if options allow that", () => {
+        setCachedApiResponse(options, apiResponse);
+        expect(getCache(options).apiResponse).toEqual(apiResponse);
+    });
+
+    test("it should not write if cache if off", () => {
+        setCachedApiResponse(
+            {
+                ...options,
+                cache_api_call: false,
+            },
+            apiResponse,
+        );
+
+        expect(getCache(options).apiResponse).not.toBeDefined();
+        expect(getCache(options).apiResponseExpiry).not.toBeDefined();
+    });
+
+    test("it should not write if lifetime is 0", () => {
+        setCachedApiResponse(
+            {
+                ...options,
+                cache_lifetime_in_ms: 0,
+            },
+            apiResponse,
+        );
+
+        expect(getCache(options).apiResponse).not.toBeDefined();
+        expect(getCache(options).apiResponseExpiry).not.toBeDefined();
+    });
+
+    test("it should strip the collect directive before caching (one-shot, per-request only)", () => {
+        const responseWithCollect = {
+            ...apiResponse,
+            thumbmark: "thumb-abc",
+            visitorId: "visitor-abc",
+            components: { foo: "bar" } as unknown as componentInterface,
+            info: { timed_out: false },
+            requestId: "req-abc",
+            metadata: { some: "meta" },
+            collect: { ja4: "ja4-fingerprint", source: "header" },
+        } as apiResponse;
+
+        setCachedApiResponse(options, responseWithCollect);
+
+        const rawCache = localStorage.getItem(options.property_name_factory("cache"));
+        const parsed = JSON.parse(rawCache!);
+
+        expect("collect" in parsed.apiResponse).toBe(false);
+        expect(parsed.apiResponse.collect).toBeUndefined();
+
+        // All other fields must survive caching unchanged.
+        expect(parsed.apiResponse.thumbmark).toEqual(responseWithCollect.thumbmark);
+        expect(parsed.apiResponse.visitorId).toEqual(responseWithCollect.visitorId);
+        expect(parsed.apiResponse.components).toEqual(responseWithCollect.components);
+        expect(parsed.apiResponse.info).toEqual(responseWithCollect.info);
+        expect(parsed.apiResponse.requestId).toEqual(responseWithCollect.requestId);
+        expect(parsed.apiResponse.metadata).toEqual(responseWithCollect.metadata);
+    });
+
+    test("it should cache a response with no collect key exactly as before (no regression)", () => {
+        const responseWithoutCollect = {
+            ...apiResponse,
+            thumbmark: "thumb-xyz",
+            visitorId: "visitor-xyz",
+        } as apiResponse;
+
+        setCachedApiResponse(options, responseWithoutCollect);
+
+        expect(getCache(options).apiResponse).toEqual(responseWithoutCollect);
+
+        const rawCache = localStorage.getItem(options.property_name_factory("cache"));
+        const parsed = JSON.parse(rawCache!);
+        expect("collect" in parsed.apiResponse).toBe(false);
+    });
+});
+
+describe("getCachedApiResponse", () => {
+    beforeEach(() => {
+        localStorage.clear();
+    });
+
+    test("it should get from the cache if a value exists there", () => {
+        setCache(options, {
+            apiResponseExpiry: Date.now() + 2000000,
+            apiResponse,
+        });
+
+        const cached = getCachedApiResponse(options);
+        expect(cached).toBeDefined();
+        expect(cached).toEqual(apiResponse);
+    });
+
+    test("it should not return an expiried cache", () => {
+        setCache(options, {
+            apiResponseExpiry: Date.now() - 2000,
+            apiResponse,
+        });
+
+        const cached = getCachedApiResponse(options);
+        expect(cached).not.toBeDefined();
+    });
+});
+
+describe("getApiPromise timeout behavior", () => {
+    let mockFetch: jest.Mock;
+    const testOptions = {
+        ...defaultOptions,
+        api_key: "test-api-key",
+        timeout: 100, // Short timeout for tests
+        cache_lifetime_in_ms: 1000,
+    };
+
+    const testComponents: componentInterface = {
+        userAgent: "test-agent",
+        screen: { width: 1920, height: 1080 },
+    };
+
+    beforeAll(() => {
+        // Polyfill TextEncoder for jsdom environment
+        if (typeof TextEncoder === "undefined") {
+            const util = require("util");
+            global.TextEncoder = util.TextEncoder;
+            global.TextDecoder = util.TextDecoder;
+        }
+
+        // Mock hash and stableStringify to avoid TextEncoder issues
+        jest.spyOn(hashModule, "hash").mockReturnValue("mocked-hash");
+        jest.spyOn(stringifyModule, "stableStringify").mockReturnValue('{"mocked":"data"}');
+
+        jest.useFakeTimers();
+    });
+
+    afterAll(() => {
+        jest.useRealTimers();
+    });
+
+    beforeEach(async () => {
+        // Clear all pending timers and promises from previous tests
+        jest.clearAllTimers();
+
+        localStorage.clear();
+        mockFetch = jest.fn();
+        global.fetch = mockFetch;
+
+        // Re-mock hash and stableStringify for each test
+        jest.spyOn(hashModule, "hash").mockReturnValue("mocked-hash");
+        jest.spyOn(stringifyModule, "stableStringify").mockReturnValue('{"mocked":"data"}');
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test("returns fetch response when fetch completes before timeout", async () => {
+        // Use options without caching to avoid state interference
+        const noCacheOptions = {
+            ...testOptions,
+            cache_lifetime_in_ms: 0, // Disable caching
+        };
+
+        // Mock fetch to resolve quickly
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                version: "1.2.3",
+                visitorId: "test-visitor-id",
+                thumbmark: "test-thumbmark",
+                requestId: "test-request-id",
+                info: {
+                    ip_address: {
+                        ip_address: "1.2.3.4",
+                        ip_identifier: "abc123",
+                        autonomous_system_number: 12345,
+                        ip_version: "v4" as const,
+                    },
+                },
+            }),
+        });
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        // Fast forward time, but fetch completes before timeout
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toBeDefined();
+        expect(result?.version).toBe("1.2.3");
+        expect(result?.info?.timed_out).toBeUndefined();
+        expect(result?.thumbmark).toBe("test-thumbmark");
+        expect(result?.requestId).toBe("test-request-id");
+    });
+
+    test("returns expired cache when timeout occurs and cache exists", async () => {
+        // Disable caching to test timeout fallback without request deduplication
+        const noCacheOptions = {
+            ...testOptions,
+            cache_api_call: false,
+        };
+
+        // Set up expired cache
+        const expiredCachedValue = {
+            apiResponseExpiry: Date.now() - 100, // Expired
+            apiResponse: {
+                version: "1.2.3",
+                thumbmark: "cached-thumbmark",
+                info: {
+                    ip_address: {
+                        ip_address: "1.2.3.4",
+                        ip_identifier: "abc123",
+                        autonomous_system_number: 12345,
+                        ip_version: "v4" as const,
+                    },
+                },
+            },
+        };
+        setCache(noCacheOptions, expiredCachedValue);
+
+        // Mock fetch to never resolve (hanging request)
+        mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        // Advance timers to trigger timeout
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        // Should return expired cache, not timeout response
+        expect(result).toBeDefined();
+        expect(result?.version).toBe("1.2.3");
+        expect(result?.thumbmark).toBe("cached-thumbmark");
+        expect(result?.info?.timed_out).toBeUndefined();
+    });
+
+    test("returns timeout response when timeout occurs and no cache exists", async () => {
+        const noCacheOptions = {
+            ...testOptions,
+            cache_api_call: false,
+        };
+
+        expect(getCache(noCacheOptions)).toEqual({});
+
+        mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toBeDefined();
+        expect(result?.info?.timed_out).toBe(true);
+
+        const cached = getCache(noCacheOptions);
+        expect(cached.apiResponse).toBeUndefined();
+    });
+
+    test("returns timeout response without visitorId when no cache and no stored visitorId", async () => {
+        const noCacheOptions = {
+            ...testOptions,
+            cache_api_call: false,
+        };
+
+        // Ensure no cache and no visitor ID
+        expect(getCache(noCacheOptions)).toEqual({});
+        expect(localStorage.getItem("thumbmark_visitor_id")).toBeNull();
+
+        mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toBeDefined();
+        expect(result?.info?.timed_out).toBe(true);
+        expect(result?.visitorId).toBeUndefined();
+    });
+
+    test("returns timeout response with visitorId when no cache but visitorId exists in localStorage", async () => {
+        const noCacheOptions = {
+            ...testOptions,
+            cache_api_call: false,
+        };
+
+        // Set up visitor ID in localStorage (no cache)
+        const storedVisitorId = "stored-visitor-id-123";
+        setVisitorId(storedVisitorId, noCacheOptions);
+
+        // Verify setup: no cache, but visitor ID exists
+        expect(getCache(noCacheOptions)).toEqual({});
+        expect(localStorage.getItem("thumbmark_visitor_id")).toBe(storedVisitorId);
+
+        mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toBeDefined();
+        expect(result?.info?.timed_out).toBe(true);
+        expect(result?.visitorId).toBe(storedVisitorId);
+    });
+
+    test("retries on network error and succeeds on second attempt", async () => {
+        jest.useRealTimers();
+        const noCacheOptions = { ...testOptions, cache_api_call: false, timeout: 5000 };
+
+        mockFetch.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ version: "1.0", thumbmark: "retry-ok" }),
+        });
+
+        const result = await getApiPromise(noCacheOptions, testComponents);
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(result?.thumbmark).toBe("retry-ok");
+        jest.useFakeTimers();
+    });
+
+    test("does not retry on 500 server error", async () => {
+        jest.useRealTimers();
+        const noCacheOptions = { ...testOptions, cache_api_call: false, timeout: 5000 };
+
+        mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+        await expect(getApiPromise(noCacheOptions, testComponents)).rejects.toThrow(
+            "HTTP error! status: 500",
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        jest.useFakeTimers();
+    });
+
+    test("does not retry on 403 auth error", async () => {
+        jest.useRealTimers();
+        const noCacheOptions = { ...testOptions, cache_api_call: false, timeout: 5000 };
+
+        mockFetch.mockResolvedValueOnce({ ok: false, status: 403 });
+
+        await expect(getApiPromise(noCacheOptions, testComponents)).rejects.toThrow(
+            "HTTP error! status: 403",
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        jest.useFakeTimers();
+    });
+
+    test("network errors exhaust retries then throw", async () => {
+        jest.useRealTimers();
+        const noCacheOptions = { ...testOptions, cache_api_call: false, timeout: 5000 };
+
+        mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
+
+        await expect(getApiPromise(noCacheOptions, testComponents)).rejects.toThrow(
+            "Failed to fetch",
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+        jest.useFakeTimers();
+    });
+
+    describe("endpoint URL construction", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = {
+            ...testOptions,
+            cache_api_call: false,
+            timeout: 5000,
+        };
+
+        function resolveEndpoint(mockFetchInner: jest.Mock): string {
+            const call = mockFetchInner.mock.calls[0];
+            return call[0] as string;
+        }
+
+        test("default endpoint (no api_endpoint) appends /thumbmark", async () => {
+            const opts = { ...baseOpts };
+            delete (opts as any).api_endpoint;
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(opts, testComponents);
+            expect(resolveEndpoint(mockFetch)).toBe("https://api.thumbmarkjs.com/thumbmark");
+        });
+
+        test("custom origin without path appends /thumbmark", async () => {
+            const opts = { ...baseOpts, api_endpoint: "https://x.example.com" };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(opts, testComponents);
+            expect(resolveEndpoint(mockFetch)).toBe("https://x.example.com/thumbmark");
+        });
+
+        test('custom origin with bare trailing slash is used as-is (trailing slash = explicit "do not append" signal)', async () => {
+            // A trailing slash signals the caller provided a complete endpoint — do NOT append /thumbmark.
+            const opts = { ...baseOpts, api_endpoint: "https://x.example.com/" };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(opts, testComponents);
+            expect(resolveEndpoint(mockFetch)).toBe("https://x.example.com/");
+        });
+
+        test("custom endpoint with a path is used as-is", async () => {
+            const opts = { ...baseOpts, api_endpoint: "https://x.example.com/v2/fp" };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(opts, testComponents);
+            expect(resolveEndpoint(mockFetch)).toBe("https://x.example.com/v2/fp");
+        });
+
+        test("malformed api_endpoint falls back to legacy append", async () => {
+            const opts = { ...baseOpts, api_endpoint: "not-a-url" };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(opts, testComponents);
+            expect(resolveEndpoint(mockFetch)).toBe("not-a-url/thumbmark");
+        });
+    });
+
+    describe("request body: path", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = { ...testOptions, cache_api_call: false, timeout: 5000, api_key: "k" };
+
+        function bodyOf() {
+            const [, init] = mockFetch.mock.calls[0];
+            return JSON.parse(init.body);
+        }
+
+        test("sends the current pathname as `path`", async () => {
+            window.history.pushState({}, "", "/checkout/step-2");
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(baseOpts, testComponents);
+
+            expect(bodyOf().path).toBe("/checkout/step-2");
+        });
+
+        test("path is not part of clientHash, so the fingerprint does not follow the page", async () => {
+            // The whole point of keeping `path` a sibling of `components`: two
+            // requests from different pages on the same browser must still hash
+            // identically, or every navigation looks like a new device.
+            window.history.pushState({}, "", "/page-a");
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise(baseOpts, testComponents);
+            const first = bodyOf();
+
+            mockFetch.mockClear();
+            window.history.pushState({}, "", "/page-b");
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise(baseOpts, testComponents);
+            const second = bodyOf();
+
+            expect(first.path).toBe("/page-a");
+            expect(second.path).toBe("/page-b");
+            expect(second.clientHash).toBe(first.clientHash);
+            expect(second.components).toEqual(first.components);
+        });
+    });
+
+    describe("request headers", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = {
+            ...testOptions,
+            cache_api_call: false,
+            timeout: 5000,
+        };
+
+        test("DEFAULT mode: fetch is called with Content-Type application/json, x-api-key, and Authorization", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise({ ...baseOpts, api_key: "my-key" }, testComponents);
+
+            const [, init] = mockFetch.mock.calls[0];
+            expect(init.headers["Content-Type"]).toBe("application/json");
+            expect(init.headers["x-api-key"]).toBe("my-key");
+            expect(init.headers["Authorization"]).toBe("custom-authorized");
+        });
+
+        test("simple_request: true → fetch is called with Content-Type text/plain, no x-api-key, no Authorization", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(
+                { ...baseOpts, simple_request: true, api_key: undefined },
+                testComponents,
+            );
+
+            const [, init] = mockFetch.mock.calls[0];
+            expect(init.headers["Content-Type"]).toBe("text/plain");
+            expect(init.headers["x-api-key"]).toBeUndefined();
+            expect(init.headers["Authorization"]).toBeUndefined();
+        });
+
+        test("simple_request: true → body is still JSON.stringify output", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(
+                { ...baseOpts, simple_request: true, api_key: undefined },
+                testComponents,
+            );
+
+            const [, init] = mockFetch.mock.calls[0];
+            expect(() => JSON.parse(init.body as string)).not.toThrow();
+        });
+
+        test("DEFAULT mode: request body options does NOT contain api_key, but x-api-key header still set", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise({ ...baseOpts, api_key: "my-key" }, testComponents);
+
+            const [, init] = mockFetch.mock.calls[0];
+            // Header must still carry the key
+            expect(init.headers["x-api-key"]).toBe("my-key");
+            // Body must NOT expose the key
+            const body = JSON.parse(init.body as string);
+            expect(body.options.api_key).toBeUndefined();
+        });
+
+        test("simple_request mode: request body options does NOT contain api_key", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+
+            await getApiPromise(
+                { ...baseOpts, simple_request: true, api_key: "proxy-injected-key" },
+                testComponents,
+            );
+
+            const [, init] = mockFetch.mock.calls[0];
+            // simple_request: no api_key header either
+            expect(init.headers["x-api-key"]).toBeUndefined();
+            // Body must NOT expose the key
+            const body = JSON.parse(init.body as string);
+            expect(body.options.api_key).toBeUndefined();
+        });
+    });
+
+    describe("API call gate", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = {
+            ...testOptions,
+            cache_api_call: false,
+            timeout: 5000,
+        };
+
+        test("fires when simple_request is true and no api_key is set", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "simple-ok" }),
+            });
+
+            const result = await getApiPromise(
+                { ...baseOpts, simple_request: true, api_key: undefined },
+                testComponents,
+            );
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            expect(result?.thumbmark).toBe("simple-ok");
+        });
+    });
+
+    test("returns full cached response (not just visitorId) when cache exists on timeout", async () => {
+        const noCacheOptions = {
+            ...testOptions,
+            cache_api_call: false,
+        };
+
+        // Set up both: expired cache AND visitor ID in localStorage
+        const storedVisitorId = "stored-visitor-id-456";
+        setVisitorId(storedVisitorId, noCacheOptions);
+
+        const expiredCachedValue = {
+            apiResponseExpiry: Date.now() - 100, // Expired
+            apiResponse: {
+                version: "1.2.3",
+                thumbmark: "cached-thumbmark",
+                visitorId: "cached-visitor-id",
+                info: {
+                    uniqueness: { score: 0.95 },
+                },
+            },
+        };
+        setCache(noCacheOptions, expiredCachedValue);
+
+        mockFetch.mockReturnValueOnce(new Promise(() => {}));
+
+        const promise = getApiPromise(noCacheOptions, testComponents);
+
+        await jest.runAllTimersAsync();
+        const result = await promise;
+
+        // Should return full cached response, not just visitor ID fallback
+        expect(result).toBeDefined();
+        expect(result?.info?.timed_out).toBeUndefined();
+        expect(result?.thumbmark).toBe("cached-thumbmark");
+        expect(result?.visitorId).toBe("cached-visitor-id"); // From cache, not localStorage
+        expect(result?.version).toBe("1.2.3");
+    });
+});

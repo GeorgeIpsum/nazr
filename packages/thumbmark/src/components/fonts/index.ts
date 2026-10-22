@@ -1,0 +1,142 @@
+import type { componentInterface } from "../../factory";
+import type { optionsInterface } from "../../options";
+import { ephemeralIFrame } from "../../utils/ephemeralIFrame";
+
+//interface FontMetrics {[k: string]: number}
+
+const availableFonts = [
+    "Arial",
+    "Arial Black",
+    "Arial Narrow",
+    "Arial Rounded MT",
+    "Arimo",
+    "Archivo",
+    "Barlow",
+    "Bebas Neue",
+    "Bitter",
+    "Bookman",
+    "Calibri",
+    "Cabin",
+    "Candara",
+    "Century",
+    "Century Gothic",
+    "Comic Sans MS",
+    "Constantia",
+    "Courier",
+    "Courier New",
+    "Crimson Text",
+    "DM Mono",
+    "DM Sans",
+    "DM Serif Display",
+    "DM Serif Text",
+    "Dosis",
+    "Droid Sans",
+    "Exo",
+    "Fira Code",
+    "Fira Sans",
+    "Franklin Gothic Medium",
+    "Garamond",
+    "Geneva",
+    "Georgia",
+    "Gill Sans",
+    "Helvetica",
+    "Impact",
+    "Inconsolata",
+    "Indie Flower",
+    "Inter",
+    "Josefin Sans",
+    "Karla",
+    "Lato",
+    "Lexend",
+    "Lucida Bright",
+    "Lucida Console",
+    "Lucida Sans Unicode",
+    "Manrope",
+    "Merriweather",
+    "Merriweather Sans",
+    "Montserrat",
+    "Myriad",
+    "Noto Sans",
+    "Nunito",
+    "Nunito Sans",
+    "Open Sans",
+    "Optima",
+    "Orbitron",
+    "Oswald",
+    "Pacifico",
+    "Palatino",
+    "Perpetua",
+    "PT Sans",
+    "PT Serif",
+    "Poppins",
+    "Prompt",
+    "Public Sans",
+    "Quicksand",
+    "Rajdhani",
+    "Recursive",
+    "Roboto",
+    "Roboto Condensed",
+    "Rockwell",
+    "Rubik",
+    "Segoe Print",
+    "Segoe Script",
+    "Segoe UI",
+    "Sora",
+    "Source Sans Pro",
+    "Space Mono",
+    "Tahoma",
+    "Taviraj",
+    "Times",
+    "Times New Roman",
+    "Titillium Web",
+    "Trebuchet MS",
+    "Ubuntu",
+    "Varela Round",
+    "Verdana",
+    "Work Sans",
+];
+
+const baseFonts = ["monospace", "sans-serif", "serif"];
+
+export default async function getFonts(
+    options?: optionsInterface,
+): Promise<componentInterface | null> {
+    return getFontMetrics();
+}
+
+export function getFontMetrics(): Promise<componentInterface | null> {
+    return new Promise((resolve) => {
+        try {
+            ephemeralIFrame(async ({ iframe }) => {
+                const canvas = iframe.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+
+                // Return null if canvas context is not available
+                if (!ctx) {
+                    resolve(null);
+                    return;
+                }
+
+                const defaultWidths: number[] = baseFonts.map((font) => {
+                    return measureSingleFont(ctx, font);
+                });
+
+                const results: { [k: string]: any } = {};
+                availableFonts.forEach((font) => {
+                    const fontWidth = measureSingleFont(ctx, font);
+                    if (!defaultWidths.includes(fontWidth)) results[font] = fontWidth;
+                });
+
+                resolve(results);
+            });
+        } catch (error) {
+            resolve(null);
+        }
+    });
+}
+
+function measureSingleFont(ctx: CanvasRenderingContext2D, font: string): number {
+    const text: string = "WwMmLli0Oo";
+    ctx.font = `72px ${font}`; // Set a default font size
+    return ctx.measureText(text).width;
+}

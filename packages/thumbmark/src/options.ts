@@ -1,0 +1,141 @@
+type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue };
+
+export interface OptionsAfterDefaults {
+    /**
+     * A function to customise localStorage names used by thumbmark
+     * @param name Original name of the storage property eg. visitor_id
+     * @returns The name under which the storage property should be saved eg. myprefix_visitor_id
+     */
+    property_name_factory: (name: string) => string;
+    /**
+     * @deprecated use property_name_factory
+     */
+    storage_property_name?: string;
+    exclude?: string[];
+    include?: string[];
+    permissions_to_check?: PermissionName[];
+    timeout?: number;
+    logging?: boolean;
+    api_key?: string;
+    api_endpoint?: string;
+    /**
+     * When true, the API request is sent as a CORS "simple request" (Content-Type: text/plain,
+     * no custom headers). Use this when routing through a proxy that attaches the real API key.
+     * Requires neither api_key nor Authorization header from the client side.
+     */
+    simple_request?: boolean;
+    /**
+     * When true (default), the client honors a `collect: true` hint on a
+     * pro API response by sending a small, one-shot beacon (the browser's
+     * User-Agent and the computed thumbmark hash) directly to
+     * `collect_endpoint`. The server alone decides if/when to send that
+     * hint -- this option only controls whether the client obeys it when
+     * it does. Independent of `logging`. Fire-and-forget: never affects the
+     * fingerprint or getThumbmark()'s return value. Never fires on an
+     * anonymous install -- one that sets neither `api_key` nor
+     * `simple_request` -- because no API call is made at all in that case,
+     * so no `collect` directive can ever arrive.
+     */
+    collect_beacon?: boolean;
+    /**
+     * Destination for the collect_beacon request. Defaults to the hosted
+     * ThumbmarkJS collector. Override for a self-hosted collector.
+     */
+    collect_endpoint?: string;
+    /**
+     * @deprecated This will be removed in Thumbmarkjs 2.0, use cache_lifetime_in_ms instead
+     */
+    cache_api_call?: boolean;
+    /**
+     * How long the cache will be valid for, maximum is 72h (259_200_000)
+     */
+    cache_lifetime_in_ms: number;
+    performance?: boolean;
+    stabilize?: string[];
+    /**
+     * @deprecated This will be removed in Thumbmarkjs 2.0 and already has no
+     * effect. Experimental signals are internal telemetry: the payload is
+     * fetched only when the sampled logging path fires, and is never returned
+     * to the caller.
+     */
+    experimental?: boolean;
+    /**
+     * Optional metadata to pass through to the API and webhooks.
+     * Can be a static JSON object or a function that returns a JSON object (evaluated at request time).
+     * This field is excluded from fingerprint calculation.
+     * Maximum length: 1000 characters when stringified.
+     * @example metadata: { userId: "123", eventType: "login" }
+     * @example metadata: () => ({ timestamp: Date.now(), sessionId: "abc" })
+     */
+    metadata?: JSONValue | (() => JSONValue);
+}
+
+export type optionsInterface = Partial<OptionsAfterDefaults>;
+
+// Default to zero to avoid breaking existing integrations
+export const DEFAULT_CACHE_LIFETIME = 0;
+export const MAXIMUM_CACHE_LIFETIME = 259_200_000;
+export const DEFAULT_STORAGE_PREFIX = "thumbmark";
+export const DEFAULT_API_ENDPOINT = "https://api.thumbmarkjs.com";
+export const DEFAULT_COLLECT_ENDPOINT = "https://collect.thumbmarkjs.com/beacon";
+
+export const defaultOptions: OptionsAfterDefaults = {
+    exclude: [],
+    include: [],
+    stabilize: ["private", "iframe"],
+    logging: true,
+    collect_beacon: true,
+    timeout: 5000,
+    cache_api_call: true,
+    cache_lifetime_in_ms: DEFAULT_CACHE_LIFETIME,
+    performance: false,
+    experimental: false,
+    simple_request: false,
+    property_name_factory: (name: string) => {
+        return `${DEFAULT_STORAGE_PREFIX}_${name}`;
+    },
+};
+
+export const options: OptionsAfterDefaults = { ...defaultOptions };
+/**
+ *
+ * @param key @deprecated this function will be removed
+ * @param value
+ */
+export function setOption<K extends keyof optionsInterface>(
+    key: K,
+    value: OptionsAfterDefaults[K],
+) {
+    options[key] = value;
+}
+
+export const stabilizationExclusionRules = {
+    private: [
+        { exclude: ["canvas"], browsers: ["firefox", "safari>=17", "brave"] },
+        { exclude: ["audio"], browsers: ["samsungbrowser", "safari"] },
+        { exclude: ["fonts"], browsers: ["firefox"] },
+        {
+            exclude: [
+                "audio.sampleHash",
+                "hardware.deviceMemory",
+                "header.acceptLanguage.q",
+                "system.hardwareConcurrency",
+                "plugins",
+            ],
+            browsers: ["brave"],
+        },
+        { exclude: ["tls.extensions"], browsers: ["firefox", "chrome", "safari"] },
+        { exclude: ["header.acceptLanguage"], browsers: ["edge", "chrome"] },
+    ],
+    iframe: [
+        {
+            exclude: ["system.applePayVersion", "system.cookieEnabled"],
+            browsers: ["safari"],
+        },
+        {
+            exclude: ["permissions"],
+        },
+    ],
+    vpn: [{ exclude: ["ip"] }],
+    always: [{ exclude: ["speech"], browsers: ["brave", "firefox"] }],
+};

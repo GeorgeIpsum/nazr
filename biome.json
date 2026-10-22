@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
-  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "linter": { "rules": { "preset": "recommended" } },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "rules": {
+      "preset": "recommended"
+    }
+  },
   "files": {
     "includes": [
       "**",
@@ -21,8 +29,27 @@
   "overrides": [
     {
       "includes": ["packages/thumbmark/**"],
-      "formatter": { "indentWidth": 4 },
-      "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } }
+      "formatter": {
+        "indentWidth": 4
+      },
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off",
+            "useIterableCallbackReturn": "off",
+            "noFallthroughSwitchClause": "off",
+            "noMisleadingInstantiator": "off",
+            "noRedeclare": "off",
+            "noPrototypeBuiltins": "off"
+          },
+          "security": {
+            "noGlobalEval": "off"
+          },
+          "a11y": {
+            "useButtonType": "off"
+          }
+        }
+      }
     }
   ]
 }
