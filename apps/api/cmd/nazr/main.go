@@ -46,7 +46,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
-		return notImplemented(stderr, "keys "+args[1])
+		return keysCmd(args[1], args[2:], stdout, stderr)
 	case "lists":
 		if len(args) < 2 || args[1] != "refresh" {
 			fmt.Fprint(stderr, usage)
