@@ -25,6 +25,7 @@ type Config struct {
 	AppleRelayURL     string
 	TorExitURL        string
 	JA4DBURL          string
+	JA4DBToken        string
 	DatacenterURLs    []string
 	VPNURLs           []string
 	// Disabled lists source names (or kinds: maxmind, apple, tor,
@@ -162,10 +163,11 @@ func New(c Config) (*Service, error) {
 	} else {
 		s.add(kindTor, &torSource{fetcher: f, url: orDefault(c.TorExitURL, defaultTorURL)})
 	}
-	if c.disabled(kindJA4DB, kindJA4DB) {
+	if c.JA4DBURL == "" || c.disabled(kindJA4DB, kindJA4DB) {
+		// Opt-in: the FoxIO database requires an account, so no default URL.
 		s.addSkipped(kindJA4DB, kindJA4DB, "disabled")
 	} else {
-		s.add(kindJA4DB, &ja4dbSource{fetcher: f, url: orDefault(c.JA4DBURL, defaultJA4DBURL)})
+		s.add(kindJA4DB, &ja4dbSource{fetcher: f, url: c.JA4DBURL, token: c.JA4DBToken})
 	}
 	lists := func(kind string, urls []string, def string) {
 		if len(urls) == 0 {

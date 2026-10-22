@@ -119,7 +119,7 @@ func TestRedactedHidesSecrets(t *testing.T) {
 	secrets := map[string]string{
 		"NAZR_DATABASE_URL": "postgres://u:p@h/db", "NAZR_REDIS_URL": "redis://:p@h",
 		"NAZR_TLS_KEY_PEM": "KEY", "NAZR_MAXMIND_LICENSE_KEY": "lic",
-		"NAZR_ADMIN_TOKEN": "tok", "NAZR_IP_HASH_SALT": "salt",
+		"NAZR_ADMIN_TOKEN": "tok", "NAZR_IP_HASH_SALT": "salt", "NAZR_JA4DB_TOKEN": "ja4tok",
 	}
 	in := map[string]string{"NAZR_LOG_LEVEL": "debug"}
 	for k, v := range secrets {

@@ -27,7 +27,7 @@ func (s *cidrListSource) Interval() time.Duration { return 24 * time.Hour }
 func (s *cidrListSource) file() string            { return s.name + ".txt" }
 
 func (s *cidrListSource) Fetch(ctx context.Context, dataDir string) (bool, error) {
-	return s.downloadFile(ctx, dataDir, s.name, s.file(), s.url, func(p string) (int, error) {
+	return s.downloadFile(ctx, dataDir, s.name, s.file(), s.url, "", func(p string) (int, error) {
 		t, err := loadCIDRFile(p)
 		if err != nil {
 			return 0, err

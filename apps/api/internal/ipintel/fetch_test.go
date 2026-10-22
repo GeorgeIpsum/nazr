@@ -278,3 +278,75 @@ func TestMaxMindSkippedWithoutCredentials(t *testing.T) {
 		t.Errorf("status = %+v", st)
 	}
 }
+
+func TestJA4DBDisabledWhenURLEmpty(t *testing.T) {
+	s, err := New(Config{
+		DataDir: t.TempDir(), HTTPClient: noNetClient(), JA4DBToken: "tok",
+		Disabled: []string{"apple", "tor", "datacenter", "vpn", "maxmind"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Status()["ja4db"]; st.Loaded || st.LastError != "disabled" {
+		t.Errorf("status = %+v", st)
+	}
+}
+
+func TestJA4DBSendsBearerToken(t *testing.T) {
+	var gotAuth atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth.Store(r.Header.Get("Authorization"))
+		w.Write(mustRead(t, td("ja4db.json")))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	src := &ja4dbSource{fetcher: fetcher{client: srv.Client(), now: fixedNow(t0)}, url: srv.URL, token: "s3cret"}
+	if _, err := src.Fetch(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth.Load() != "Bearer s3cret" {
+		t.Errorf("Authorization = %v", gotAuth.Load())
+	}
+	src.token = ""
+	os.Remove(statePath(dir, "ja4db"))
+	if _, err := src.Fetch(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth.Load() != "" {
+		t.Errorf("unauthenticated fetch sent %v", gotAuth.Load())
+	}
+}
+
+func TestJA4DB401KeepsOldTable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	copyTD(t, dir, "ja4db.json", "ja4db.json")
+	before := sum(mustRead(t, filepath.Join(dir, "ja4db.json")))
+	s, err := New(Config{
+		DataDir: dir, HTTPClient: srv.Client(), JA4DBURL: srv.URL, JA4DBToken: "bad", Now: fixedNow(t0),
+		Disabled: []string{"apple", "tor", "datacenter", "vpn", "maxmind"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.loadAllCached()
+	if err := s.RefreshAll(context.Background()); err == nil {
+		t.Fatal("want error")
+	}
+	st := s.Status()["ja4db"]
+	if !st.Loaded || !strings.Contains(st.LastError, "401") {
+		t.Errorf("status = %+v", st)
+	}
+	if len(s.JA4Families("t13d3112h2_e8f1e7e78f70_b26ce05bbdd6")) != 1 {
+		t.Error("old table lost")
+	}
+	if sum(mustRead(t, filepath.Join(dir, "ja4db.json"))) != before {
+		t.Error("file replaced")
+	}
+}

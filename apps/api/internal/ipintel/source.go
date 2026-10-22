@@ -1,6 +1,11 @@
 // Package ipintel loads IP intelligence data (GeoIP, ASN, relay, Tor,
 // datacenter and VPN ranges, JA4 database), keeps it fresh in the
 // background and answers lookups.
+//
+// The JA4 database source is opt-in. Its record schema (an array with
+// nullable ja4_fingerprint and application fields, among others) was
+// confirmed from FoxIO's frontend bundle on 2026-10-22; the public endpoint
+// now requires an account, so set a URL and optionally a bearer token.
 package ipintel
 
 import (
@@ -87,7 +92,7 @@ type fetcher struct {
 // body is parsed with validate (which returns the row count) before the
 // temp file replaces the cached one, so a truncated or garbage download
 // never clobbers good data.
-func (f fetcher) downloadFile(ctx context.Context, dataDir, name, file, url string, validate func(path string) (int, error)) (bool, error) {
+func (f fetcher) downloadFile(ctx context.Context, dataDir, name, file, url, bearer string, validate func(path string) (int, error)) (bool, error) {
 	dest := filepath.Join(dataDir, file)
 	st, hadState := readState(dataDir, name)
 	_, statErr := os.Stat(dest)
@@ -96,6 +101,9 @@ func (f fetcher) downloadFile(ctx context.Context, dataDir, name, file, url stri
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false, err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	if hadState && haveFile {
 		if st.ETag != "" {

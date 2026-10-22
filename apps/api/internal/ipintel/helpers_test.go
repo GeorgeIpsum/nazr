@@ -65,7 +65,7 @@ func seededService(t *testing.T) *Service {
 	copyTD(t, dir, "vpn-v4.txt", "vpn.txt")
 	copyTD(t, dir, "ja4db.json", "ja4db.json")
 	s, err := New(Config{
-		DataDir: dir, HTTPClient: noNetClient(),
+		DataDir: dir, HTTPClient: noNetClient(), JA4DBURL: "http://ja4db.invalid/",
 		MaxMindAccountID: "1", MaxMindLicenseKey: "k",
 		MaxMindEditions: []string{"GeoLite2-City", "GeoLite2-ASN"},
 	})

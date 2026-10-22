@@ -54,6 +54,7 @@ type Config struct {
 	DatacenterURLs       []string `env:"NAZR_DATACENTER_URLS"`
 	VPNURLs              []string `env:"NAZR_VPN_URLS"`
 	JA4DBURL             string   `env:"NAZR_JA4DB_URL"`
+	JA4DBToken           string   `env:"NAZR_JA4DB_TOKEN" secret:"true"`
 	ListsDisable         []string `env:"NAZR_LISTS_DISABLE"`
 	UAJA4MinObservations int      `env:"NAZR_UA_JA4_MIN_OBSERVATIONS" envDefault:"20"`
 	CollectSampleRate    float64  `env:"NAZR_COLLECT_SAMPLE_RATE" envDefault:"0.01"`

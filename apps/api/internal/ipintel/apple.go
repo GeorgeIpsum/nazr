@@ -20,7 +20,7 @@ func (s *appleSource) Name() string            { return "apple" }
 func (s *appleSource) Interval() time.Duration { return 24 * time.Hour }
 
 func (s *appleSource) Fetch(ctx context.Context, dataDir string) (bool, error) {
-	return s.downloadFile(ctx, dataDir, s.Name(), appleFile, s.url, func(p string) (int, error) {
+	return s.downloadFile(ctx, dataDir, s.Name(), appleFile, s.url, "", func(p string) (int, error) {
 		t, err := loadAppleFile(p)
 		if err != nil {
 			return 0, err

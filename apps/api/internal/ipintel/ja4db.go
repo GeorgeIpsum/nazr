@@ -12,14 +12,14 @@ import (
 	"time"
 )
 
-const (
-	defaultJA4DBURL = "https://ja4db.com/api/read/"
-	ja4dbFile       = "ja4db.json"
-)
+const ja4dbFile = "ja4db.json"
 
+// ja4dbSource is opt-in: FoxIO's database now requires an account, so there
+// is no default URL. token, when set, is sent as a bearer credential.
 type ja4dbSource struct {
 	fetcher
-	url string
+	url   string
+	token string
 }
 
 func (s *ja4dbSource) Name() string            { return "ja4db" }
@@ -67,7 +67,7 @@ func loadJA4DBFile(path string) (*JA4Table, error) {
 }
 
 func (s *ja4dbSource) Fetch(ctx context.Context, dataDir string) (bool, error) {
-	return s.downloadFile(ctx, dataDir, s.Name(), ja4dbFile, s.url, func(p string) (int, error) {
+	return s.downloadFile(ctx, dataDir, s.Name(), ja4dbFile, s.url, s.token, func(p string) (int, error) {
 		t, err := loadJA4DBFile(p)
 		if err != nil {
 			return 0, err
