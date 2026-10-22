@@ -156,6 +156,7 @@ module "service" {
   cors_origins          = var.cors_origins
   extra_env             = var.extra_env
   enable_efs_data       = var.enable_efs_data
+  data_dir              = var.data_dir
   health_check_protocol = var.health_check_protocol
   tags                  = local.tags
 }

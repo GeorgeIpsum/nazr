@@ -36,7 +36,7 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 | `region` | required | AWS region |
 | `image_owner` | `GeorgeIpsum` | GHCR owner for the default image |
 | `image` | `""` → `ghcr.io/<image_owner>/nazr:latest` | Full reference used verbatim; a bare tag (no `/`) creates ECR repo `nazr` and uses `<account>.dkr.ecr.<region>.amazonaws.com/nazr:<tag>` |
-| `cpu_architecture` | `ARM64` | `ARM64` (Graviton, cheaper) or `X86_64`; the image must exist for it |
+| `cpu_architecture` | `ARM64` | `ARM64` (Graviton, cheaper) or `X86_64`; see the platform note below |
 | `desired_count` | `2` | ECS tasks |
 | `cpu` / `memory` | `512` / `1024` | Fargate task size |
 | `db_instance_class` | `db.t4g.micro` | RDS class |
@@ -53,6 +53,7 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 | `private_subnet_ids` | `[]` | With `vpc_id`: ≥ 2 subnets in two AZs, outbound via NAT |
 | `public_subnet_ids` | `[]` | With `vpc_id`: ≥ 1 public subnet for the NLB |
 | `enable_efs_data` | `false` | Persistent `/data` on EFS (see below) |
+| `data_dir` | `""` → `/data` with EFS, else `/tmp/nazr` | `NAZR_DATA_DIR` override |
 | `health_check_protocol` | `HTTPS` | `HTTPS` (`GET /healthz` on 443, expects 200) or `TCP` |
 | `event_retention` | `2160h` | `NAZR_EVENT_RETENTION` |
 | `cors_origins` | `*` | `NAZR_CORS_ORIGINS` |
@@ -72,7 +73,7 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 
 ## Container configuration
 
-Environment: `NAZR_TLS_MODE=terminate`, `NAZR_DATA_DIR=/data`, `NAZR_EVENT_RETENTION`, `NAZR_CORS_ORIGINS`, `NAZR_METRICS_ADDR=127.0.0.1:9090` (metrics stay inside the task), `NAZR_REDIS_URL` when Redis is enabled (it carries no credential), then `extra_env`.
+Environment: `NAZR_TLS_MODE=terminate`, `NAZR_DATA_DIR` (`/tmp/nazr`, or `/data` with EFS), `NAZR_EVENT_RETENTION`, `NAZR_CORS_ORIGINS`, `NAZR_METRICS_ADDR=127.0.0.1:9090` (metrics stay inside the task), `NAZR_REDIS_URL` when Redis is enabled (it carries no credential), then `extra_env`.
 
 Secrets (Secrets Manager `valueFrom`): `NAZR_DATABASE_URL`, `NAZR_TLS_CERT_PEM`, `NAZR_TLS_KEY_PEM`, `NAZR_ADMIN_TOKEN`, and `NAZR_MAXMIND_ACCOUNT_ID` / `NAZR_MAXMIND_LICENSE_KEY` (keys of one JSON secret) when MaxMind is configured. `NAZR_ACME_*` is not used: Terraform owns the certificate.
 
@@ -86,11 +87,16 @@ The NLB is a pure TCP passthrough with `preserve_client_ip = true` on both targe
 - **EFS SG** (with `enable_efs_data`): 2049 only from the task SG.
 - **Endpoint SG** (network module): 443 from the VPC CIDR.
 
-## `/data`
+## Data directory
 
-The image runs as uid/gid 65532 and its `/data` is owned by that user. An empty task volume mounted at `/data` would be owned by root and every download would fail, so by default **no volume is mounted**: `/data` is the container's own writable layer on the task's 21 GiB ephemeral storage. It is lost when a task stops, so each new task downloads MaxMind and the IP lists again.
+The image runs as uid/gid 65532. How Fargate initialises the image's `VOLUME /data` (and who owns it) is not something the module relies on: a root-owned mount there would make every MaxMind and IP-list download fail, the same bug the compose stack once had. So by default **nothing is mounted and `NAZR_DATA_DIR=/tmp/nazr`**. Distroless `/tmp` is mode 1777 in the container's writable layer, so the nonroot process can create the directory itself. The writable layer lives on the task's 21 GiB ephemeral storage and is lost when the task stops: each new task downloads MaxMind and the IP lists again, which counts against MaxMind's daily download limit (30 per account at the time of writing).
 
-`enable_efs_data = true` mounts an EFS access point instead (posix user 65532:65532, root directory created 65532:65532 `0755`, TLS in transit, IAM-authorized), with a mount target in each private subnet. Downloads then survive restarts and are shared across tasks, which keeps you under MaxMind's daily download limit. See [docs/deploy-aws.md](../../../docs/deploy-aws.md#data-persistence-and-the-maxmind-limit).
+`enable_efs_data = true` mounts an EFS access point at `/data` instead (posix user 65532:65532, root directory created 65532:65532 `0755`, TLS in transit, IAM-authorized), with a mount target in each private subnet, and `NAZR_DATA_DIR` becomes `/data`. Downloads then survive restarts and are shared across tasks. `data_dir` overrides either default. See [docs/deploy-aws.md](../../../docs/deploy-aws.md#data-persistence-and-the-maxmind-limit).
+
+## Operational notes
+
+- **Certificate renewal**: `terraform apply` renews the ACME certificate within 30 days of expiry and writes new secret versions, but running tasks keep the certificate they started with. Roll them with `aws ecs update-service --cluster <cluster> --service <service> --force-new-deployment`.
+- **Platform**: tasks default to ARM64 (Graviton). That needs the multi-arch (`linux/amd64` + `linux/arm64`) image the release workflow publishes; for an amd64-only image set `cpu_architecture = "X86_64"`.
 
 ## Development checks
 

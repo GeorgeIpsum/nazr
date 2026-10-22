@@ -129,6 +129,12 @@ variable "enable_efs_data" {
   default     = false
 }
 
+variable "data_dir" {
+  description = "NAZR_DATA_DIR. Empty means /data when enable_efs_data is true (EFS access point owned by 65532), otherwise /tmp/nazr on the task's ephemeral storage."
+  type        = string
+  default     = ""
+}
+
 variable "health_check_protocol" {
   description = "Target group health check protocol: HTTPS or TCP."
   type        = string

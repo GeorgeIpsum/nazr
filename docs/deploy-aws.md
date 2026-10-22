@@ -25,7 +25,7 @@ nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, a
       --service "$(terraform output -raw ecs_service_name)" --force-new-deployment
     ```
 
-  Tasks run on **ARM64 (Graviton)** by default, which is about 20% cheaper per vCPU. The image must be published for `linux/arm64`; set `cpu_architecture = "X86_64"` if it is not.
+  Tasks run on **ARM64 (Graviton)** by default, which is about 20% cheaper per vCPU. This needs the multi-arch (`linux/amd64` + `linux/arm64`) image published by the release workflow; for an amd64-only image set `cpu_architecture = "X86_64"`.
 - The AWS CLI with the Session Manager plugin for the first-key command ([install the plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)).
 - Optional: a MaxMind account ID and license key for GeoLite2 City/ASN.
 
@@ -102,10 +102,12 @@ Because the NLB preserves client IPs, packets arrive at the task from the client
 
 ## Data persistence and the MaxMind limit
 
-`/data` holds the downloaded MaxMind databases and IP lists. The image runs as uid/gid 65532 and owns its `/data`; an empty task volume mounted there would be root-owned and every download would fail. So:
+The data directory holds the downloaded MaxMind databases and IP lists. The image runs as uid/gid 65532, and the module does not depend on how Fargate initialises the image's `VOLUME /data`: if it ended up as a root-owned mount, the nonroot process could not write it and every download would fail. So:
 
-- **Default (`enable_efs_data = false`)**: nothing is mounted. `/data` is the container's writable layer on the task's 21 GiB ephemeral storage, ready to use and free, but lost when the task stops. Every new task (deploys, scaling, replacements) downloads everything again. MaxMind allows a limited number of GeoLite2 downloads per account per day (30 at the time of writing), and each task downloads two editions on start, so frequent deploys with several tasks can exhaust it. When the limit is hit, GeoLite2 enrichment is missing on those tasks until the next refresh.
-- **`enable_efs_data = true`**: an encrypted EFS file system with an access point that forces uid/gid 65532 and creates its root directory as 65532:65532 `0755`, mounted at `/data` with TLS and IAM authorization. Downloads persist across restarts and are shared by all tasks, which keeps MaxMind usage low. It costs a little (EFS storage is a few hundred MB) and adds NFS latency to reads of the databases at load time.
+- **Default (`enable_efs_data = false`)**: nothing is mounted and `NAZR_DATA_DIR=/tmp/nazr`. Distroless `/tmp` is mode 1777 in the container's writable layer, so nazr creates the directory itself regardless of volume semantics. It sits on the task's 21 GiB ephemeral storage, ready to use and free, but is **per task and lost when the task stops**. Every new task (deploys, scaling, replacements) downloads everything again. MaxMind allows a limited number of GeoLite2 downloads per account per day (30 at the time of writing), and each task downloads two editions on start, so frequent deploys with several tasks can exhaust it. When the limit is hit, GeoLite2 enrichment is missing on those tasks until the next refresh.
+- **`enable_efs_data = true`**: an encrypted EFS file system with an access point that forces uid/gid 65532 and creates its root directory as 65532:65532 `0755`, mounted at `/data` with TLS and IAM authorization; `NAZR_DATA_DIR` becomes `/data`. Downloads persist across restarts and are shared by all tasks, which keeps MaxMind usage low. It costs a little (EFS storage is a few hundred MB) and adds NFS latency to reads of the databases at load time.
+
+`data_dir` overrides the directory in either mode.
 
 Use EFS when you deploy often or run many tasks; the default is fine for a small, stable deployment.
 

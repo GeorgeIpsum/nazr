@@ -1,8 +1,13 @@
 locals {
+  # /tmp/nazr by default: distroless /tmp is mode 1777 in the writable layer,
+  # so uid 65532 can create the directory whatever Fargate does with the
+  # image's VOLUME /data. /data only when it is the 65532-owned EFS mount.
+  data_dir = var.data_dir != "" ? var.data_dir : (var.enable_efs_data ? "/data" : "/tmp/nazr")
+
   environment = merge(
     {
       NAZR_TLS_MODE        = "terminate"
-      NAZR_DATA_DIR        = "/data"
+      NAZR_DATA_DIR        = local.data_dir
       NAZR_EVENT_RETENTION = var.event_retention
       NAZR_CORS_ORIGINS    = var.cors_origins
       NAZR_METRICS_ADDR    = "127.0.0.1:9090"
@@ -37,8 +42,7 @@ locals {
     environment = [for k in sort(keys(local.environment)) : { name = k, value = local.environment[k] }]
     secrets     = local.secrets
 
-    # Without EFS, /data is the container's writable layer (the image's
-    # VOLUME /data, already owned by 65532) on the task's ephemeral storage.
+    # Without EFS nothing is mounted; the data dir lives in the writable layer.
     mountPoints = var.enable_efs_data ? [{ sourceVolume = "data", containerPath = "/data", readOnly = false }] : []
 
     # Lets ECS Exec run commands in a distroless image (no shell, no init).
@@ -71,7 +75,8 @@ resource "aws_ecs_task_definition" "this" {
     cpu_architecture        = var.cpu_architecture
   }
 
-  # Room for the writable layer that holds /data (MaxMind and IP lists).
+  # Room for the writable layer, which holds /tmp/nazr (MaxMind and IP lists)
+  # when EFS is off.
   ephemeral_storage {
     size_in_gib = 21
   }
