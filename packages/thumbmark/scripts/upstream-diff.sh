@@ -28,5 +28,5 @@ cp "$REPO/biome.json" "$tmp/norm/biome.json"
 cd "$tmp/norm/packages/thumbmark"
 diff -ruN \
   --exclude=webgpu --exclude=clienthints --exclude=clientrects \
-  --exclude=mediaqueries --exclude=privacy --exclude=endpoints.ts \
+  --exclude=mediaqueries --exclude=privacy --exclude=endpoints.ts --exclude=endpoints.test.ts \
   src "$PKG/src" | sed "s#$PKG/src#ours/src#g" || true

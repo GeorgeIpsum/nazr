@@ -22,8 +22,8 @@ pnpm add @nazr/thumbmark
 import { Thumbmark } from "@nazr/thumbmark";
 
 const tm = new Thumbmark({
-  api_endpoint: "https://nazr.example.com",
-  api_key: "your-api-key", // or `simple_request: true` when a proxy injects the key
+    api_endpoint: "https://nazr.example.com",
+    api_key: "your-api-key", // or `simple_request: true` when a proxy injects the key
 });
 const result = await tm.get();
 console.log(result.thumbmark, result.visitorId);

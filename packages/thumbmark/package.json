@@ -48,7 +48,6 @@
         "src/utils/collect.ts",
         "src/utils/commonPixels.ts",
         "src/utils/ephemeralIFrame.ts",
-        "src/utils/experimental.ts",
         "src/utils/getMostFrequent.ts",
         "src/utils/hash.ts",
         "src/utils/imageDataToDataURL.ts",
@@ -66,7 +65,7 @@
         "upstream:diff": "bash scripts/upstream-diff.sh",
         "fixtures": "tsx scripts/gen-fixtures.ts",
         "lint": "biome check .",
-        "typecheck": "tsc --noEmit -p tsconfig.test.json"
+        "typecheck": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.scripts.json"
     },
     "keywords": [
         "thumbmark",

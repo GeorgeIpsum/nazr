@@ -2,6 +2,10 @@
 # Create testpage/ for Playwright e2e (mirrors upstream's Makefile `bld` step,
 # which copied the UMD bundle into ./testpage). Specs load /index.html (which
 # exposes the global ThumbmarkJS) and /dist/thumbmark.umd.js. Idempotent.
+#
+# NOTE: a stale dist/ is NOT rebuilt (the build only runs when
+# dist/thumbmark.umd.js is missing). After changing source, run `pnpm build`
+# manually before re-running this script or `pnpm test:e2e`.
 set -euo pipefail
 
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -21,12 +21,15 @@ export async function logThumbmarkData(
 
     sessionStorage.setItem("_tmjs_l", "1");
 
+    // Never send the API key to the log endpoint (mirrors api.ts).
+    const { api_key: _omitApiKey, ...optionsForBody } = options;
+
     const payload = {
         thumbmark: thisHash,
         components: thumbmarkData,
         experimental: null,
         version: getVersion(),
-        options,
+        options: optionsForBody,
         path: window?.location?.pathname,
         ...(errors.length > 0 && { errors }),
     };

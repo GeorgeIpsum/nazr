@@ -26,6 +26,13 @@ describe("logThumbmarkData", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("https://self.example/log");
     });
 
+    test("does not send api_key in the logged options", async () => {
+        await logThumbmarkData("abc123", {}, { ...defaultOptions, api_key: "secret-key" });
+
+        expect(loggedPayload().options).not.toHaveProperty("api_key");
+        expect(JSON.stringify(fetchMock.mock.calls[0][1])).not.toContain("secret-key");
+    });
+
     test("sends experimental as null and never contacts the experimental host", async () => {
         await logThumbmarkData("abc123", { screen: { width: 100 } }, defaultOptions);
 

@@ -54,9 +54,7 @@ export interface OptionsAfterDefaults {
     stabilize?: string[];
     /**
      * @deprecated This will be removed in Thumbmarkjs 2.0 and already has no
-     * effect. Experimental signals are internal telemetry: the payload is
-     * fetched only when the sampled logging path fires, and is never returned
-     * to the caller.
+     * effect. In this fork no experimental payload is fetched at all.
      */
     experimental?: boolean;
     /**
