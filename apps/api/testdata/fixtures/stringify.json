@@ -1,0 +1,310 @@
+[
+  {
+    "name": "nested-sorted-keys",
+    "input": {
+      "b": {
+        "z": 1,
+        "y": [
+          3,
+          {
+            "d": 1,
+            "c": 2
+          }
+        ],
+        "x": "s"
+      },
+      "a": 1,
+      "C": 2
+    },
+    "stringified": "{\"C\":2,\"a\":1,\"b\":{\"x\":\"s\",\"y\":[3,{\"c\":2,\"d\":1}],\"z\":1}}",
+    "hash": "4d9094571cc6cb570cb80e00e8144b33"
+  },
+  {
+    "name": "unicode-keys-and-values",
+    "input": {
+      "￿": 1,
+      "😀": 2,
+      "é": 3,
+      "z": "a b 😀   end",
+      "퟿": 4,
+      "": 5
+    },
+    "stringified": "{\"z\":\"a b 😀   end\",\"é\":3,\"퟿\":4,\"😀\":2,\"\":5,\"￿\":1}",
+    "hash": "127e3070652a601e90223c1bdc395a45"
+  },
+  {
+    "name": "floats",
+    "input": {
+      "a": 0.1,
+      "b": 1.5,
+      "c": -2.25,
+      "d": 3.141592653589793,
+      "e": 0.000001,
+      "f": 0.3333333333333333
+    },
+    "stringified": "{\"a\":0.1,\"b\":1.5,\"c\":-2.25,\"d\":3.141592653589793,\"e\":0.000001,\"f\":0.3333333333333333}",
+    "hash": "d64168aab9926768d1f77b3839abeefa"
+  },
+  {
+    "name": "integers-large",
+    "input": {
+      "a": 0,
+      "b": 100,
+      "c": 9007199254740991,
+      "d": -9007199254740991,
+      "e": 123456789012345680000
+    },
+    "stringified": "{\"a\":0,\"b\":100,\"c\":9007199254740991,\"d\":-9007199254740991,\"e\":123456789012345680000}",
+    "hash": "fa8987df870bbc0461ff05394cc64ed5"
+  },
+  {
+    "name": "arrays-with-nulls",
+    "input": {
+      "a": [
+        1,
+        null,
+        "x",
+        [
+          null,
+          []
+        ],
+        {}
+      ],
+      "b": null
+    },
+    "stringified": "{\"a\":[1,null,\"x\",[null,[]],{}],\"b\":null}",
+    "hash": "f13fb934a08cb62bcb86760cd4a02381"
+  },
+  {
+    "name": "empty-objects-pruned",
+    "input": {
+      "a": {},
+      "b": {
+        "c": {}
+      },
+      "d": [],
+      "e": [
+        {}
+      ],
+      "f": {
+        "g": 1
+      }
+    },
+    "stringified": "{\"a\":{},\"b\":{\"c\":{}},\"d\":[],\"e\":[{}],\"f\":{\"g\":1}}",
+    "hash": "656b4c5e411c701cdc0c336100ac9947"
+  },
+  {
+    "name": "negative-zero",
+    "input": {
+      "a": 0,
+      "b": [
+        0,
+        0
+      ]
+    },
+    "stringified": "{\"a\":0,\"b\":[0,0]}",
+    "hash": "34761ef82c7b433c78a607fe023600c3"
+  },
+  {
+    "name": "exponent-small",
+    "input": {
+      "a": 1e-7,
+      "b": 5e-324,
+      "c": 1.5e-10,
+      "d": -1e-7
+    },
+    "stringified": "{\"a\":1e-7,\"b\":5e-324,\"c\":1.5e-10,\"d\":-1e-7}",
+    "hash": "cae8a7e8544439d10afc3fb4beb87d38"
+  },
+  {
+    "name": "exponent-large",
+    "input": {
+      "a": 1e+21,
+      "b": 1.7976931348623157e+308,
+      "c": 1.5e+300,
+      "d": -1e+21
+    },
+    "stringified": "{\"a\":1e+21,\"b\":1.7976931348623157e+308,\"c\":1.5e+300,\"d\":-1e+21}",
+    "hash": "14c4d9f1ca5472001fad596b34357af4"
+  },
+  {
+    "name": "booleans",
+    "input": {
+      "t": true,
+      "f": false,
+      "arr": [
+        true,
+        false
+      ]
+    },
+    "stringified": "{\"arr\":[true,false],\"f\":false,\"t\":true}",
+    "hash": "15db02e570501775325bd4e0cea1998b"
+  },
+  {
+    "name": "server-merge-example",
+    "input": {
+      "system": {
+        "applePayVersion": 0,
+        "browser": {
+          "name": "Chrome",
+          "version": "126.0.0"
+        },
+        "cookieEnabled": true,
+        "hardwareConcurrency": 8,
+        "language": "en-US",
+        "platform": "MacIntel",
+        "productSub": "20030107",
+        "useragent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "vendor": "Google Inc."
+      },
+      "screen": {
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "width": 1728,
+        "height": 1117,
+        "is_touchscreen": false
+      },
+      "locales": {
+        "languages": "en-US",
+        "timezone": "America/New_York"
+      },
+      "math": {
+        "acos": 1.0471975511965979,
+        "asinh": 0.881373587019543,
+        "cosh": 1.5430806348152437
+      },
+      "webgl": {
+        "vendor": "Google Inc. (Apple)",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)"
+      },
+      "tls": {
+        "version": "TLSv1.3",
+        "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+        "ja3": "771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0",
+        "ja3_hash": "cd08e31494f9531f560d64c695473da9",
+        "ciphers": [
+          "TLS_AES_128_GCM_SHA256",
+          "TLS_AES_256_GCM_SHA384",
+          "TLS_CHACHA20_POLY1305_SHA256"
+        ],
+        "extensions": [
+          "0",
+          "23",
+          "65281",
+          "10",
+          "11",
+          "35",
+          "16",
+          "5",
+          "13",
+          "18",
+          "51",
+          "45",
+          "43"
+        ],
+        "sni": "example.com",
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "sig_algs": [
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256"
+        ],
+        "groups": [
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      "h2": {
+        "fingerprint": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
+        "settings": {
+          "1": 65536,
+          "2": 0,
+          "4": 6291456,
+          "6": 262144
+        },
+        "window_update": 15663105,
+        "priorities": [],
+        "pseudo_header_order": [
+          ":method",
+          ":authority",
+          ":scheme",
+          ":path"
+        ]
+      },
+      "header": {
+        "ja4h": "ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000",
+        "order": [
+          "host",
+          "connection",
+          "user-agent",
+          "accept",
+          "accept-encoding",
+          "accept-language"
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "acceptLanguage": {
+          "raw": "en-US,en;q=0.9",
+          "q": {
+            "en-US": 1,
+            "en": 0.9
+          }
+        }
+      },
+      "ip": {
+        "address": "203.0.113.42",
+        "version": 4,
+        "asn": 64496,
+        "as_org": "Example Networks",
+        "country": "US",
+        "region": "NY",
+        "city": "New York",
+        "tor": false,
+        "vpn": false,
+        "datacenter": false,
+        "private_relay": false
+      }
+    },
+    "stringified": "{\"h2\":{\"fingerprint\":\"1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p\",\"priorities\":[],\"pseudo_header_order\":[\":method\",\":authority\",\":scheme\",\":path\"],\"settings\":{\"1\":65536,\"2\":0,\"4\":6291456,\"6\":262144},\"window_update\":15663105},\"header\":{\"acceptLanguage\":{\"q\":{\"en\":0.9,\"en-US\":1},\"raw\":\"en-US,en;q=0.9\"},\"ja4h\":\"ge11cn20enus_a1b2c3d4e5f6_000000000000_000000000000\",\"order\":[\"host\",\"connection\",\"user-agent\",\"accept\",\"accept-encoding\",\"accept-language\"],\"userAgent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\"},\"ip\":{\"address\":\"203.0.113.42\",\"as_org\":\"Example Networks\",\"asn\":64496,\"city\":\"New York\",\"country\":\"US\",\"datacenter\":false,\"private_relay\":false,\"region\":\"NY\",\"tor\":false,\"version\":4,\"vpn\":false},\"locales\":{\"languages\":\"en-US\",\"timezone\":\"America/New_York\"},\"math\":{\"acos\":1.0471975511965979,\"asinh\":0.881373587019543,\"cosh\":1.5430806348152437},\"screen\":{\"colorDepth\":24,\"height\":1117,\"is_touchscreen\":false,\"pixelDepth\":24,\"width\":1728},\"system\":{\"applePayVersion\":0,\"browser\":{\"name\":\"Chrome\",\"version\":\"126.0.0\"},\"cookieEnabled\":true,\"hardwareConcurrency\":8,\"language\":\"en-US\",\"platform\":\"MacIntel\",\"productSub\":\"20030107\",\"useragent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36\",\"vendor\":\"Google Inc.\"},\"tls\":{\"alpn\":[\"h2\",\"http/1.1\"],\"ciphers\":[\"TLS_AES_128_GCM_SHA256\",\"TLS_AES_256_GCM_SHA384\",\"TLS_CHACHA20_POLY1305_SHA256\"],\"extensions\":[\"0\",\"23\",\"65281\",\"10\",\"11\",\"35\",\"16\",\"5\",\"13\",\"18\",\"51\",\"45\",\"43\"],\"groups\":[\"x25519\",\"secp256r1\",\"secp384r1\"],\"ja3\":\"771,4865-4866-4867-49195-49199,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0\",\"ja3_hash\":\"cd08e31494f9531f560d64c695473da9\",\"ja4\":\"t13d1516h2_8daaf6152771_02713d6af862\",\"sig_algs\":[\"ecdsa_secp256r1_sha256\",\"rsa_pss_rsae_sha256\",\"rsa_pkcs1_sha256\"],\"sni\":\"example.com\",\"version\":\"TLSv1.3\"},\"webgl\":{\"renderer\":\"ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)\",\"vendor\":\"Google Inc. (Apple)\"}}",
+    "hash": "5a7cc2cb6772bce2a06d1998be7eea8a"
+  },
+  {
+    "name": "escape-chars",
+    "input": {
+      "quote": "say \"hi\"",
+      "backslash": "a\\b",
+      "newline": "l1\nl2",
+      "tab": "a\tb",
+      "ctrl": "x\u0001y",
+      "html": "<a href=\"x\">&</a>",
+      "k\"ey\\": "v"
+    },
+    "stringified": "{\"backslash\":\"a\\\\b\",\"ctrl\":\"x\\u0001y\",\"html\":\"<a href=\\\"x\\\">&</a>\",\"k\\\"ey\\\\\":\"v\",\"newline\":\"l1\\nl2\",\"quote\":\"say \\\"hi\\\"\",\"tab\":\"a\\tb\"}",
+    "hash": "9ea445ceaac71bf987f2de09eb667c20"
+  },
+  {
+    "name": "empty-string-and-root-values",
+    "input": {
+      "": "",
+      "a": ""
+    },
+    "stringified": "{\"\":\"\",\"a\":\"\"}",
+    "hash": "c55ea09063612f5330d75a6ad9b6ba08"
+  },
+  {
+    "name": "root-array",
+    "input": [
+      3,
+      "a",
+      {
+        "b": 1,
+        "a": 2
+      }
+    ],
+    "stringified": "[3,\"a\",{\"a\":2,\"b\":1}]",
+    "hash": "dcc7c9ba7bb88d2a21a6a38ce2ce4653"
+  }
+]
