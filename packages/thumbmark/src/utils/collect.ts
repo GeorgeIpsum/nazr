@@ -1,5 +1,6 @@
 import type { collectDirective } from "../functions/api";
 import { DEFAULT_COLLECT_ENDPOINT, type optionsInterface } from "../options";
+import { resolveCollectEndpoint } from "./endpoints";
 
 // ================= Collect beacon, server-directed (Internal) =================
 
@@ -110,7 +111,7 @@ export function sendCollectBeacon(
         if (!thumbmark || byteLength(thumbmark) > MAX_THUMBMARK_BYTES) return;
         if (hasAttemptedThisSession()) return;
 
-        const endpoint = options.collect_endpoint || DEFAULT_COLLECT_ENDPOINT;
+        const endpoint = resolveCollectEndpoint(options);
         const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
         const body: { ua?: string; thumbmark: string; ja4?: string; ja4_source?: string } = {
             thumbmark,

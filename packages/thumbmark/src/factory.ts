@@ -41,9 +41,6 @@ export const tm_component_promises = {
     speech: getSpeech,
 };
 
-// Experimental signals are no longer implemented here. They live in a payload
-// artifact fetched and evaluated at runtime — see src/utils/experimental.ts.
-
 // the component interface is the form of the JSON object the function's promise must return
 export interface componentInterface {
     [key: string]: string | string[] | number | boolean | componentInterface;

@@ -1,26 +1,8 @@
 import { defaultOptions } from "../options";
 import { logThumbmarkData } from "./log";
 
-const VALID_ARTIFACT = `({ schema: 1, payload_id: "20260817T085408Z-5b50de2", signals: { seedTrivial: true } })`;
-
 describe("logThumbmarkData", () => {
     let fetchMock: jest.Mock;
-
-    /** Resolves the payload fetch with `artifact`, and the log POST with 200. */
-    function arrangeFetch(artifact: string | Error) {
-        fetchMock.mockImplementation((url: string) => {
-            if (url.includes("experimental.thumbmarkjs.com")) {
-                return artifact instanceof Error
-                    ? Promise.reject(artifact)
-                    : Promise.resolve({
-                          ok: true,
-                          status: 200,
-                          text: () => Promise.resolve(artifact),
-                      });
-            }
-            return Promise.resolve({ ok: true, status: 200 });
-        });
-    }
 
     function loggedPayload() {
         const call = fetchMock.mock.calls.find(([url]) => url.includes("/log"));
@@ -29,48 +11,35 @@ describe("logThumbmarkData", () => {
 
     beforeEach(() => {
         sessionStorage.clear();
-        fetchMock = jest.fn();
+        fetchMock = jest.fn(() => Promise.resolve({ ok: true, status: 200 }));
         global.fetch = fetchMock as unknown as typeof fetch;
     });
 
-    test("carries the evaluated payload under the experimental key", async () => {
-        arrangeFetch(VALID_ARTIFACT);
+    test("posts to ${api_endpoint}/log when api_endpoint is provided", async () => {
+        await logThumbmarkData(
+            "abc123",
+            {},
+            { ...defaultOptions, api_endpoint: "https://self.example/" },
+        );
 
-        await logThumbmarkData("abc123", { screen: { width: 100 } }, defaultOptions);
-
-        expect(loggedPayload().experimental).toEqual({
-            schema: 1,
-            payload_id: "20260817T085408Z-5b50de2",
-            signals: { seedTrivial: true },
-            errors: [],
-        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://self.example/log");
     });
 
-    test("still logs, carrying the reason, when the payload cannot be fetched", async () => {
-        // The fingerprint is the point of the log; a dead payload must not cost us the record.
-        arrangeFetch(new TypeError("Failed to fetch"));
-
+    test("sends experimental as null and never contacts the experimental host", async () => {
         await logThumbmarkData("abc123", { screen: { width: 100 } }, defaultOptions);
 
-        const payload = loggedPayload();
-        expect(payload.thumbmark).toBe("abc123");
-        expect(payload.experimental).toMatchObject({ schema: 0, payload_id: "none", signals: {} });
-        expect(payload.experimental.errors[0]).toMatchObject({ target: "request", type: "fetch" });
+        expect(loggedPayload().experimental).toBeNull();
+        expect(loggedPayload().thumbmark).toBe("abc123");
+        for (const [url] of fetchMock.mock.calls) {
+            expect(url).not.toContain("experimental.thumbmarkjs.com");
+        }
     });
 
     test("marks the session before doing any network work", async () => {
-        // Set up front, so a concurrent getThumbmark cannot start a second log
-        // while this one is still awaiting the payload.
         let markedDuringFetch: string | null = null;
-        fetchMock.mockImplementation((url: string) => {
-            if (url.includes("experimental.thumbmarkjs.com")) {
-                markedDuringFetch = sessionStorage.getItem("_tmjs_l");
-                return Promise.resolve({
-                    ok: true,
-                    status: 200,
-                    text: () => Promise.resolve(VALID_ARTIFACT),
-                });
-            }
+        fetchMock.mockImplementation(() => {
+            markedDuringFetch = sessionStorage.getItem("_tmjs_l");
             return Promise.resolve({ ok: true, status: 200 });
         });
 
@@ -80,22 +49,12 @@ describe("logThumbmarkData", () => {
     });
 
     test("never rejects when the log endpoint is down", async () => {
-        fetchMock.mockImplementation((url: string) =>
-            url.includes("experimental.thumbmarkjs.com")
-                ? Promise.resolve({
-                      ok: true,
-                      status: 200,
-                      text: () => Promise.resolve(VALID_ARTIFACT),
-                  })
-                : Promise.reject(new TypeError("Failed to fetch")),
-        );
+        fetchMock.mockImplementation(() => Promise.reject(new TypeError("Failed to fetch")));
 
         await expect(logThumbmarkData("abc123", {}, defaultOptions)).resolves.toBeUndefined();
     });
 
     test("posts errors only when there are some", async () => {
-        arrangeFetch(VALID_ARTIFACT);
-
         await logThumbmarkData("abc123", {}, defaultOptions);
         expect(loggedPayload()).not.toHaveProperty("errors");
 

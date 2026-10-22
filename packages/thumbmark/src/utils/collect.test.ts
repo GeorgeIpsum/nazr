@@ -41,6 +41,11 @@ describe("sendCollectBeacon", () => {
         expect(JSON.parse(body)).toEqual({ ua: "jest-test-agent/1.0", thumbmark: "abc123" });
     });
 
+    test("derives ${api_endpoint}/beacon when api_endpoint is set", () => {
+        sendCollectBeacon("abc123", { ...defaultOptions, api_endpoint: "https://self.example/" });
+        expect(sendBeaconMock.mock.calls[0][0]).toBe("https://self.example/beacon");
+    });
+
     test("omits ua when it exceeds 512 bytes, but still sends thumbmark", () => {
         Object.defineProperty(window.navigator, "userAgent", {
             value: LONG_UA,

@@ -83,7 +83,7 @@ export const defaultOptions: OptionsAfterDefaults = {
     exclude: [],
     include: [],
     stabilize: ["private", "iframe"],
-    logging: true,
+    logging: false,
     collect_beacon: true,
     timeout: 5000,
     cache_api_call: true,

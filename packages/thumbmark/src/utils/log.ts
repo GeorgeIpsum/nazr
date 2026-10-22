@@ -1,7 +1,7 @@
 import type { componentInterface } from "../factory";
 import type { ThumbmarkError } from "../functions";
-import { DEFAULT_API_ENDPOINT, type optionsInterface } from "../options";
-import { getExperimentalPayload } from "./experimental";
+import type { optionsInterface } from "../options";
+import { resolveLogEndpoint } from "./endpoints";
 import { getVersion } from "./version";
 
 // ===================== Logging (Internal) =====================
@@ -9,11 +9,6 @@ import { getVersion } from "./version";
 /**
  * Logs thumbmark data to remote logging endpoint (only once per session)
  * You can disable this by setting options.logging to false.
- *
- * The experimental payload is fetched here rather than by the caller because
- * this is its only consumer. That keeps it off getThumbmark's critical path —
- * this whole function is fire-and-forget, so the round-trip costs the caller
- * nothing.
  * @internal
  */
 export async function logThumbmarkData(
@@ -22,15 +17,14 @@ export async function logThumbmarkData(
     options: optionsInterface,
     errors: ThumbmarkError[] = [],
 ): Promise<void> {
-    const apiEndpoint = DEFAULT_API_ENDPOINT;
-    const url = `${apiEndpoint}/log`;
+    const url = resolveLogEndpoint(options);
 
     sessionStorage.setItem("_tmjs_l", "1");
 
     const payload = {
         thumbmark: thisHash,
         components: thumbmarkData,
-        experimental: await getExperimentalPayload(),
+        experimental: null,
         version: getVersion(),
         options,
         path: window?.location?.pathname,

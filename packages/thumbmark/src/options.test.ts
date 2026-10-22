@@ -8,3 +8,9 @@ describe("property_name_factory", () => {
         );
     });
 });
+
+describe("logging default", () => {
+    test("is off by default", () => {
+        expect(defaultOptions.logging).toBe(false);
+    });
+});
