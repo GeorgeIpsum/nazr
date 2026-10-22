@@ -37,11 +37,11 @@ See the [client README](packages/thumbmark/README.md) and [protocol.md](docs/pro
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
+curl -sk https://localhost/readyz
 docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label first
-pnpm smoke:compose   # optional: end-to-end check; tears the stack down on exit
 ```
 
-The API is at `https://localhost` with a self-signed certificate (use `curl -k`). Key creation prints the key once.
+The API is at `https://localhost` with a self-signed certificate (use `curl -k`). Key creation prints the key once. To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack: it tears the stack and its data down on exit (including any key you created), so use `KEEP=1 pnpm smoke:compose` to keep it.
 
 ## Deploy
 

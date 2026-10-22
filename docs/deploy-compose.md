@@ -8,16 +8,16 @@ Prerequisites: Docker with Compose v2.20 or newer (for `depends_on.required`), p
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
-pnpm smoke:compose
+curl -sk https://localhost/readyz
 ```
 
 The API is then at `https://localhost` (port 443, with a 308 redirect from port 80). Metrics are on `http://127.0.0.1:9090/metrics`, bound to localhost only. Create an API key with:
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml exec api /nazr keys create --label mysite
+docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label mysite
 ```
 
-`pnpm smoke:compose` (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` checks `/thumbmark` again and asserts Redis holds `nazr:*` keys. It also fails if `permission denied` appears in the API logs. On exit it runs `down -v` on the whole stack; set `KEEP=1` to leave it running for debugging.
+To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack. It tears the stack and its data down on exit (including any key you created); use `KEEP=1 pnpm smoke:compose` to keep it. The script (`deploy/compose/smoke.sh`) checks `/readyz`, creates a key, posts a stock request over HTTP/2, asserts the thumbmark, the JA4 and HTTP/2 fingerprints and the new/returning visitor flow, reads `/metrics`, then restarts the API with the `redis` profile and `NAZR_REDIS_URL=redis://redis:6379` checks `/thumbmark` again and asserts Redis holds `nazr:*` keys. It also fails if `permission denied` appears in the API logs. On exit it runs `down -v` on the whole stack; set `KEEP=1` to leave it running for debugging.
 
 ## Profiles
 
