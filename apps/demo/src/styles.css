@@ -1,0 +1,226 @@
+:root {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --muted: #6b6b6b;
+  --panel: #fff;
+  --border: #d8d8d8;
+  --ok: #1f8a3b;
+  --bad: #c62828;
+  --warn: #b26a00;
+  --accent: #2457c5;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121316;
+    --fg: #e6e6e6;
+    --muted: #9a9a9a;
+    --panel: #1b1d22;
+    --border: #33363d;
+    --ok: #4cc26b;
+    --bad: #ff6b6b;
+    --warn: #f0a63a;
+    --accent: #7aa2ff;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    14px / 1.5 system-ui,
+    sans-serif;
+  max-width: 1000px;
+  margin-inline: auto;
+}
+h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+h3 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--muted);
+}
+label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+input[type="url"],
+input[type="text"] {
+  padding: 6px 8px;
+  min-width: 240px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+input:disabled {
+  opacity: 0.5;
+}
+button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button#clear {
+  background: var(--panel);
+  color: var(--fg);
+}
+.muted {
+  color: var(--muted);
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+.panel.error {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 14%, var(--panel));
+  color: var(--fg);
+}
+.panel.error h2 {
+  color: var(--bad);
+}
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+  align-items: center;
+}
+.warn {
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  padding: 4px 8px;
+  width: 100%;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid currentColor;
+}
+.chip.ok {
+  color: var(--ok);
+}
+.chip.bad {
+  color: var(--bad);
+}
+.chip.neutral {
+  color: var(--muted);
+}
+.big code {
+  font-size: 20px;
+  word-break: break-all;
+}
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 8px 0 0;
+}
+.kv dt {
+  color: var(--muted);
+}
+.kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.meter {
+  display: flex;
+  gap: 3px;
+}
+.meter .seg {
+  width: 22px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.meter .seg.on {
+  background: var(--warn);
+}
+.meter .seg.on.l4,
+.meter .seg.on.l5 {
+  background: var(--bad);
+}
+.meter .seg.on.l1,
+.meter .seg.on.l2 {
+  background: var(--ok);
+}
+details.tree {
+  margin-left: 12px;
+}
+details.tree > summary {
+  cursor: pointer;
+}
+.leaf {
+  margin-left: 28px;
+  font-size: 13px;
+  word-break: break-all;
+}
+.key {
+  color: var(--muted);
+}
+table {
+  border-collapse: collapse;
+}
+td,
+th {
+  padding: 2px 12px 2px 0;
+  text-align: left;
+}
+.diff.added li {
+  color: var(--ok);
+}
+.diff.removed li {
+  color: var(--bad);
+}
+.diff.changed li {
+  color: var(--warn);
+}
+pre {
+  overflow: auto;
+  max-height: 480px;
+  font-size: 12px;
+}

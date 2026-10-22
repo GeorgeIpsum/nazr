@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nazr demo</title>
+    <!--
+      Demo for the nazr API. It is served over http://localhost:5173 (or /demo/ on the
+      Go server) and calls the API cross-origin; CORS is handled by the API. With the
+      compose stack's self-signed certificate, visit https://localhost/healthz once and
+      accept the certificate, otherwise the browser blocks the fetch.
+    -->
+  </head>
+  <body>
+    <header>
+      <h1>nazr demo</h1>
+      <form id="form">
+        <label>Endpoint <input id="endpoint" type="url" value="https://localhost" required /></label>
+        <label>API key <input id="apiKey" type="text" autocomplete="off" /></label>
+        <label class="inline"><input id="simple" type="checkbox" /> simple request</label>
+        <button type="submit" id="run">Run</button>
+        <button type="button" id="clear">Clear visitor</button>
+        <span id="clear-note" class="muted"></span>
+      </form>
+      <p id="simple-note" class="muted" hidden>
+        Simple request: no key is sent, the proxy in front of the API injects it.
+      </p>
+    </header>
+    <main id="output"></main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
