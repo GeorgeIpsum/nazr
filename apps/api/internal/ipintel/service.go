@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,12 @@ type Config struct {
 }
 
 // Lookup is the intelligence known about one address.
+//
+// Region formats differ by source: MaxMind regions are "<CC>-<subdivision>"
+// (for example GB-ENG) while Apple publishes ISO 3166-2 style codes such as
+// GB-EN, so a relay address overridden by Apple carries Apple's form. When
+// Apple's country differs from MaxMind's, CountryName and the continent
+// fields are cleared rather than left describing another country.
 type Lookup struct {
 	ASN           uint32
 	ASOrg         string
@@ -81,7 +88,8 @@ type entry struct {
 	kind string
 	src  Source // nil for sources skipped at construction
 
-	mu          sync.Mutex // serialises refreshes and guards status fields
+	fetchMu     sync.Mutex // held for a whole refresh; prevents concurrent fetches
+	mu          sync.Mutex // guards status and lastAttempt; held only briefly
 	status      SourceStatus
 	lastAttempt time.Time
 	tbl         atomic.Pointer[tableHolder]
@@ -214,18 +222,23 @@ func (s *Service) addSkipped(name, kind, reason string) {
 	s.entries[name] = &entry{kind: kind, status: SourceStatus{LastError: reason}}
 }
 
-// loadCached parses the cached file of e and swaps it in. Callers hold e.mu.
+// loadCached parses the cached file of e and swaps it in. Callers hold
+// e.fetchMu (or are single-threaded at startup); e.mu is taken only for the
+// brief status update so Status never waits on I/O.
 func (s *Service) loadCached(e *entry) error {
 	t, err := e.src.Load(s.cfg.DataDir)
 	if err != nil {
 		return err
 	}
+	st, hasState := readState(s.cfg.DataDir, e.src.Name())
 	e.tbl.Store(&tableHolder{t: t})
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.status.Loaded = true
 	if rc, ok := t.(rowCounter); ok {
 		e.status.Rows = rc.Rows()
 	}
-	if st, ok := readState(s.cfg.DataDir, e.src.Name()); ok {
+	if hasState {
 		e.status.FetchedAt = st.FetchedAt
 		e.status.LastModified = st.LastModified
 		if st.RowCount > 0 {
@@ -235,9 +248,19 @@ func (s *Service) loadCached(e *entry) error {
 	return nil
 }
 
+func (s *Service) ensureDataDir() error {
+	if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
+		return fmt.Errorf("ipintel: create data dir: %w", err)
+	}
+	return nil
+}
+
 // Start loads every cached file, then refreshes stale sources in the
 // background until ctx is cancelled.
 func (s *Service) Start(ctx context.Context) {
+	if err := s.ensureDataDir(); err != nil {
+		s.log.Error("ipintel: data dir unavailable", "err", err)
+	}
 	s.loadAllCached()
 	s.wg.Add(1)
 	go func() {
@@ -261,51 +284,63 @@ func (s *Service) loadAllCached() {
 		if e.src == nil {
 			continue
 		}
-		e.mu.Lock()
 		if err := s.loadCached(e); err != nil {
 			s.log.Info("ipintel: no cached data", "source", name, "err", err)
 		}
-		e.mu.Unlock()
 	}
 }
 
 // Wait blocks until the background loop started by Start has exited.
 func (s *Service) Wait() { s.wg.Wait() }
 
-// tick refreshes every source whose data is stale.
+// tick refreshes every stale source concurrently, so one hung source
+// cannot delay the others. A source already being fetched is skipped.
 func (s *Service) tick(ctx context.Context) {
+	var wg sync.WaitGroup
 	for _, e := range s.entries {
-		if ctx.Err() != nil {
-			return
-		}
-		if e.src == nil {
+		if e.src == nil || ctx.Err() != nil {
 			continue
 		}
-		e.mu.Lock()
-		now := s.cfg.Now()
-		due := !e.status.FetchedAt.Add(e.src.Interval()).After(now) &&
-			!e.lastAttempt.Add(retryAfterFailure).After(now)
-		if due {
-			_ = s.refresh(ctx, e)
-		}
-		e.mu.Unlock()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !e.fetchMu.TryLock() {
+				return
+			}
+			defer e.fetchMu.Unlock()
+			now := s.cfg.Now()
+			e.mu.Lock()
+			due := !e.status.FetchedAt.Add(e.src.Interval()).After(now) &&
+				!e.lastAttempt.Add(retryAfterFailure).After(now)
+			e.mu.Unlock()
+			if due {
+				_ = s.refresh(ctx, e)
+			}
+		}()
 	}
+	wg.Wait()
 }
 
-// refresh fetches and, when data changed, swaps the table. Callers hold e.mu.
-// On failure the previous table stays in place.
+// refresh fetches and, when data changed, swaps the table. Callers hold
+// e.fetchMu. On failure the previous table stays in place.
 func (s *Service) refresh(ctx context.Context, e *entry) error {
 	name := e.src.Name()
+	e.mu.Lock()
 	e.lastAttempt = s.cfg.Now()
+	e.mu.Unlock()
 	changed, err := e.src.Fetch(ctx, s.cfg.DataDir)
 	if err == nil && (changed || e.table() == nil) {
 		err = s.loadCached(e)
 	} else if err == nil {
 		if st, ok := readState(s.cfg.DataDir, name); ok {
+			e.mu.Lock()
 			e.status.FetchedAt = st.FetchedAt
 			e.status.LastModified = st.LastModified
+			e.mu.Unlock()
 		}
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if err != nil {
 		e.status.LastError = err.Error()
 		s.log.Warn("ipintel: refresh failed", "source", name, "err", err)
@@ -316,19 +351,34 @@ func (s *Service) refresh(ctx context.Context, e *entry) error {
 	return nil
 }
 
-// RefreshAll fetches every source regardless of age.
+// RefreshAll fetches every source regardless of age, concurrently. A source
+// with a fetch already in flight is waited for, never run twice at once.
 func (s *Service) RefreshAll(ctx context.Context) error {
-	var errs []error
+	if err := s.ensureDataDir(); err != nil {
+		return err
+	}
+	var (
+		wg   sync.WaitGroup
+		emu  sync.Mutex
+		errs []error
+	)
 	for _, e := range s.entries {
 		if e.src == nil {
 			continue
 		}
-		e.mu.Lock()
-		if err := s.refresh(ctx, e); err != nil {
-			errs = append(errs, err)
-		}
-		e.mu.Unlock()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.fetchMu.Lock()
+			defer e.fetchMu.Unlock()
+			if err := s.refresh(ctx, e); err != nil {
+				emu.Lock()
+				errs = append(errs, err)
+				emu.Unlock()
+			}
+		}()
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 
@@ -380,6 +430,9 @@ func (s *Service) Lookup(addr netip.Addr) Lookup {
 			if r, hit := t.Lookup(addr); hit {
 				l.PrivateRelay = true
 				l.GeoSource = "apple"
+				if l.Country != r.Country {
+					l.CountryName, l.ContinentCode, l.ContinentName = "", "", ""
+				}
 				l.Country, l.Region, l.City = r.Country, r.Region, r.City
 			}
 		}
