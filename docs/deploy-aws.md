@@ -13,7 +13,7 @@ nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, a
 - Terraform 1.9 or newer and AWS credentials with rights to create VPC, ECS, RDS, ElastiCache, ELB, IAM, Route53 records and Secrets Manager secrets.
 - A public **Route53 hosted zone** for the domain (or a parent of it). The module adds an `A` alias for `domain` and uses the zone for the ACME DNS-01 challenge.
 - An **image** the tasks can pull:
-  - default `ghcr.io/GeorgeIpsum/nazr:latest` (forks set `image_owner`), public on GHCR, pulled through the NAT gateway;
+  - default `ghcr.io/georgeipsum/nazr:latest` (forks set `image_owner`, lowercase: OCI references reject uppercase), pulled through the NAT gateway. It exists only after the first `v*` release has run the release workflow, and GHCR creates a new package as **private** on its first push: a maintainer must set it to public once (package settings, "Change visibility"), or the tasks cannot pull it. A fork must publish a release (and make its package public) or use the bare-tag ECR flow below before its first apply;
   - any other full reference via `image`;
   - or a bare tag (`image = "v1.0.0"`): the module creates an ECR repository named `nazr` and points the task at `<account>.dkr.ecr.<region>.amazonaws.com/nazr:v1.0.0`. The repository starts empty and the apply waits for healthy tasks (`wait_for_steady_state`), so create the repository first, push, then apply everything:
 
@@ -98,7 +98,7 @@ aws secretsmanager get-secret-value --secret-id "$(terraform output -raw admin_t
 
 ## Security groups and client IPs
 
-Because the NLB preserves client IPs, packets arrive at the task from the client's internet address. The task security group therefore allows the container ports 8443 and 8080 from `0.0.0.0/0` and `::/0`. A VPC-CIDR rule would block real clients; whether referencing the NLB's security group instead works with client IP preservation is unverified, so the module does not rely on it. The open rule is safe because the tasks are in private subnets with no public IP, so the only way in is through the NLB. The NLB group allows 443/80 from anywhere and forwards only 8443/8080 to the task group; the database, Redis and EFS groups accept connections only from the task group.
+Because the NLB preserves client IPs, packets arrive at the task from the client's internet address, so a VPC-CIDR rule on the task group would block real clients. NLB security groups are evaluated at the NLB's network interfaces, though, so targets can admit traffic by referencing the NLB's security group regardless of client IP preservation ([NLB security groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-security-groups.html)). The task group therefore allows 8443 and 8080 only from the NLB group (traffic and health checks). If that misbehaves in your account or region, the first apply shows it: `wait_for_steady_state` fails because the targets never turn healthy. The fallback is `task_ingress_cidrs = ["0.0.0.0/0", "::/0"]`, which replaces the reference with CIDR rules; that is still safe because the tasks are in private subnets with no public IP, so the only way in is through the NLB. The NLB group allows 443/80 from anywhere and forwards only 8443/8080 to the task group; the database, Redis and EFS groups accept connections only from the task group.
 
 ## Data persistence and the MaxMind limit
 

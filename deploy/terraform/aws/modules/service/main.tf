@@ -50,9 +50,14 @@ resource "aws_ecr_repository" "this" {
 # --- Security groups --------------------------------------------------------
 #
 # The NLB is a TCP passthrough with client IP preservation: packets reach the
-# task with the real client's source address, not the NLB's. The task security
-# group therefore admits 8443/8080 (the container ports) from anywhere. Tasks sit in private
-# subnets without public IPs, so the only path in is through the NLB listeners.
+# task with the real client's source address, not the NLB's. NLB security
+# groups are evaluated at the NLB's ENIs, so a target group can still admit
+# traffic by referencing the NLB security group regardless of client IP
+# preservation: the task group admits 8443/8080 (the container ports) from the
+# NLB group only. var.task_ingress_cidrs replaces that with CIDR rules (escape
+# hatch, e.g. 0.0.0.0/0 and ::/0; tasks sit in private subnets without public
+# IPs either way). wait_for_steady_state fails the first apply if health
+# checks cannot reach the tasks.
 
 resource "aws_security_group" "nlb" {
   name_prefix = "${var.name}-nlb-"
@@ -67,7 +72,7 @@ resource "aws_security_group" "nlb" {
 
 resource "aws_security_group" "task" {
   name_prefix = "${var.name}-task-"
-  description = "nazr tasks: 8443 and 8080 (client IPs preserved by the NLB)"
+  description = "nazr tasks: 8443 and 8080 via the NLB"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = "${var.name}-task" })
 
@@ -93,9 +98,17 @@ locals {
       for cn, c in local.cidrs : "${pn}-${cn}" => merge(c, { name = pn, port = p.listener })
     }
   ]...)
-  task_ingress = merge([
+  # Default: task ingress from the NLB security group. With task_ingress_cidrs
+  # set, CIDR rules replace it.
+  task_ingress_from_nlb = length(var.task_ingress_cidrs) == 0 ? local.ports : {}
+  task_ingress_cidr = merge([
     for pn, p in local.ports : {
-      for cn, c in local.cidrs : "${pn}-${cn}" => merge(c, { name = pn, port = p.container })
+      for c in var.task_ingress_cidrs : "${pn}-${c}" => {
+        name      = pn
+        port      = p.container
+        cidr_ipv4 = strcontains(c, ":") ? null : c
+        cidr_ipv6 = strcontains(c, ":") ? c : null
+      }
     }
   ]...)
 }
@@ -125,11 +138,23 @@ resource "aws_vpc_security_group_egress_rule" "nlb_to_task" {
   tags                         = var.tags
 }
 
+resource "aws_vpc_security_group_ingress_rule" "task_from_nlb" {
+  for_each = local.task_ingress_from_nlb
+
+  security_group_id            = aws_security_group.task.id
+  description                  = "${upper(each.key)} and health checks from the NLB"
+  ip_protocol                  = "tcp"
+  from_port                    = each.value.container
+  to_port                      = each.value.container
+  referenced_security_group_id = aws_security_group.nlb.id
+  tags                         = var.tags
+}
+
 resource "aws_vpc_security_group_ingress_rule" "task" {
-  for_each = local.task_ingress
+  for_each = local.task_ingress_cidr
 
   security_group_id = aws_security_group.task.id
-  description       = "${upper(each.value.name)} via the NLB (client source IP preserved)"
+  description       = "${upper(each.value.name)} via the NLB (task_ingress_cidrs)"
   ip_protocol       = "tcp"
   from_port         = each.value.port
   to_port           = each.value.port

@@ -34,7 +34,7 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 | `domain` | required | Hostname served, inside `route53_zone_id` |
 | `route53_zone_id` | required | Hosted zone for the alias and DNS-01 |
 | `region` | required | AWS region |
-| `image_owner` | `GeorgeIpsum` | GHCR owner for the default image |
+| `image_owner` | `georgeipsum` | GHCR owner for the default image `ghcr.io/georgeipsum/nazr`; must be lowercase. The package exists after the first `v*` release and starts private on GHCR (make it public once) |
 | `image` | `""` → `ghcr.io/<image_owner>/nazr:latest` | Full reference used verbatim; a bare tag (no `/`) creates ECR repo `nazr` and uses `<account>.dkr.ecr.<region>.amazonaws.com/nazr:<tag>` |
 | `cpu_architecture` | `ARM64` | `ARM64` (Graviton, cheaper) or `X86_64`; see the platform note below |
 | `desired_count` | `2` | ECS tasks |
@@ -57,6 +57,7 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 | `health_check_protocol` | `HTTPS` | `HTTPS` (`GET /healthz` on container port 8443, expects 200) or `TCP` |
 | `event_retention` | `2160h` | `NAZR_EVENT_RETENTION` |
 | `cors_origins` | `*` | `NAZR_CORS_ORIGINS` |
+| `task_ingress_cidrs` | `[]` | Empty: tasks admit 8443/8080 from the NLB security group. Non-empty: CIDR rules instead (fallback `["0.0.0.0/0", "::/0"]`) |
 | `wait_for_steady_state` | `true` | `apply` waits (up to 20 min) for healthy tasks and fails on a crash-looping deployment |
 | `extra_env` | `{}` | Extra plain `NAZR_*` environment; overrides module values. No secrets |
 | `tags` | `{}` | Added to every resource, plus `app = "nazr"` |
@@ -88,12 +89,12 @@ Secrets (Secrets Manager `valueFrom`): `NAZR_DATABASE_URL`, `NAZR_TLS_CERT_PEM`,
 
 The image runs as uid 65532, and Fargate does not guarantee that a non-root process may bind ports below 1024, so the container listens on unprivileged ports and the NLB maps 443→8443 and 80→8080. The redirect uses the request's `Host` without a port, so clients are sent to `https://<domain>` on 443.
 
-## Security groups and why the task group is open
+## Security groups and client IP preservation
 
 The NLB is a pure TCP passthrough with `preserve_client_ip = true` on both target groups. nazr has to see the real client address and the raw TLS ClientHello, so nothing in front of it may proxy or terminate the connection. The consequence is that packets reach the task with the **client's** source IP, not the NLB's:
 
 - **NLB SG**: ingress 443 and 80 from `0.0.0.0/0` and `::/0`; egress 8443 and 8080 only to the task SG (traffic and health checks).
-- **Task SG**: ingress 8443 and 8080 from `0.0.0.0/0` and `::/0`. A VPC-CIDR rule would block real clients, whose source addresses are on the internet. Whether referencing the NLB's security group from the task group works together with client IP preservation is not verified here, so the module does not depend on it. Opening the container ports to `0.0.0.0/0` is safe because the tasks run in private subnets with `assign_public_ip = false`: the only route in is through the NLB listeners. Egress is open (RDS, Redis, EFS, VPC endpoints, and MaxMind/list downloads via NAT).
+- **Task SG**: ingress 8443 and 8080 from the NLB SG (`referenced_security_group_id`). A VPC-CIDR rule would block real clients, whose source addresses are on the internet, but NLB security groups are evaluated at the NLB's ENIs, so targets can reference the NLB SG regardless of client IP preservation ([AWS docs](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-security-groups.html)). If that does not hold in an account or region, `wait_for_steady_state` surfaces it on the first apply (targets never turn healthy); set `task_ingress_cidrs = ["0.0.0.0/0", "::/0"]` to use CIDR rules instead, which is safe because the tasks run in private subnets with `assign_public_ip = false`: the only route in is through the NLB listeners. Egress is open (RDS, Redis, EFS, VPC endpoints, and MaxMind/list downloads via NAT).
 - **Database SG**: 5432 (and 6379 with Redis) only from the task SG.
 - **EFS SG** (with `enable_efs_data`): 2049 only from the task SG.
 - **Endpoint SG** (network module): 443 from the VPC CIDR.

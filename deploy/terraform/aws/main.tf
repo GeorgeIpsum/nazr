@@ -159,5 +159,6 @@ module "service" {
   data_dir              = var.data_dir
   wait_for_steady_state = var.wait_for_steady_state
   health_check_protocol = var.health_check_protocol
+  task_ingress_cidrs    = var.task_ingress_cidrs
   tags                  = local.tags
 }

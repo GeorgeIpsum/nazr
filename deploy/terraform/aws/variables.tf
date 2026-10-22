@@ -14,9 +14,14 @@ variable "region" {
 }
 
 variable "image_owner" {
-  description = "GHCR owner used to compose the default image (ghcr.io/<owner>/nazr:latest) when var.image is empty. Forks change only this."
+  description = "GHCR owner used to compose the default image (ghcr.io/<owner>/nazr:latest) when var.image is empty. Forks change only this. Lowercase: OCI references reject uppercase."
   type        = string
-  default     = "GeorgeIpsum"
+  default     = "georgeipsum"
+
+  validation {
+    condition     = lower(var.image_owner) == var.image_owner
+    error_message = "image_owner must be lowercase (OCI image references reject uppercase); GHCR lowercases the owner on push."
+  }
 }
 
 variable "image" {
@@ -180,13 +185,24 @@ variable "data_dir" {
 }
 
 variable "health_check_protocol" {
-  description = "NLB target health check: HTTPS (GET /healthz on 443, expects 200) or TCP (connect to 443)."
+  description = "NLB target health check: HTTPS (GET /healthz on container port 8443, expects 200) or TCP (connect to 8443)."
   type        = string
   default     = "HTTPS"
 
   validation {
     condition     = contains(["HTTPS", "TCP"], var.health_check_protocol)
     error_message = "health_check_protocol must be HTTPS or TCP."
+  }
+}
+
+variable "task_ingress_cidrs" {
+  description = "Escape hatch for the task security group. Empty (default): the task group admits 8443/8080 only from the NLB security group. Non-empty: CIDR rules for 8443/8080 from these ranges instead (e.g. [\"0.0.0.0/0\", \"::/0\"] if referencing the NLB group does not pass client-IP-preserved traffic in your account or region)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.task_ingress_cidrs : can(cidrhost(c, 0))])
+    error_message = "task_ingress_cidrs entries must be CIDR blocks, e.g. 0.0.0.0/0 or ::/0."
   }
 }
 

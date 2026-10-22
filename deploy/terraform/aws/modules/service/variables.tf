@@ -141,6 +141,12 @@ variable "health_check_protocol" {
   default     = "HTTPS"
 }
 
+variable "task_ingress_cidrs" {
+  description = "Empty: the task group admits 8443/8080 from the NLB security group. Non-empty: CIDR rules from these ranges instead."
+  type        = list(string)
+  default     = []
+}
+
 variable "wait_for_steady_state" {
   description = "Make terraform apply wait (up to 20 minutes) for the service to reach a steady state, failing on a broken deployment."
   type        = bool
