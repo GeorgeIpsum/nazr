@@ -1,6 +1,8 @@
 node_modules
-dist
-types
+/packages/*/dist/
+/apps/*/dist/
+/packages/*/types/
+/apps/*/types/
 .turbo
 coverage
 *.log

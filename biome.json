@@ -5,8 +5,10 @@
   "files": {
     "includes": [
       "**",
-      "!**/dist",
-      "!**/types",
+      "!packages/*/dist",
+      "!apps/*/dist",
+      "!packages/*/types",
+      "!apps/*/types",
       "!**/node_modules",
       "!**/coverage",
       "!**/.turbo",
