@@ -10,6 +10,7 @@ import type { optionsInterface } from "./options";
 // Import all built-in component functions
 import getAudio from "./components/audio";
 import getCanvas from "./components/canvas";
+import getClientHints from "./components/clienthints";
 import getFonts from "./components/fonts";
 import getHardware from "./components/hardware";
 import getLocales from "./components/locales";

@@ -30,6 +30,7 @@
         "src/components/system/index.ts",
         "src/components/webgl/index.ts",
         "src/components/webrtc/index.ts",
+        "src/components/clienthints/index.ts",
         "src/components/webgpu/index.ts",
         "src/factory.ts",
         "src/functions/api.ts",
