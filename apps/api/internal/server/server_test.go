@@ -847,3 +847,31 @@ func TestEveryRouteClaimsItsHeaderOrder(t *testing.T) {
 		t.Fatalf("order %v, want %v", got, want)
 	}
 }
+
+// The readiness and root routes carry the global CORS policy so a page on
+// another origin (the demo's status banner) can read them.
+func TestReadinessRoutesCORS(t *testing.T) {
+	get := func(e *env, target, origin string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, target, nil)
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		return e.do(r)
+	}
+	wild := newEnv(t, nil)
+	listed := newEnv(t, func(c *config.Config, _ *fakeStore) { c.CORSOrigins = []string{"https://demo.example"} })
+	for _, target := range []string{"/healthz", "/readyz", "/"} {
+		if w := get(wild, target, "https://any.example"); w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Fatalf("%s wildcard: %d ACAO %q", target, w.Code, w.Header().Get("Access-Control-Allow-Origin"))
+		}
+		w := get(listed, target, "https://demo.example")
+		if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "https://demo.example" ||
+			!slices.Contains(w.Header().Values("Vary"), "Origin") {
+			t.Fatalf("%s allowed origin: %d %v", target, w.Code, w.Header())
+		}
+		w = get(listed, target, "https://evil.example")
+		if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "" {
+			t.Fatalf("%s unlisted origin: %d ACAO %q", target, w.Code, w.Header().Get("Access-Control-Allow-Origin"))
+		}
+	}
+}

@@ -63,8 +63,6 @@ pnpm --filter @nazr/demo dev     # http://localhost:5173
 2. Open the demo, keep the endpoint `https://localhost`, paste the key and press Run. A wrong key or disallowed origin shows a red "Unauthorized" panel.
 3. The "simple request" box sends no key (a proxy in front must inject it). "Clear visitor" removes the client's `thumbmark_*` localStorage keys.
 
-The version/TLS-mode/source banner reads `/readyz`, which is only readable from the page when it is same-origin (the built demo served from `/demo/` by the Go server via `NAZR_DEMO_DIR`); from the dev server the banner reports it as unavailable.
-
 ## Logs and data
 
 ```bash

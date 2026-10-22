@@ -166,6 +166,7 @@ X-Request-Id: 01M5J6QGD433NP49SECAYZD7JR
 
 - Preflight cannot carry the key, so it uses the global `NAZR_CORS_ORIGINS` list (default `*`). With a specific list, `Access-Control-Allow-Origin` echoes the request origin when listed, with `Vary: Origin`.
 - Real requests get the global `Access-Control-Allow-Origin` first, so errors raised before authentication (403, 413, 429) stay readable by the browser. After authentication, a key with an origin list echoes the request origin.
+- `GET /healthz`, `GET /readyz` and `GET /` carry the same global `Access-Control-Allow-Origin`, so a page on another origin (such as the demo's status banner) can read them. They are simple requests and need no preflight.
 - Per-key origins (`allowed_origins`) are enforced on the real request, not on the preflight. A key with no origin list accepts any origin (and requests without an `Origin` header at all).
 
 ## `POST /beacon`

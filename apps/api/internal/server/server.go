@@ -92,8 +92,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("OPTIONS /beacon", s.route("preflight", http.HandlerFunc(s.preflight)))
 	mux.Handle("POST /log", s.route("log", s.globalCORS(http.HandlerFunc(s.handleLog))))
 	mux.Handle("OPTIONS /log", s.route("preflight", http.HandlerFunc(s.preflight)))
-	mux.Handle("GET /healthz", s.route("healthz", http.HandlerFunc(s.handleHealthz)))
-	mux.Handle("GET /readyz", s.route("readyz", http.HandlerFunc(s.handleReadyz)))
+	// Simple GETs: the global Allow-Origin is enough (no preflight), and it
+	// lets a page on another origin, such as the demo banner, read them.
+	mux.Handle("GET /healthz", s.route("healthz", s.globalCORS(http.HandlerFunc(s.handleHealthz))))
+	mux.Handle("GET /readyz", s.route("readyz", s.globalCORS(http.HandlerFunc(s.handleReadyz))))
 
 	admin := auth.AdminMiddleware(d.Cfg.AdminToken)
 	mux.Handle("GET /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleListKeys))))
@@ -103,7 +105,7 @@ func New(d Deps) http.Handler {
 	if d.Cfg.DemoDir != "" {
 		mux.Handle("GET /demo/", s.route("demo", demoHandler(d.Cfg.DemoDir)))
 	}
-	mux.Handle("GET /{$}", s.route("root", http.HandlerFunc(s.handleRoot)))
+	mux.Handle("GET /{$}", s.route("root", s.globalCORS(http.HandlerFunc(s.handleRoot))))
 	mux.Handle("/", s.route("not_found", http.HandlerFunc(notFound)))
 	return mux
 }

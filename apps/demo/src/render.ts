@@ -112,7 +112,7 @@ function banner(m: ViewModel): HTMLElement {
       el(
         "span",
         { class: "chip bad" },
-        `readyz unavailable (${m.readyzError}); cross-origin needs CORS on /readyz, same-origin /demo/ works`,
+        `readyz unavailable (${m.readyzError})`,
       ),
     );
   }
