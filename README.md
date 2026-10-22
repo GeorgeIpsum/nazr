@@ -57,24 +57,24 @@ The API is at `https://localhost` with a self-signed certificate (use `curl -k`)
 
 ## Signal status
 
-| Area | Status |
-|---|---|
-| Client components (18) | 13 from upstream (`audio`, `canvas`, `fonts`, `hardware`, `locales`, `math`, `permissions`, `plugins`, `screen`, `speech`, `system`, `webgl`, `webrtc`) plus 5 added by the fork (`webgpu`, `clienthints`, `clientrects`, `mediaqueries`, `privacy`) |
-| TLS | JA4 in the fingerprint; JA3 recorded in events only |
-| HTTP/2 | Akamai-style fingerprint |
-| HTTP headers | JA4H (cookie-free in the fingerprint), header order |
-| IP intelligence | MaxMind geo/ASN, Apple Private Relay, Tor exits, datacenter and VPN lists (v4 and v6); optional FoxIO JA4DB behind a token |
-| Deferred | JA4T/TCP, QUIC/HTTP3, extension detection, Private Access Tokens |
+| Area                   | Status                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client components (18) | 13 upstream plus 5 added by the fork: `webgpu`, `clienthints`, `clientrects`, `mediaqueries`, `privacy` (full list in [signals.md](docs/signals.md)) |
+| TLS                    | JA4 in the fingerprint; JA3 recorded in events only                                                                                                  |
+| HTTP/2                 | Akamai-style fingerprint                                                                                                                             |
+| HTTP headers           | JA4H (cookie-free in the fingerprint), header order                                                                                                  |
+| IP intelligence        | MaxMind geo/ASN, Apple Private Relay, Tor exits, datacenter and VPN lists (v4 and v6); optional FoxIO JA4DB behind a token                           |
+| Deferred               | JA4T/TCP, QUIC/HTTP3, extension detection, Private Access Tokens                                                                                     |
 
 ## TLS modes
 
 `NAZR_TLS_MODE` decides what the server can see. Details in [protocol.md](docs/protocol.md#connection-modes-and-fingerprint-capture).
 
-| Mode | Captured | Use when |
-|---|---|---|
-| `terminate` (default) | JA4 (JA3 in events), HTTP/2 fingerprint, header order for HTTP/2 | nazr is the TLS endpoint (NLB passthrough, a VM with ACME, Compose). Full signal set |
-| `proxied` | JA4 from a header (`x-ja4`) only; header order as the proxy forwards it | TLS ends at a proxy that computes and forwards JA4. **The listener must be reachable only through the proxy**: anyone who can connect directly can forge the JA4 header and the client IP |
-| `plain` | HTTP/1.1 header order only | Local development and tests |
+| Mode                  | Captured                                                                | Use when                                                                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `terminate` (default) | JA4 (JA3 in events), HTTP/2 fingerprint, header order for HTTP/2        | nazr is the TLS endpoint (NLB passthrough, a VM with ACME, Compose). Full signal set                                                                                                      |
+| `proxied`             | JA4 from a header (`x-ja4`) only; header order as the proxy forwards it | TLS ends at a proxy that computes and forwards JA4. **The listener must be reachable only through the proxy**: anyone who can connect directly can forge the JA4 header and the client IP |
+| `plain`               | HTTP/1.1 header order only                                              | Local development and tests                                                                                                                                                               |
 
 ## Licensing
 
