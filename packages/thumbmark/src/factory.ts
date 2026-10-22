@@ -16,6 +16,7 @@ import getFonts from "./components/fonts";
 import getHardware from "./components/hardware";
 import getLocales from "./components/locales";
 import getMath from "./components/math";
+import getMediaQueries from "./components/mediaqueries";
 import getPermissions from "./components/permissions";
 import getPlugins from "./components/plugins";
 import getScreen from "./components/screen";
