@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.26 AS build
+# The build stage runs on the builder's own platform and cross-compiles (pure
+# Go, CGO off), so multi-arch release builds do not run the compiler under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 ARG VERSION=dev
+ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOFLAGS=-mod=readonly GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags "-s -w -X nazr/api/internal/version.Version=${VERSION}" -o /out/nazr ./cmd/nazr
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X nazr/api/internal/version.Version=${VERSION}" -o /out/nazr ./cmd/nazr
 RUN mkdir -p /data
 
 FROM gcr.io/distroless/static:nonroot

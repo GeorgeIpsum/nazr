@@ -23,11 +23,12 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+      # @nazr/api is Go: the go job lints, tests and builds it (this job has no Go toolchain).
+      - run: pnpm lint --filter='!@nazr/api'
       - run: pnpm lint:biome
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+      - run: pnpm typecheck --filter='!@nazr/api'
+      - run: pnpm test --filter='!@nazr/api'
+      - run: pnpm build --filter='!@nazr/api'
       - uses: actions/upload-artifact@v4
         with:
           name: demo-dist
@@ -85,23 +86,26 @@ jobs:
 
   compose:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build and start the stack
         run: docker compose -f deploy/compose/docker-compose.yml up -d --build
       - name: Smoke test
         env:
-          KEEP: "0"
+          # Keep the stack so the logs step has something to show; Tear down cleans up.
+          KEEP: "1"
         run: bash deploy/compose/smoke.sh
       - name: Compose logs on failure
         if: failure()
-        run: docker compose -f deploy/compose/docker-compose.yml logs --no-color || true
+        run: docker compose -f deploy/compose/docker-compose.yml --profile redis logs --no-color || true
       - name: Tear down
         if: always()
-        run: docker compose -f deploy/compose/docker-compose.yml down -v || true
+        run: docker compose -f deploy/compose/docker-compose.yml --profile redis --profile dev down -v || true
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17.11-alpine

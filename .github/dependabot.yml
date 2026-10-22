@@ -21,6 +21,9 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: terraform
-    directory: /deploy/terraform/aws
+    directories:
+      - /deploy/terraform/aws
+      - /deploy/terraform/aws/modules/*
+      - /deploy/terraform/aws/examples/*
     schedule:
       interval: weekly
