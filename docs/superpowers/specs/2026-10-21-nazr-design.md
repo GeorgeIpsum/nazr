@@ -204,7 +204,7 @@ extensions in order, SNI presence, ALPN list, signature algorithms, supported
 groups, EC point formats. GREASE values are recognised and excluded from
 hashes per the JA4 spec but retained in the raw lists. Outputs:
 
-- `ja4` (e.g. `t13d1516h2_8daaf6152771_b0da82dd1658`), `ja4_r` raw form,
+- `ja4` (e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`), `ja4_r` raw form,
   `ja3` and `ja3_hash` for compatibility.
 - `tls` component: `{ version, ja4, ja3, ciphers: [], extensions: [], sni: bool,
   alpn: [], sig_algs: [], groups: [] }`.
