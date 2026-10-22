@@ -189,6 +189,26 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 }
 
+// Two ECS tasks (desired_count 2) boot together and both run Migrate; the
+// session lock serialises them so neither sees a half-applied schema.
+func TestMigrateConcurrent(t *testing.T) {
+	s := newUnmigrated(t)
+	ctx := context.Background()
+	const n = 4
+	errs := make(chan error, n)
+	for range n {
+		go func() { errs <- s.Migrate(ctx) }()
+	}
+	for range n {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent migrate: %v", err)
+		}
+	}
+	if v, err := s.MigrationVersion(ctx); err != nil || v != latestMigration {
+		t.Fatalf("version %d %v, want %d", v, err, latestMigration)
+	}
+}
+
 func TestKeyLifecycle(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
