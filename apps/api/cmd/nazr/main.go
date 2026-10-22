@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -52,47 +51,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
-		return notImplemented(stderr, "lists refresh")
+		return listsRefresh(stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "nazr: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
-}
-
-func notImplemented(stderr io.Writer, name string) int {
-	fmt.Fprintf(stderr, "nazr %s: not implemented\n", name)
-	return 1
-}
-
-func serve(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	printConfig := fs.Bool("print-config", false, "print the effective configuration (secrets redacted) and exit")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if !*printConfig {
-		return notImplemented(stderr, "serve")
-	}
-	cfg, err := config.Load(os.LookupEnv)
-	if err != nil {
-		fmt.Fprintln(stderr, "nazr:", err)
-		return 1
-	}
-	if err := cfg.Validate(); err != nil {
-		fmt.Fprintln(stderr, "nazr:", err)
-		return 1
-	}
-	red := cfg.Redacted()
-	keys := make([]string, 0, len(red))
-	for k := range red {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		fmt.Fprintf(stdout, "%s=%s\n", k, red[k])
-	}
-	return 0
 }
 
 func migrate(stdout, stderr io.Writer) int {
