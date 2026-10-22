@@ -141,6 +141,12 @@ variable "health_check_protocol" {
   default     = "HTTPS"
 }
 
+variable "wait_for_steady_state" {
+  description = "Make terraform apply wait (up to 20 minutes) for the service to reach a steady state, failing on a broken deployment."
+  type        = bool
+  default     = true
+}
+
 variable "log_retention_days" {
   description = "CloudWatch log retention."
   type        = number

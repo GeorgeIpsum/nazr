@@ -6,7 +6,11 @@ locals {
 
   environment = merge(
     {
-      NAZR_TLS_MODE        = "terminate"
+      NAZR_TLS_MODE = "terminate"
+      # Unprivileged ports: uid 65532 may not bind <1024 on Fargate. The NLB
+      # still listens on 443/80 for clients.
+      NAZR_LISTEN_ADDR     = ":${local.ports.https.container}"
+      NAZR_HTTP_ADDR       = ":${local.ports.http.container}"
       NAZR_DATA_DIR        = local.data_dir
       NAZR_EVENT_RETENTION = var.event_retention
       NAZR_CORS_ORIGINS    = var.cors_origins
@@ -36,7 +40,7 @@ locals {
     command   = ["serve"]
 
     portMappings = [
-      for port in values(local.public_ports) : { containerPort = port, protocol = "tcp" }
+      for p in values(local.ports) : { containerPort = p.container, protocol = "tcp" }
     ]
 
     environment = [for k in sort(keys(local.environment)) : { name = k, value = local.environment[k] }]

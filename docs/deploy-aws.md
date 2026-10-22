@@ -4,7 +4,7 @@ The Terraform module in `deploy/terraform/aws` runs nazr on ECS Fargate behind a
 
 ## Why an NLB in TCP passthrough mode
 
-nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, and those only exist on the connection the client opened. The module therefore uses an NLB with plain TCP listeners on 443 and 80, `preserve_client_ip = true`, and `NAZR_TLS_MODE=terminate`: the task terminates TLS itself and sees the client's real address.
+nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, and those only exist on the connection the client opened. The module therefore uses an NLB with plain TCP listeners on 443 and 80, `preserve_client_ip = true`, and `NAZR_TLS_MODE=terminate`: the task terminates TLS itself and sees the client's real address. The NLB forwards 443 to container port 8443 and 80 to 8080, because the image runs as a non-root user (uid 65532) and Fargate does not guarantee it may bind ports below 1024.
 
 **Do not put an ALB, CloudFront, API Gateway or a TLS listener on the NLB in front of it.** Any of these terminates TLS and replaces the client's handshake with its own, so every request would carry the proxy's fingerprint (or none), and the client IP would become the proxy's.
 
@@ -15,14 +15,14 @@ nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, a
 - An **image** the tasks can pull:
   - default `ghcr.io/GeorgeIpsum/nazr:latest` (forks set `image_owner`), public on GHCR, pulled through the NAT gateway;
   - any other full reference via `image`;
-  - or a bare tag (`image = "v1.0.0"`): the module creates an ECR repository named `nazr` and points the task at `<account>.dkr.ecr.<region>.amazonaws.com/nazr:v1.0.0`. The repository is empty on the first apply, so tasks fail to start until you push the image; push it and roll the service:
+  - or a bare tag (`image = "v1.0.0"`): the module creates an ECR repository named `nazr` and points the task at `<account>.dkr.ecr.<region>.amazonaws.com/nazr:v1.0.0`. The repository starts empty and the apply waits for healthy tasks (`wait_for_steady_state`), so create the repository first, push, then apply everything:
 
     ```bash
-    REPO=$(terraform output -raw ecr_repository_url)
+    terraform apply -target=module.nazr.module.service.aws_ecr_repository.this   # examples; drop "module.nazr." at the root
+    REPO=$(aws ecr describe-repositories --repository-names nazr --query 'repositories[0].repositoryUri' --output text)
     aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
     docker buildx build --platform linux/arm64 -t "$REPO:v1.0.0" --push apps/api
-    aws ecs update-service --cluster "$(terraform output -raw ecs_cluster_name)" \
-      --service "$(terraform output -raw ecs_service_name)" --force-new-deployment
+    terraform apply
     ```
 
   Tasks run on **ARM64 (Graviton)** by default, which is about 20% cheaper per vCPU. This needs the multi-arch (`linux/amd64` + `linux/arm64`) image published by the release workflow; for an amd64-only image set `cpu_architecture = "X86_64"`.
@@ -43,7 +43,7 @@ terraform apply \
   -var maxmind_account_id=123456 -var maxmind_license_key=...
 ```
 
-`examples/existing-vpc` deploys into your VPC and enables Redis. It additionally takes `vpc_id`, `private_subnet_ids` (at least two AZs, with a NAT route: the module creates no VPC endpoints in this mode) and `public_subnet_ids`.
+`examples/existing-vpc` deploys into your VPC and enables Redis. It additionally takes `vpc_id`, `private_subnet_ids` (at least two AZs, with a NAT route: the module creates no VPC endpoints in this mode) and `public_subnet_ids` (at least two AZs).
 
 Both examples are thin wrappers; the root module itself can also be applied directly with `-var region=...`. State holds the database password, the admin token and the TLS private key, so use an encrypted remote backend (for example S3 with a DynamoDB or S3 lock) for anything real.
 
@@ -52,8 +52,8 @@ Both examples are thin wrappers; the root module itself can also be applied dire
 - **Network** (unless `vpc_id` is set): VPC `10.0.0.0/16`, two public and two private `/20` subnets in two AZs, one NAT gateway, interface endpoints for ECR API, ECR DKR, Secrets Manager and CloudWatch Logs plus an S3 gateway endpoint, so image pulls from ECR, secret reads and logs stay inside the VPC.
 - **Database**: RDS PostgreSQL 17 (`db.t4g.micro`, 20 GiB gp3, encrypted, single-AZ, 7-day backups) in the private subnets. The master password is a random 32-character alphanumeric string; the composed `postgres://nazr:...@host:5432/nazr?sslmode=require` is stored in a Secrets Manager secret and injected as `NAZR_DATABASE_URL`. Migrations run on start (`NAZR_AUTO_MIGRATE` defaults to true). `deletion_protection` is **off** so evaluation stacks can be destroyed; `terraform destroy` takes a final snapshot named `<name>-final`, which you must delete before destroying a re-created stack with the same domain. Turn deletion protection on for production.
 - **Redis** (`enable_redis = true`): one `cache.t4g.micro` node, Redis 7.1, no replica, plaintext inside the VPC and reachable only from the tasks. nazr uses it for the shared rate limiter and key cache and fails open if it is lost.
-- **Service**: ECS cluster and service (`desired_count = 2`, 0.5 vCPU / 1 GiB, rolling deploys at 50–200% with circuit-breaker rollback), Fargate tasks in the private subnets without public IPs, CloudWatch log group `/ecs/<name>` (30 days), NLB with cross-zone load balancing, TCP 443 and TCP 80 listeners to IP target groups, and a Route53 alias. `<name>` is `nazr-` plus six hex characters derived from the domain, so several deployments can share an account.
-- **Health checks**: the NLB probes `GET /healthz` over HTTPS on port 443 and expects 200 (`health_check_protocol = "HTTPS"`; the NLB does not validate the certificate). `TCP` only checks that 443 accepts connections. Both target groups probe 443, since port 80 only answers with a redirect.
+- **Service**: ECS cluster and service (`desired_count = 2`, 0.5 vCPU / 1 GiB, rolling deploys at 50–200% with circuit-breaker rollback; `apply` waits for a steady state, up to 20 minutes, and fails if the tasks never get healthy; set `wait_for_steady_state = false` to return immediately), Fargate tasks in the private subnets without public IPs, CloudWatch log group `/ecs/<name>` (30 days), NLB with cross-zone load balancing, TCP 443 and TCP 80 listeners to IP target groups on container ports 8443 and 8080, and a Route53 alias. `<name>` is `nazr-` plus six hex characters derived from the domain, so several deployments can share an account.
+- **Health checks**: the NLB probes `GET /healthz` over HTTPS on container port 8443 and expects 200 (`health_check_protocol = "HTTPS"`; the NLB does not validate the certificate). `TCP` only checks that 8443 accepts connections. Both target groups probe 8443, since the HTTP port only answers with a redirect.
 
 ## Certificates
 
@@ -98,7 +98,7 @@ aws secretsmanager get-secret-value --secret-id "$(terraform output -raw admin_t
 
 ## Security groups and client IPs
 
-Because the NLB preserves client IPs, packets arrive at the task from the client's internet address. The task security group therefore allows 443 and 80 from `0.0.0.0/0` and `::/0`; limiting it to the VPC CIDR or to the NLB's security group would block every real client. This does not expose the tasks directly: they are in private subnets with no public IP, so the only way in is through the NLB. The NLB group allows 443/80 from anywhere and forwards only to the task group; the database, Redis and EFS groups accept connections only from the task group.
+Because the NLB preserves client IPs, packets arrive at the task from the client's internet address. The task security group therefore allows the container ports 8443 and 8080 from `0.0.0.0/0` and `::/0`. A VPC-CIDR rule would block real clients; whether referencing the NLB's security group instead works with client IP preservation is unverified, so the module does not rely on it. The open rule is safe because the tasks are in private subnets with no public IP, so the only way in is through the NLB. The NLB group allows 443/80 from anywhere and forwards only 8443/8080 to the task group; the database, Redis and EFS groups accept connections only from the task group.
 
 ## Data persistence and the MaxMind limit
 

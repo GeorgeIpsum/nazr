@@ -157,6 +157,7 @@ module "service" {
   extra_env             = var.extra_env
   enable_efs_data       = var.enable_efs_data
   data_dir              = var.data_dir
+  wait_for_steady_state = var.wait_for_steady_state
   health_check_protocol = var.health_check_protocol
   tags                  = local.tags
 }

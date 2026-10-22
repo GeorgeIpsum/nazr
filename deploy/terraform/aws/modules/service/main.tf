@@ -51,7 +51,7 @@ resource "aws_ecr_repository" "this" {
 #
 # The NLB is a TCP passthrough with client IP preservation: packets reach the
 # task with the real client's source address, not the NLB's. The task security
-# group therefore has to admit 443/80 from anywhere. Tasks sit in private
+# group therefore admits 8443/8080 (the container ports) from anywhere. Tasks sit in private
 # subnets without public IPs, so the only path in is through the NLB listeners.
 
 resource "aws_security_group" "nlb" {
@@ -67,7 +67,7 @@ resource "aws_security_group" "nlb" {
 
 resource "aws_security_group" "task" {
   name_prefix = "${var.name}-task-"
-  description = "nazr tasks: 443 and 80 (client IPs preserved by the NLB)"
+  description = "nazr tasks: 8443 and 8080 (client IPs preserved by the NLB)"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = "${var.name}-task" })
 
@@ -77,23 +77,34 @@ resource "aws_security_group" "task" {
 }
 
 locals {
-  public_ports = {
-    https = 443
-    http  = 80
+  # Clients connect to the NLB on 443/80; the NLB forwards to unprivileged
+  # container ports because the image runs as uid 65532 and Fargate does not
+  # guarantee that non-root processes may bind ports below 1024.
+  ports = {
+    https = { listener = 443, container = 8443 }
+    http  = { listener = 80, container = 8080 }
   }
-  ingress_rules = merge([
-    for port_name, port in local.public_ports : {
-      "${port_name}-ipv4" = { port = port, cidr_ipv4 = "0.0.0.0/0", cidr_ipv6 = null }
-      "${port_name}-ipv6" = { port = port, cidr_ipv4 = null, cidr_ipv6 = "::/0" }
+  cidrs = {
+    ipv4 = { cidr_ipv4 = "0.0.0.0/0", cidr_ipv6 = null }
+    ipv6 = { cidr_ipv4 = null, cidr_ipv6 = "::/0" }
+  }
+  nlb_ingress = merge([
+    for pn, p in local.ports : {
+      for cn, c in local.cidrs : "${pn}-${cn}" => merge(c, { name = pn, port = p.listener })
+    }
+  ]...)
+  task_ingress = merge([
+    for pn, p in local.ports : {
+      for cn, c in local.cidrs : "${pn}-${cn}" => merge(c, { name = pn, port = p.container })
     }
   ]...)
 }
 
 resource "aws_vpc_security_group_ingress_rule" "nlb" {
-  for_each = local.ingress_rules
+  for_each = local.nlb_ingress
 
   security_group_id = aws_security_group.nlb.id
-  description       = "${upper(split("-", each.key)[0])} from the internet"
+  description       = "${upper(each.value.name)} from the internet"
   ip_protocol       = "tcp"
   from_port         = each.value.port
   to_port           = each.value.port
@@ -103,22 +114,22 @@ resource "aws_vpc_security_group_ingress_rule" "nlb" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "nlb_to_task" {
-  for_each = local.public_ports
+  for_each = local.ports
 
   security_group_id            = aws_security_group.nlb.id
   description                  = "Forward ${upper(each.key)} and health checks to the tasks"
   ip_protocol                  = "tcp"
-  from_port                    = each.value
-  to_port                      = each.value
+  from_port                    = each.value.container
+  to_port                      = each.value.container
   referenced_security_group_id = aws_security_group.task.id
   tags                         = var.tags
 }
 
 resource "aws_vpc_security_group_ingress_rule" "task" {
-  for_each = local.ingress_rules
+  for_each = local.task_ingress
 
   security_group_id = aws_security_group.task.id
-  description       = "${upper(split("-", each.key)[0])} via the NLB (client source IP preserved)"
+  description       = "${upper(each.value.name)} via the NLB (client source IP preserved)"
   ip_protocol       = "tcp"
   from_port         = each.value.port
   to_port           = each.value.port
@@ -220,6 +231,10 @@ resource "aws_ecs_service" "this" {
   enable_execute_command             = true
   propagate_tags                     = "SERVICE"
 
+  # Fail the apply when tasks never become healthy (bad image, crash loop)
+  # instead of reporting success. Waits up to the provider's 20-minute default.
+  wait_for_steady_state = var.wait_for_steady_state
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -232,12 +247,12 @@ resource "aws_ecs_service" "this" {
   }
 
   dynamic "load_balancer" {
-    for_each = local.public_ports
+    for_each = local.ports
 
     content {
       target_group_arn = aws_lb_target_group.this[load_balancer.key].arn
       container_name   = "nazr"
-      container_port   = load_balancer.value
+      container_port   = load_balancer.value.container
     }
   }
 

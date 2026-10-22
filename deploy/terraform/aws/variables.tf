@@ -157,13 +157,13 @@ variable "private_subnet_ids" {
 }
 
 variable "public_subnet_ids" {
-  description = "Public subnets for the internet-facing NLB. Required with vpc_id."
+  description = "Public subnets for the internet-facing NLB, in at least two AZs. Required with vpc_id."
   type        = list(string)
   default     = []
 
   validation {
-    condition     = var.vpc_id == null || length(var.public_subnet_ids) >= 1
-    error_message = "public_subnet_ids needs at least one subnet when vpc_id is set."
+    condition     = var.vpc_id == null || length(var.public_subnet_ids) >= 2
+    error_message = "public_subnet_ids needs at least two subnets (two AZs) when vpc_id is set."
   }
 }
 
@@ -188,6 +188,12 @@ variable "health_check_protocol" {
     condition     = contains(["HTTPS", "TCP"], var.health_check_protocol)
     error_message = "health_check_protocol must be HTTPS or TCP."
   }
+}
+
+variable "wait_for_steady_state" {
+  description = "Make terraform apply wait (up to 20 minutes) until the ECS service is steady, so a crash-looping deployment fails the apply."
+  type        = bool
+  default     = true
 }
 
 variable "event_retention" {

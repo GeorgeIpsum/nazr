@@ -8,7 +8,7 @@ The step-by-step guide (prerequisites, first key, renewal, costs) is [docs/deplo
 client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP preserved)
                          │
                          ▼
-             ECS Fargate tasks "nazr" (private subnets)
+             ECS Fargate tasks "nazr" (private subnets, container ports 8443/8080)
              terminate TLS themselves (JA4 + HTTP/2 fingerprints)
                  │                 │
                  ▼                 ▼
@@ -51,12 +51,13 @@ client ──TCP 443/80──▶ NLB (public subnets, cross-zone, client IP pres
 | `acme_server_url` | Let's Encrypt production | Use the staging directory while testing |
 | `vpc_id` | `null` | Existing VPC; skips the network module |
 | `private_subnet_ids` | `[]` | With `vpc_id`: ≥ 2 subnets in two AZs, outbound via NAT |
-| `public_subnet_ids` | `[]` | With `vpc_id`: ≥ 1 public subnet for the NLB |
+| `public_subnet_ids` | `[]` | With `vpc_id`: ≥ 2 public subnets in two AZs for the NLB |
 | `enable_efs_data` | `false` | Persistent `/data` on EFS (see below) |
 | `data_dir` | `""` → `/data` with EFS, else `/tmp/nazr` | `NAZR_DATA_DIR` override |
-| `health_check_protocol` | `HTTPS` | `HTTPS` (`GET /healthz` on 443, expects 200) or `TCP` |
+| `health_check_protocol` | `HTTPS` | `HTTPS` (`GET /healthz` on container port 8443, expects 200) or `TCP` |
 | `event_retention` | `2160h` | `NAZR_EVENT_RETENTION` |
 | `cors_origins` | `*` | `NAZR_CORS_ORIGINS` |
+| `wait_for_steady_state` | `true` | `apply` waits (up to 20 min) for healthy tasks and fails on a crash-looping deployment |
 | `extra_env` | `{}` | Extra plain `NAZR_*` environment; overrides module values. No secrets |
 | `tags` | `{}` | Added to every resource, plus `app = "nazr"` |
 
@@ -77,12 +78,22 @@ Environment: `NAZR_TLS_MODE=terminate`, `NAZR_DATA_DIR` (`/tmp/nazr`, or `/data`
 
 Secrets (Secrets Manager `valueFrom`): `NAZR_DATABASE_URL`, `NAZR_TLS_CERT_PEM`, `NAZR_TLS_KEY_PEM`, `NAZR_ADMIN_TOKEN`, and `NAZR_MAXMIND_ACCOUNT_ID` / `NAZR_MAXMIND_LICENSE_KEY` (keys of one JSON secret) when MaxMind is configured. `NAZR_ACME_*` is not used: Terraform owns the certificate.
 
+## Ports
+
+| Where | HTTPS | HTTP (308 redirect) |
+| --- | --- | --- |
+| NLB listener (clients) | TCP 443 | TCP 80 |
+| Target group / container (`NAZR_LISTEN_ADDR`, `NAZR_HTTP_ADDR`) | 8443 | 8080 |
+| Health check | 8443 (`/healthz` or TCP) | 8443 |
+
+The image runs as uid 65532, and Fargate does not guarantee that a non-root process may bind ports below 1024, so the container listens on unprivileged ports and the NLB maps 443→8443 and 80→8080. The redirect uses the request's `Host` without a port, so clients are sent to `https://<domain>` on 443.
+
 ## Security groups and why the task group is open
 
 The NLB is a pure TCP passthrough with `preserve_client_ip = true` on both target groups. nazr has to see the real client address and the raw TLS ClientHello, so nothing in front of it may proxy or terminate the connection. The consequence is that packets reach the task with the **client's** source IP, not the NLB's:
 
-- **NLB SG**: ingress 443 and 80 from `0.0.0.0/0` and `::/0`; egress 443 and 80 only to the task SG (traffic and health checks).
-- **Task SG**: ingress 443 and 80 from `0.0.0.0/0` and `::/0`. Restricting it to the VPC CIDR or to the NLB SG would drop every real client, because their source addresses are on the internet. The tasks still are not directly reachable: they run in private subnets with `assign_public_ip = false`, so the only route in is through the NLB listeners. Egress is open (RDS, Redis, EFS, VPC endpoints, and MaxMind/list downloads via NAT).
+- **NLB SG**: ingress 443 and 80 from `0.0.0.0/0` and `::/0`; egress 8443 and 8080 only to the task SG (traffic and health checks).
+- **Task SG**: ingress 8443 and 8080 from `0.0.0.0/0` and `::/0`. A VPC-CIDR rule would block real clients, whose source addresses are on the internet. Whether referencing the NLB's security group from the task group works together with client IP preservation is not verified here, so the module does not depend on it. Opening the container ports to `0.0.0.0/0` is safe because the tasks run in private subnets with `assign_public_ip = false`: the only route in is through the NLB listeners. Egress is open (RDS, Redis, EFS, VPC endpoints, and MaxMind/list downloads via NAT).
 - **Database SG**: 5432 (and 6379 with Redis) only from the task SG.
 - **EFS SG** (with `enable_efs_data`): 2049 only from the task SG.
 - **Endpoint SG** (network module): 443 from the VPC CIDR.
@@ -96,6 +107,7 @@ The image runs as uid/gid 65532. How Fargate initialises the image's `VOLUME /da
 ## Operational notes
 
 - **Certificate renewal**: `terraform apply` renews the ACME certificate within 30 days of expiry and writes new secret versions, but running tasks keep the certificate they started with. Roll them with `aws ecs update-service --cluster <cluster> --service <service> --force-new-deployment`.
+- **Apply time**: with `wait_for_steady_state = true` (default) `terraform apply` waits until the new tasks pass health checks, up to the provider's 20-minute timeout, and fails if they never do. Expect applies that touch the service to take several minutes.
 - **Platform**: tasks default to ARM64 (Graviton). That needs the multi-arch (`linux/amd64` + `linux/arm64`) image the release workflow publishes; for an amd64-only image set `cpu_architecture = "X86_64"`.
 
 ## Development checks
