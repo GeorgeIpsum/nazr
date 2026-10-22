@@ -1,0 +1,176 @@
+// Package server wires the nazr HTTP API: /thumbmark (which composes every
+// fingerprint, intelligence, classification and visitor package), /beacon,
+// /log, health, admin key management, metrics and the static demo.
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"math/rand/v2"
+	"net/http"
+	"net/netip"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+
+	"nazr/api/internal/auth"
+	"nazr/api/internal/config"
+	"nazr/api/internal/conn"
+	"nazr/api/internal/ipintel"
+	"nazr/api/internal/store"
+	"nazr/api/internal/visitor"
+)
+
+// StoreAPI is the subset of *store.Store the server uses.
+type StoreAPI interface {
+	auth.KeyResolver
+	Ping(ctx context.Context) error
+	InsertEvent(ctx context.Context, e store.Event) error
+	RecordUAJA4(ctx context.Context, ja4, family string, now time.Time) error
+	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
+	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error
+	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
+	ListKeys(ctx context.Context) ([]store.APIKey, error)
+	RevokeKey(ctx context.Context, id string) error
+}
+
+// IntelAPI is the subset of *ipintel.Service the server uses.
+type IntelAPI interface {
+	Lookup(addr netip.Addr) ipintel.Lookup
+	JA4Families(ja4 string) []string
+	Status() map[string]ipintel.SourceStatus
+}
+
+var (
+	_ StoreAPI = (*store.Store)(nil)
+	_ IntelAPI = (*ipintel.Service)(nil)
+)
+
+// Deps are the server's collaborators. Logger, Now and Rand default to
+// slog.Default, time.Now and math/rand/v2.Float64.
+type Deps struct {
+	Cfg      config.Config
+	Store    StoreAPI
+	Intel    IntelAPI
+	Resolver *visitor.Resolver
+	Limiter  auth.Limiter
+	KeyCache *auth.KeyCache
+	Logger   *slog.Logger
+	Version  string
+	Now      func() time.Time
+	Rand     func() float64
+}
+
+type server struct {
+	Deps
+}
+
+// New returns the public HTTP handler. /metrics is served separately by
+// NewMetricsHandler.
+func New(d Deps) http.Handler {
+	if d.Logger == nil {
+		d.Logger = slog.Default()
+	}
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Rand == nil {
+		d.Rand = rand.Float64
+	}
+	setStatusSource(d.Intel)
+	s := &server{Deps: d}
+	mux := http.NewServeMux()
+
+	authMW := auth.Middleware(d.Store, d.Limiter, d.Cfg.DefaultRateLimit, d.KeyCache)
+	thumb := s.globalCORS(s.bodyLimit(authMW(s.keyCORS(http.HandlerFunc(s.handleThumbmark)))))
+	mux.Handle("POST /thumbmark", s.route("thumbmark", thumb))
+	mux.Handle("OPTIONS /thumbmark", s.route("preflight", http.HandlerFunc(s.preflight)))
+	mux.Handle("POST /beacon", s.route("beacon", s.globalCORS(http.HandlerFunc(s.handleBeacon))))
+	mux.Handle("OPTIONS /beacon", s.route("preflight", http.HandlerFunc(s.preflight)))
+	mux.Handle("POST /log", s.route("log", s.globalCORS(http.HandlerFunc(s.handleLog))))
+	mux.Handle("OPTIONS /log", s.route("preflight", http.HandlerFunc(s.preflight)))
+	mux.Handle("GET /healthz", s.route("healthz", http.HandlerFunc(s.handleHealthz)))
+	mux.Handle("GET /readyz", s.route("readyz", http.HandlerFunc(s.handleReadyz)))
+
+	admin := auth.AdminMiddleware(d.Cfg.AdminToken)
+	mux.Handle("GET /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleListKeys))))
+	mux.Handle("POST /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleCreateKey))))
+	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
+
+	if d.Cfg.DemoDir != "" {
+		mux.Handle("GET /demo/", s.route("demo", demoHandler(d.Cfg.DemoDir)))
+	}
+	mux.Handle("GET /{$}", s.route("root", http.HandlerFunc(s.handleRoot)))
+	mux.Handle("/", s.route("not_found", http.HandlerFunc(notFound)))
+	return mux
+}
+
+// route applies the per-request chain shared by every route:
+// recover -> request ID -> metrics.
+func (s *server) route(name string, h http.Handler) http.Handler {
+	return s.recoverer(s.requestID(withMetrics(name, h)))
+}
+
+type requestIDKey struct{}
+
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+
+func (s *server) requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := ulid.Make().String()
+		w.Header().Set("X-Request-Id", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
+	})
+}
+
+// recoverer turns a handler panic into 500 internal and logs it with the
+// request ID. http.ErrAbortHandler is re-raised so net/http aborts the
+// response as intended.
+func (s *server) recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w}
+		defer func() {
+			p := recover()
+			if p == nil {
+				return
+			}
+			if p == http.ErrAbortHandler {
+				panic(p)
+			}
+			s.Logger.Error("server: handler panic", "panic", p,
+				"request_id", w.Header().Get("X-Request-Id"), "method", r.Method, "path", r.URL.Path)
+			if rec.status == 0 {
+				writeError(w, http.StatusInternalServerError, codeInternal, "internal server error")
+			}
+		}()
+		next.ServeHTTP(rec, r)
+	})
+}
+
+type holderKey struct{}
+
+// WithHolder attaches a connection holder to ctx. It takes precedence over
+// the holder conn.ConnContext installed; tests use it to inject captures.
+func WithHolder(ctx context.Context, h *conn.Holder) context.Context {
+	return context.WithValue(ctx, holderKey{}, h)
+}
+
+func holderFromContext(ctx context.Context) *conn.Holder {
+	if h, ok := ctx.Value(holderKey{}).(*conn.Holder); ok && h != nil {
+		return h
+	}
+	return conn.FromContext(ctx)
+}
+
+func (s *server) clientIP(r *http.Request) (netip.Addr, conn.HolderView) {
+	h := holderFromContext(r.Context())
+	var view conn.HolderView
+	if h != nil {
+		view = h.Snapshot()
+	}
+	return ClientIP(r, h, s.Cfg), view
+}

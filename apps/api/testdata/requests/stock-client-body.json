@@ -1,0 +1,52 @@
+{
+  "components": {
+    "audio": { "sampleHash": 124.04347527516074, "maxChannels": 2 },
+    "canvas": { "commonImageDataHash": "8965585f0983dad03f7382c986d7aee5" },
+    "hardware": {
+      "videocard": {
+        "vendor": "WebKit",
+        "renderer": "WebKit WebGL",
+        "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+        "shadingLanguageVersion": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
+      },
+      "architecture": 127,
+      "deviceMemory": "8",
+      "jsHeapSizeLimit": 4294705152
+    },
+    "locales": { "languages": "en-US", "timezone": "America/New_York" },
+    "math": { "acos": 1.0471975511965979, "asinh": 0.881373587019543, "cosh": 1.5430806348152437 },
+    "privacy": { "doNotTrack": "unspecified", "globalPrivacyControl": false, "webdriver": false },
+    "screen": { "colorDepth": 24, "pixelDepth": 24, "width": 1728, "height": 1117, "is_touchscreen": false },
+    "system": {
+      "applePayVersion": 0,
+      "browser": { "name": "Chrome", "version": "126.0.0" },
+      "cookieEnabled": true,
+      "hardwareConcurrency": 8,
+      "language": "en-US",
+      "platform": "MacIntel",
+      "productSub": "20030107",
+      "useragent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      "vendor": "Google Inc."
+    },
+    "webgl": {
+      "vendor": "Google Inc. (Apple)",
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)"
+    }
+  },
+  "options": {
+    "exclude": [],
+    "include": [],
+    "stabilize": ["private", "iframe"],
+    "logging": false,
+    "collect_beacon": true,
+    "timeout": 5000,
+    "cache_api_call": true,
+    "cache_lifetime_in_ms": 0,
+    "performance": false,
+    "experimental": false,
+    "simple_request": false
+  },
+  "clientHash": "948e55fd3561399fe7b456138c73a436",
+  "version": "1.12.0",
+  "path": "/"
+}

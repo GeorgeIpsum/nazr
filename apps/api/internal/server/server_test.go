@@ -1,0 +1,672 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+
+	"nazr/api/internal/auth"
+	"nazr/api/internal/config"
+	"nazr/api/internal/conn"
+	"nazr/api/internal/fingerprint"
+	"nazr/api/internal/httpfp"
+	"nazr/api/internal/ipintel"
+	"nazr/api/internal/tlsfp"
+)
+
+func TestStockBodyClientHash(t *testing.T) {
+	body := stockBody(t)
+	for _, k := range []string{"components", "options", "clientHash", "version", "path"} {
+		if _, ok := body[k]; !ok {
+			t.Fatalf("stock body missing %q", k)
+		}
+	}
+	if _, ok := body["api_key"]; ok {
+		t.Fatal("stock body must not carry api_key")
+	}
+	want := fingerprint.Hash(body["components"].(map[string]any))
+	if body["clientHash"] != want {
+		t.Fatalf("clientHash %v, want %s", body["clientHash"], want)
+	}
+}
+
+func TestThumbmarkHappyPath(t *testing.T) {
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	body["metadata"] = map[string]any{"order": "A-17", "n": json.Number("3")}
+	holder := fullHolder(t)
+	r := thumbmarkReq(t, e.key, marshal(t, body))
+	r.Header.Set("Origin", "https://shop.example")
+	r = r.WithContext(WithHolder(r.Context(), holder))
+	w := e.do(r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+
+	// Independently compute the expected thumbmark from the real fingerprint
+	// functions over the same server inputs.
+	addr := netip.MustParseAddr("203.0.113.42")
+	server := map[string]any{
+		"tls":    holder.TLS.Component(),
+		"h2":     holder.H2.Component(),
+		"header": httpfp.Component(r, testHeaderOrder),
+		"ip":     ipintel.Component(addr, e.intel.lookup),
+	}
+	client := body["components"].(map[string]any)
+	opts := fingerprint.OptionsFromRequest(body["options"].(map[string]any))
+	want := fingerprint.Hash(fingerprint.Merge(client, filterLikeClient(server, client, opts)))
+	if resp["thumbmark"] != want {
+		t.Fatalf("thumbmark %v want %s", resp["thumbmark"], want)
+	}
+	// Chrome + stabilize private drops tls.extensions; the naive (browserless)
+	// filter would not, so the hash proves the client's browser was used.
+	if naive := fingerprint.Hash(fingerprint.Merge(client, fingerprint.Filter(server, opts))); naive == want {
+		t.Fatal("test inputs do not exercise browser-dependent filtering")
+	}
+	if got := path(resp, "components", "tls", "ja4"); got != holder.TLS.JA4 || got == "" {
+		t.Fatalf("tls.ja4 %v", got)
+	}
+	if path(resp, "components", "tls", "extensions") == nil {
+		t.Fatal("response components must be unfiltered (tls.extensions missing)")
+	}
+	if got := path(resp, "components", "h2", "fingerprint"); got != holder.H2.Fingerprint {
+		t.Fatalf("h2.fingerprint %v", got)
+	}
+	if got := path(resp, "components", "header", "ja4h"); got != httpfp.JA4H(r, testHeaderOrder) {
+		t.Fatalf("header.ja4h %v", got)
+	}
+	if got := path(resp, "components", "ip", "address"); got != "203.0.113.42" {
+		t.Fatalf("ip.address %v", got)
+	}
+	if got := path(resp, "info", "visitor", "isNew"); got != true {
+		t.Fatalf("isNew %v", got)
+	}
+	if got := path(resp, "info", "visitor", "firstSeen"); got != testNow.Format(time.RFC3339) {
+		t.Fatalf("firstSeen %v", got)
+	}
+	if path(resp, "info", "visitor", "id") != resp["visitorId"] || resp["visitorId"] == "" {
+		t.Fatalf("visitorId %v / %v", resp["visitorId"], path(resp, "info", "visitor", "id"))
+	}
+	rid, _ := resp["requestId"].(string)
+	if _, err := ulid.ParseStrict(rid); err != nil || w.Header().Get("X-Request-Id") != rid {
+		t.Fatalf("requestId %q header %q: %v", rid, w.Header().Get("X-Request-Id"), err)
+	}
+	if fmt.Sprint(resp["metadata"]) != fmt.Sprint(map[string]any{"order": "A-17", "n": json.Number("3")}) {
+		t.Fatalf("metadata %v", resp["metadata"])
+	}
+	if resp["version"] != "test-1.0" {
+		t.Fatalf("version %v", resp["version"])
+	}
+	if _, ok := resp["collect"]; ok {
+		t.Fatal("collect must be absent when TLS was captured")
+	}
+	ipInfo := path(resp, "info", "ip_address").(map[string]any)
+	if ipInfo["ip_address"] != "203.0.113.42" || ipInfo["ip_version"] != "v4" ||
+		ipInfo["ip_identifier"] != ipintel.Identifier(addr, "salt") ||
+		ipInfo["autonomous_system_number"] != json.Number("64496") {
+		t.Fatalf("ip_address %v", ipInfo)
+	}
+	if path(resp, "info", "country", "iso_code") != "US" || path(resp, "info", "country", "continent", "code") != "NA" {
+		t.Fatalf("country %v", path(resp, "info", "country"))
+	}
+	if path(resp, "info", "uniqueness", "score") != json.Number("1") {
+		t.Fatalf("uniqueness %v", path(resp, "info", "uniqueness"))
+	}
+	for _, k := range []string{"tor", "vpn", "bot", "datacenter", "private_relay", "danger_level"} {
+		if path(resp, "info", "classification", k) == nil {
+			t.Fatalf("classification.%s missing", k)
+		}
+	}
+	if _, ok := path(resp, "info", "signals", "ua_tls_mismatch").(bool); !ok {
+		t.Fatalf("signals %v", path(resp, "info", "signals"))
+	}
+	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("ACAO %q", w.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	if len(e.store.events) != 1 {
+		t.Fatalf("events %d", len(e.store.events))
+	}
+	ev := e.store.events[0]
+	if ev.IP == nil || *ev.IP != addr || ev.IPHash == "" || ev.ID != rid || ev.Thumbmark != want ||
+		ev.APIKeyID != keyID || ev.VisitorID != resp["visitorId"] || ev.JA4 != holder.TLS.JA4 ||
+		ev.ClientHash != body["clientHash"] || ev.Path != "/" || ev.UserAgent != chromeUA ||
+		len(ev.Classification) == 0 || len(ev.Signals) == 0 || len(ev.Metadata) == 0 || ev.Components != nil {
+		t.Fatalf("event %+v", ev)
+	}
+}
+
+func TestThumbmarkStabilizeExcludesServerKeys(t *testing.T) {
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	body["options"] = map[string]any{"stabilize": []any{"private"}}
+	client := body["components"].(map[string]any)
+	client["system"].(map[string]any)["browser"] = map[string]any{"name": "Firefox", "version": "131.0"}
+	holder := fullHolder(t)
+	r := thumbmarkReq(t, e.key, marshal(t, body))
+	r = r.WithContext(WithHolder(r.Context(), holder))
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+
+	server := map[string]any{
+		"tls":    holder.TLS.Component(),
+		"h2":     holder.H2.Component(),
+		"header": httpfp.Component(r, testHeaderOrder),
+		"ip":     ipintel.Component(netip.MustParseAddr("203.0.113.42"), e.intel.lookup),
+	}
+	without := map[string]any{}
+	for k, v := range server {
+		without[k] = v
+	}
+	tlsNoExt := map[string]any{}
+	for k, v := range holder.TLS.Component() {
+		if k != "extensions" {
+			tlsNoExt[k] = v
+		}
+	}
+	without["tls"] = tlsNoExt
+	excluded := fingerprint.Hash(fingerprint.Merge(client, without))
+	included := fingerprint.Hash(fingerprint.Merge(client, server))
+	if excluded == included {
+		t.Fatal("hashes should differ")
+	}
+	if resp["thumbmark"] != excluded {
+		t.Fatalf("thumbmark %v want %s (with extensions would be %s)", resp["thumbmark"], excluded, included)
+	}
+	if path(resp, "components", "tls", "extensions") == nil {
+		t.Fatal("response components must stay unfiltered")
+	}
+}
+
+func TestThumbmarkSimpleRequestTextPlain(t *testing.T) {
+	e := newEnv(t, nil)
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	r.Header.Del("Authorization")
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if resp := decodeResp(t, w); resp["thumbmark"] == "" || resp["thumbmark"] == nil {
+		t.Fatalf("no thumbmark: %v", resp)
+	}
+}
+
+func TestThumbmarkErrors(t *testing.T) {
+	stock := func(t *testing.T) []byte { return marshal(t, stockBody(t)) }
+	t.Run("no key", func(t *testing.T) {
+		e := newEnv(t, nil)
+		wantError(t, e.do(thumbmarkReq(t, "", stock(t))), 403, "unauthorized")
+	})
+	t.Run("bad json", func(t *testing.T) {
+		e := newEnv(t, nil)
+		wantError(t, e.do(thumbmarkReq(t, e.key, []byte(`{"components":`))), 400, "bad_request")
+	})
+	t.Run("not an object", func(t *testing.T) {
+		e := newEnv(t, nil)
+		wantError(t, e.do(thumbmarkReq(t, e.key, []byte(`[1,2]`))), 400, "bad_request")
+	})
+	t.Run("too large", func(t *testing.T) {
+		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = 256 })
+		big := `{"components":{"x":"` + strings.Repeat("a", 1000) + `"}}`
+		wantError(t, e.do(thumbmarkReq(t, e.key, []byte(big))), 413, "payload_too_large")
+	})
+	t.Run("store down", func(t *testing.T) {
+		e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.pingErr = errBoom })
+		w := e.do(thumbmarkReq(t, e.key, stock(t)))
+		wantError(t, w, 503, "store_unavailable")
+		if w.Header().Get("Retry-After") != "2" {
+			t.Fatalf("Retry-After %q", w.Header().Get("Retry-After"))
+		}
+	})
+	t.Run("resolver error", func(t *testing.T) {
+		e := newEnv(t, nil)
+		e.repo.err = errBoom
+		wantError(t, e.do(thumbmarkReq(t, e.key, stock(t))), 503, "store_unavailable")
+	})
+	t.Run("components not object", func(t *testing.T) {
+		e := newEnv(t, nil)
+		wantError(t, e.do(thumbmarkReq(t, e.key, []byte(`{"components":"nope"}`))), 400, "bad_request")
+	})
+	t.Run("components missing", func(t *testing.T) {
+		e := newEnv(t, nil)
+		wantError(t, e.do(thumbmarkReq(t, e.key, []byte(`{"version":"1.12.0"}`))), 400, "bad_request")
+	})
+	t.Run("unsupported content type", func(t *testing.T) {
+		e := newEnv(t, nil)
+		r := thumbmarkReq(t, e.key, stock(t))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		wantError(t, e.do(r), 400, "bad_request")
+	})
+}
+
+func TestCORSPreflight(t *testing.T) {
+	pre := func(origin string) *http.Request {
+		r := httptest.NewRequest(http.MethodOptions, "/thumbmark", nil)
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Access-Control-Request-Method", "POST")
+		r.Header.Set("Access-Control-Request-Headers", "content-type,x-api-key,authorization")
+		return r
+	}
+	e := newEnv(t, nil)
+	w := e.do(pre("https://b.com"))
+	if w.Code != 204 {
+		t.Fatalf("status %d", w.Code)
+	}
+	h := w.Header()
+	if h.Get("Access-Control-Allow-Origin") != "*" ||
+		h.Get("Access-Control-Allow-Methods") != "POST, OPTIONS" ||
+		h.Get("Access-Control-Allow-Headers") != "content-type, x-api-key, authorization" ||
+		h.Get("Access-Control-Max-Age") != "86400" {
+		t.Fatalf("headers %v", h)
+	}
+	if w := e.do(httptest.NewRequest(http.MethodOptions, "/beacon", nil)); w.Code != 204 {
+		t.Fatalf("beacon preflight %d", w.Code)
+	}
+
+	e = newEnv(t, func(c *config.Config, _ *fakeStore) { c.CORSOrigins = []string{"https://a.com"} })
+	w = e.do(pre("https://b.com"))
+	if w.Code != 204 || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("unlisted origin: %d %v", w.Code, w.Header())
+	}
+	w = e.do(pre("https://a.com"))
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://a.com" || w.Header().Get("Vary") != "Origin" {
+		t.Fatalf("listed origin: %v", w.Header())
+	}
+}
+
+func TestOriginScopedKeyOnRealRequest(t *testing.T) {
+	e := newEnv(t, func(_ *config.Config, s *fakeStore) {
+		for _, k := range s.keys {
+			k.AllowedOrigins = []string{"https://shop.example"}
+		}
+	})
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("Origin", "https://evil.example")
+	wantError(t, e.do(r), 403, "origin_not_allowed")
+
+	r = thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("Origin", "https://shop.example")
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://shop.example" || w.Header().Get("Vary") != "Origin" {
+		t.Fatalf("headers %v", w.Header())
+	}
+}
+
+func TestStoreIPHashMode(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.StoreIP = "hash"; c.StoreComponents = true })
+	if w := e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t)))); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	ev := e.store.events[0]
+	if ev.IP != nil || ev.IPHash != ipintel.Identifier(netip.MustParseAddr("203.0.113.42"), "salt") {
+		t.Fatalf("ip %v hash %q", ev.IP, ev.IPHash)
+	}
+	var comps map[string]any
+	if err := json.Unmarshal(ev.Components, &comps); err != nil || comps["header"] == nil || comps["system"] == nil {
+		t.Fatalf("components %s: %v", ev.Components, err)
+	}
+}
+
+func TestCollectDirectiveSampled(t *testing.T) {
+	e := newEnv(t, nil)
+	e.rand = 0
+	resp := decodeResp(t, e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t)))))
+	c, ok := resp["collect"].(map[string]any)
+	if !ok || c["source"] != "none" || c["ja4"] != "" {
+		t.Fatalf("collect %v", resp["collect"])
+	}
+	if path(resp, "components", "tls") != nil {
+		t.Fatal("no tls component expected")
+	}
+
+	e.rand = 1
+	resp = decodeResp(t, e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t)))))
+	if _, ok := resp["collect"]; ok {
+		t.Fatal("collect must be absent when not sampled")
+	}
+
+	e.rand = 0
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r = r.WithContext(WithHolder(r.Context(), fullHolder(t)))
+	resp = decodeResp(t, e.do(r))
+	if _, ok := resp["collect"]; ok {
+		t.Fatal("collect must be absent when TLS was captured")
+	}
+}
+
+func TestBeaconRecordsObservation(t *testing.T) {
+	e := newEnv(t, nil)
+	tr := &tlsfp.Result{JA4: "t13d1516h2_8daaf6152771_02713d6af862"}
+	body := `{"ua":"` + chromeUA + `","thumbmark":"abc","ja4":"t13d_body","ja4_source":"client"}`
+	r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(body))
+	r.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	r = r.WithContext(WithHolder(r.Context(), &conn.Holder{TLS: tr}))
+	w := e.do(r)
+	if w.Code != 204 {
+		t.Fatalf("status %d", w.Code)
+	}
+	if len(e.store.obs) != 1 || e.store.obs[0] != [2]string{tr.JA4, "chrome"} {
+		t.Fatalf("obs %v", e.store.obs)
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(body))
+	if w := e.do(r); w.Code != 204 || len(e.store.obs) != 2 || e.store.obs[1] != [2]string{"t13d_body", "chrome"} {
+		t.Fatalf("body ja4: %d %v", w.Code, e.store.obs)
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(`garbage`))
+	if w := e.do(r); w.Code != 204 || len(e.store.obs) != 2 {
+		t.Fatalf("garbage: %d %v", w.Code, e.store.obs)
+	}
+}
+
+func TestBeaconRateLimited(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
+	send := func() int {
+		r := httptest.NewRequest(http.MethodPost, "/beacon", strings.NewReader(`{"ua":"x","ja4":"y"}`))
+		r.RemoteAddr = "198.51.100.7:1000"
+		return e.do(r).Code
+	}
+	if c := send(); c != 204 {
+		t.Fatalf("first %d", c)
+	}
+	if c := send(); c != 429 {
+		t.Fatalf("second %d", c)
+	}
+	if len(e.store.obs) != 1 {
+		t.Fatalf("obs %v", e.store.obs)
+	}
+}
+
+func TestLogDiscardedByDefault(t *testing.T) {
+	e := newEnv(t, nil)
+	r := httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(`{"thumbmark":"x"}`))
+	if w := e.do(r); w.Code != 204 || len(e.store.logs) != 0 {
+		t.Fatalf("%d %v", w.Code, e.store.logs)
+	}
+
+	e = newEnv(t, func(c *config.Config, _ *fakeStore) { c.LogRetention = 24 * time.Hour })
+	r = httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(`{"thumbmark":"x"}`))
+	if w := e.do(r); w.Code != 204 || len(e.store.logs) != 1 || e.store.logKeys[0] != nil {
+		t.Fatalf("%d %v", w.Code, e.store.logs)
+	}
+	if string(e.store.logs[0]) != `{"thumbmark":"x"}` {
+		t.Fatalf("body %s", e.store.logs[0])
+	}
+	r = httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(`{"a":1}`))
+	r.Header.Set("x-api-key", e.key)
+	if w := e.do(r); w.Code != 204 || len(e.store.logs) != 2 || e.store.logKeys[1] == nil || *e.store.logKeys[1] != keyID {
+		t.Fatalf("%d %v", w.Code, e.store.logKeys)
+	}
+	r = httptest.NewRequest(http.MethodPost, "/log", strings.NewReader(`not json`))
+	if w := e.do(r); w.Code != 204 || len(e.store.logs) != 2 {
+		t.Fatalf("invalid json stored: %d %v", w.Code, e.store.logs)
+	}
+}
+
+func TestReadyzReportsSources(t *testing.T) {
+	e := newEnv(t, nil)
+	e.intel.status = map[string]ipintel.SourceStatus{
+		"maxmind-GeoLite2-City": {Loaded: false, LastError: "401"},
+		"tor":                   {Loaded: true, Rows: 1200, FetchedAt: testNow},
+	}
+	w := e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+	if resp["tls_mode"] != "terminate" || resp["store"] != "ok" || resp["version"] != "test-1.0" {
+		t.Fatalf("readyz %v", resp)
+	}
+	if path(resp, "sources", "maxmind-GeoLite2-City", "loaded") != false ||
+		path(resp, "sources", "maxmind-GeoLite2-City", "last_error") != "401" ||
+		path(resp, "sources", "tor", "rows") != json.Number("1200") {
+		t.Fatalf("sources %v", resp["sources"])
+	}
+
+	e.store.pingErr = errBoom
+	w = e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if w.Code != 503 || decodeResp(t, w)["store"] != "error" {
+		t.Fatalf("store down: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxiedModeReadsJA4Header(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.TLSMode = "proxied" })
+	ja4 := "t13d1516h2_8daaf6152771_02713d6af862"
+	e.rand = 0
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("x-ja4", ja4)
+	r.Header.Set("X-Forwarded-For", "192.0.2.9")
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+	tlsc, _ := path(resp, "components", "tls").(map[string]any)
+	if len(tlsc) != 1 || tlsc["ja4"] != ja4 {
+		t.Fatalf("tls %v", tlsc)
+	}
+	if path(resp, "components", "ip", "address") != "192.0.2.9" {
+		t.Fatalf("ip %v", path(resp, "components", "ip"))
+	}
+	if _, ok := resp["collect"]; ok {
+		t.Fatal("collect must be absent when the proxy supplied JA4")
+	}
+	if len(e.store.uaQueries) != 1 || e.store.uaQueries[0] != ja4 || e.store.events[0].JA4 != ja4 {
+		t.Fatalf("ja4 not used for families/event: %v", e.store.uaQueries)
+	}
+
+	r = thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	resp = decodeResp(t, e.do(r))
+	if path(resp, "components", "tls") != nil {
+		t.Fatalf("tls %v", path(resp, "components", "tls"))
+	}
+	if _, ok := resp["collect"]; !ok {
+		t.Fatal("collect expected without JA4 header")
+	}
+}
+
+func TestJA4FamiliesUnionFeedsClassifier(t *testing.T) {
+	// A Chrome UA whose JA4 is only known as Firefox (FoxIO) and curl (local
+	// observations) trips ua_tls_mismatch.
+	e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.uaFamilies = []string{"curl"} })
+	holder := fullHolder(t)
+	e.intel.families[holder.TLS.JA4] = []string{"Firefox"}
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r = r.WithContext(WithHolder(r.Context(), holder))
+	resp := decodeResp(t, e.do(r))
+	if path(resp, "info", "signals", "ua_tls_mismatch") != true {
+		t.Fatalf("signals %v", path(resp, "info", "signals"))
+	}
+	// Adding chrome via local observations clears it.
+	e.store.uaFamilies = []string{"chrome"}
+	r = thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r = r.WithContext(WithHolder(r.Context(), holder))
+	resp = decodeResp(t, e.do(r))
+	if path(resp, "info", "signals", "ua_tls_mismatch") != false {
+		t.Fatalf("signals %v", path(resp, "info", "signals"))
+	}
+}
+
+func TestPanicRecovered(t *testing.T) {
+	e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.panicPing = true })
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t))))
+	wantError(t, w, 500, "internal")
+	if w.Header().Get("X-Request-Id") == "" {
+		t.Fatal("request id header missing")
+	}
+	e.store.mu.Lock()
+	e.store.panicPing = false
+	e.store.mu.Unlock()
+	if w := e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t)))); w.Code != 200 {
+		t.Fatalf("next request %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAdminKeys(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
+	req := func(method, target, body, token string) *http.Request {
+		r := httptest.NewRequest(method, target, strings.NewReader(body))
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		return r
+	}
+	wantError(t, e.do(req("GET", "/admin/keys", "", "")), 403, "unauthorized")
+	wantError(t, e.do(req("POST", "/admin/keys", `{}`, "s3cret")), 400, "bad_request")
+
+	w := e.do(req("POST", "/admin/keys", `{"label":"shop","allowed_origins":["https://shop.example"],"rate_limit_per_minute":120}`, "s3cret"))
+	if w.Code != 201 {
+		t.Fatalf("create %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	plain, _ := created["key"].(string)
+	if !strings.HasPrefix(plain, "nzr_") || created["prefix"] != plain[4:12] || created["label"] != "shop" {
+		t.Fatalf("created %v", created)
+	}
+	k := e.store.keys[auth.HashKey(plain)]
+	if k == nil || k.RateLimitPerMinute == nil || *k.RateLimitPerMinute != 120 || k.AllowedOrigins[0] != "https://shop.example" {
+		t.Fatalf("stored %+v", k)
+	}
+
+	w = e.do(req("GET", "/admin/keys", "", "s3cret"))
+	if w.Code != 200 || strings.Contains(w.Body.String(), plain) || !strings.Contains(w.Body.String(), created["id"].(string)) {
+		t.Fatalf("list %d: %s", w.Code, w.Body.String())
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list) != 2 {
+		t.Fatalf("list %s: %v", w.Body.String(), err)
+	}
+	if _, has := list[0]["key"]; has {
+		t.Fatal("list must not expose keys")
+	}
+
+	w = e.do(req("DELETE", "/admin/keys/"+created["id"].(string), "", "s3cret"))
+	if w.Code != 204 || len(e.store.revoked) != 1 || e.store.revoked[0] != created["id"] {
+		t.Fatalf("delete %d %v", w.Code, e.store.revoked)
+	}
+	wantError(t, e.do(req("DELETE", "/admin/keys/nope", "", "s3cret")), 404, "not_found")
+
+	e = newEnv(t, nil)
+	wantError(t, e.do(req("GET", "/admin/keys", "", "anything")), 404, "not_found")
+}
+
+func TestClientIPProxiedRightmostUntrusted(t *testing.T) {
+	cfg := defaultConfig(t)
+	cfg.TLSMode = "proxied"
+	cfg.TrustedProxies = []string{"10.0.0.0/8"}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "10.0.0.1:443"
+	r.Header.Set("X-Forwarded-For", "1.1.1.1, 10.0.0.2")
+	if got := ClientIP(r, nil, cfg); got != netip.MustParseAddr("1.1.1.1") {
+		t.Fatalf("got %v", got)
+	}
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 1.1.1.1, 10.0.0.2")
+	r.Header.Add("X-Forwarded-For", "10.0.0.3")
+	if got := ClientIP(r, nil, cfg); got != netip.MustParseAddr("1.1.1.1") {
+		t.Fatalf("multi-line got %v", got)
+	}
+	r.Header.Del("X-Forwarded-For")
+	if got := ClientIP(r, nil, cfg); got != netip.MustParseAddr("10.0.0.1") {
+		t.Fatalf("fallback got %v", got)
+	}
+
+	cfg.TLSMode = "terminate"
+	r.Header.Set("X-Forwarded-For", "1.1.1.1")
+	h := &conn.Holder{RemoteAddr: netip.MustParseAddrPort("[::ffff:198.51.100.4]:9")}
+	if got := ClientIP(r, h, cfg); got != netip.MustParseAddr("198.51.100.4") {
+		t.Fatalf("terminate holder got %v", got)
+	}
+	if got := ClientIP(r, nil, cfg); got != netip.MustParseAddr("10.0.0.1") {
+		t.Fatalf("terminate remote got %v", got)
+	}
+}
+
+func TestServerComponentsStringifiable(t *testing.T) {
+	cfg := defaultConfig(t)
+	r := thumbmarkReq(t, "", nil)
+	r.Header.Set("Sec-CH-UA", `"Chromium";v="126"`)
+	view := fullHolder(t).Snapshot()
+	sc, _ := serverComponents(r, view, cfg, netip.MustParseAddr("2001:db8::1"),
+		ipintel.Lookup{ASN: 1, Tor: true, Country: "DE"})
+	for _, k := range []string{"tls", "h2", "header", "ip"} {
+		if sc[k] == nil {
+			t.Fatalf("%s missing", k)
+		}
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("StableStringify(%s) panicked: %v", k, p)
+				}
+			}()
+			_ = fingerprint.StableStringify(sc[k])
+		}()
+	}
+	cfg.TLSMode = "proxied"
+	r.Header.Set("x-ja4", "t13d_x")
+	sc, _ = serverComponents(r, conn.HolderView{}, cfg, netip.Addr{}, ipintel.Lookup{})
+	_ = fingerprint.StableStringify(sc)
+	if _, ok := sc["ip"]; ok {
+		t.Fatal("invalid address must not produce an ip component")
+	}
+}
+
+func TestOperationalRoutes(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>demo</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DemoDir = dir })
+	if w := e.do(httptest.NewRequest("GET", "/healthz", nil)); w.Code != 200 || w.Body.String() != "ok" {
+		t.Fatalf("healthz %d %q", w.Code, w.Body.String())
+	}
+	if w := e.do(httptest.NewRequest("GET", "/", nil)); w.Code != 200 || w.Body.String() != "nazr test-1.0\n" ||
+		!strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("banner %d %q", w.Code, w.Body.String())
+	}
+	if w := e.do(httptest.NewRequest("GET", "/demo/", nil)); w.Code != 200 || !strings.Contains(w.Body.String(), "demo") {
+		t.Fatalf("demo %d %q", w.Code, w.Body.String())
+	}
+	wantError(t, e.do(httptest.NewRequest("GET", "/nope", nil)), 404, "not_found")
+
+	e = newEnv(t, nil)
+	wantError(t, e.do(httptest.NewRequest("GET", "/demo/", nil)), 404, "not_found")
+}
+
+func TestMetricsHandler(t *testing.T) {
+	e := newEnv(t, nil)
+	e.intel.status = map[string]ipintel.SourceStatus{"tor": {Loaded: false, LastError: "x"}}
+	e.do(thumbmarkReq(t, e.key, marshal(t, stockBody(t))))
+	w := httptest.NewRecorder()
+	NewMetricsHandler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	out := w.Body.String()
+	for _, want := range []string{
+		`nazr_requests_total{route="thumbmark",status="200"}`,
+		`nazr_request_duration_seconds_bucket{route="thumbmark"`,
+		`nazr_classification_total{bot="false",datacenter="false",private_relay="false",tor="false",vpn="false"}`,
+		`nazr_list_stale{source="tor"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics missing %s", want)
+		}
+	}
+}
