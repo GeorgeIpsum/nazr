@@ -15,13 +15,14 @@ type Limiter interface {
 }
 
 type memoryLimiter struct {
-	now    func() time.Time
-	mu     sync.Mutex
-	counts map[string]int
+	now              func() time.Time
+	mu               sync.Mutex
+	counts           map[string]int
+	lastPrunedMinute int64
 }
 
 // NewMemoryLimiter returns an in-process fixed-window (one minute) limiter.
-// Stale windows are pruned on every call, so the map holds at most the keys
+// Stale windows are pruned when the minute changes, so the map holds at most the keys
 // seen in the current minute.
 func NewMemoryLimiter(now func() time.Time) Limiter {
 	if now == nil {
@@ -36,10 +37,13 @@ func (m *memoryLimiter) Allow(_ context.Context, key string, perMinute int) (boo
 	suffix := ":" + strconv.FormatInt(minute, 10)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for k := range m.counts {
-		if len(k) < len(suffix) || k[len(k)-len(suffix):] != suffix {
-			delete(m.counts, k)
+	if minute != m.lastPrunedMinute {
+		for k := range m.counts {
+			if len(k) < len(suffix) || k[len(k)-len(suffix):] != suffix {
+				delete(m.counts, k)
+			}
 		}
+		m.lastPrunedMinute = minute
 	}
 	k := key + suffix
 	m.counts[k]++

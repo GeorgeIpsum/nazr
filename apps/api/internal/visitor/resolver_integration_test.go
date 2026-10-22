@@ -116,6 +116,18 @@ func TestResolveIntegration(t *testing.T) {
 	if err != nil || c.IsNew || c.ID != a.ID || c.Sharing != 1 {
 		t.Fatalf("body id: %+v %v", c, err)
 	}
+	// Body id wins over a thumbmark held by a different visitor.
+	bID := ulid.Make().String()
+	if _, err := s.CreateVisitor(ctx, k1.ID, bID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.RecordVisit(ctx, k1.ID, bID, "tmB", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f, err := r.Resolve(ctx, k1.ID, a.ID, "tmB")
+	if err != nil || f.ID != a.ID || f.IsNew {
+		t.Fatalf("body id must win over thumbmark owner %s: %+v %v", bID, f, err)
+	}
 	// Another key must never reuse the visitor.
 	d, err := r.Resolve(ctx, k2.ID, a.ID, "tm")
 	if err != nil || !d.IsNew || d.ID == a.ID || d.Total != 1 {
@@ -127,10 +139,10 @@ func TestResolveIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharing, total, err := s.RecordVisit(ctx, k1.ID, id2, "tm", time.Now())
-	if err != nil || sharing != 2 || total != 2 {
+	if err != nil || sharing != 2 || total != 3 {
 		t.Fatalf("sharing: %d %d %v", sharing, total, err)
 	}
-	if u := Uniqueness(sharing, total); u != 0.5 {
+	if u := Uniqueness(sharing, total); u != 0.6667 {
 		t.Fatalf("uniqueness %v", u)
 	}
 }

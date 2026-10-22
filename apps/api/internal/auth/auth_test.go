@@ -16,6 +16,8 @@ import (
 	"nazr/api/internal/store"
 )
 
+const testKey = "nzr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestGenerateKeyFormat(t *testing.T) {
 	plain, hash, prefix := GenerateKey()
 	if !regexp.MustCompile(`^nzr_[a-z2-7]{52}$`).MatchString(plain) {
@@ -60,6 +62,12 @@ func TestOriginAllowed(t *testing.T) {
 		{"null never", "null", []string{"https://a.com"}, false},
 		{"null vs star", "null", []string{"*"}, false},
 		{"second entry", "https://b.com", []string{"https://a.com", "https://b.com"}, true},
+		{"uppercase origin", "HTTPS://EXAMPLE.COM", []string{"https://example.com"}, true},
+		{"suffix host", "https://example.com.evil", []string{"https://example.com"}, false},
+		{"userinfo", "https://x@example.com", []string{"https://example.com"}, false},
+		{"path", "https://example.com/foo", []string{"https://example.com"}, false},
+		{"query", "https://example.com?a=1", []string{"https://example.com"}, false},
+		{"trailing slash origin", "https://example.com/", []string{"https://example.com"}, true},
 		{"trailing slash entry", "https://a.com", []string{"https://a.com/"}, true},
 	}
 	for _, tc := range tests {
@@ -160,7 +168,7 @@ func TestMiddlewareStatuses(t *testing.T) {
 			w.WriteHeader(200)
 		}))
 	}
-	hk := map[string]string{"x-api-key": "nzr_abc"}
+	hk := map[string]string{"x-api-key": testKey}
 	cases := []struct {
 		name   string
 		r      *fakeResolver
@@ -171,10 +179,11 @@ func TestMiddlewareStatuses(t *testing.T) {
 	}{
 		{"missing", &fakeResolver{key: good}, NewMemoryLimiter(time.Now), nil, 403, "unauthorized"},
 		{"blank", &fakeResolver{key: good}, NewMemoryLimiter(time.Now), map[string]string{"x-api-key": "  "}, 403, "unauthorized"},
+		{"malformed key", &fakeResolver{key: good}, NewMemoryLimiter(time.Now), map[string]string{"x-api-key": "nzr_abc"}, 403, "unauthorized"},
 		{"unknown", &fakeResolver{}, NewMemoryLimiter(time.Now), hk, 403, "unauthorized"},
 		{"revoked", &fakeResolver{key: &store.APIKey{ID: "id1", RevokedAt: &revoked}}, NewMemoryLimiter(time.Now), hk, 403, "key_revoked"},
 		{"origin", &fakeResolver{key: &store.APIKey{ID: "id1", AllowedOrigins: []string{"https://a.com"}}}, NewMemoryLimiter(time.Now),
-			map[string]string{"x-api-key": "nzr_abc", "Origin": "https://b.com"}, 403, "origin_not_allowed"},
+			map[string]string{"x-api-key": testKey, "Origin": "https://b.com"}, 403, "origin_not_allowed"},
 		{"limit", &fakeResolver{key: good}, denyLimiter{}, hk, 429, "rate_limited"},
 		{"store", &fakeResolver{err: errors.New("db")}, NewMemoryLimiter(time.Now), hk, 503, "store_unavailable"},
 		{"limiter error fails open", &fakeResolver{key: good}, errLimiter{}, hk, 200, ""},
@@ -206,7 +215,7 @@ func TestMiddlewareTouchesAndCaches(t *testing.T) {
 	r := &fakeResolver{key: &store.APIKey{ID: "id1", RevokedAt: &revoked}}
 	c := NewKeyCache(time.Minute, nil)
 	h := Middleware(r, NewMemoryLimiter(time.Now), 1, c)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	hk := map[string]string{"x-api-key": "nzr_abc"}
+	hk := map[string]string{"x-api-key": testKey}
 	for range 2 {
 		if rr := doReq(h, hk); rr.Code != 403 {
 			t.Fatalf("status %d", rr.Code)
@@ -216,11 +225,11 @@ func TestMiddlewareTouchesAndCaches(t *testing.T) {
 		t.Fatal("revoked key must not be touched")
 	}
 	// Cache returns revoked keys, and Invalidate drops them.
-	if k, ok := c.get(HashKey("nzr_abc")); !ok || k.RevokedAt == nil {
+	if k, ok := c.get(HashKey(testKey)); !ok || k.RevokedAt == nil {
 		t.Fatal("revoked key should be cached")
 	}
-	c.Invalidate(HashKey("nzr_abc"))
-	if _, ok := c.get(HashKey("nzr_abc")); ok {
+	c.Invalidate(HashKey(testKey))
+	if _, ok := c.get(HashKey(testKey)); ok {
 		t.Fatal("invalidate failed")
 	}
 }
@@ -228,7 +237,7 @@ func TestMiddlewareTouchesAndCaches(t *testing.T) {
 func TestMiddlewareDefaultRateNilKeyRate(t *testing.T) {
 	r := &fakeResolver{key: &store.APIKey{ID: "id1"}}
 	h := Middleware(r, NewMemoryLimiter(time.Now), 2, NewKeyCache(time.Minute, nil))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	hk := map[string]string{"x-api-key": "nzr_abc"}
+	hk := map[string]string{"x-api-key": testKey}
 	codes := []int{doReq(h, hk).Code, doReq(h, hk).Code, doReq(h, hk).Code}
 	if codes[0] != 200 || codes[1] != 200 || codes[2] != 429 {
 		t.Fatalf("codes %v", codes)

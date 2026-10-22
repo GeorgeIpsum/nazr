@@ -19,7 +19,8 @@ func OriginAllowed(origin string, allowed []string) bool {
 		return false
 	}
 	ou, err := url.Parse(origin)
-	if err != nil || ou.Scheme == "" || ou.Hostname() == "" {
+	if err != nil || ou.Scheme == "" || ou.Hostname() == "" ||
+		ou.User != nil || (ou.Path != "" && ou.Path != "/") || ou.RawQuery != "" {
 		return false
 	}
 	oScheme, oHost, oPort := strings.ToLower(ou.Scheme), strings.ToLower(ou.Hostname()), ou.Port()

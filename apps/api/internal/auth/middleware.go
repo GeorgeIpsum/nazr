@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,11 +34,14 @@ type KeyResolver interface {
 
 type ctxKey struct{}
 
-// KeyFromContext returns the authenticated key, or nil.
+// KeyFromContext returns the authenticated key, or nil. The returned
+// *store.APIKey is shared with the cache and must be treated as read-only.
 func KeyFromContext(ctx context.Context) *store.APIKey {
 	k, _ := ctx.Value(ctxKey{}).(*store.APIKey)
 	return k
 }
+
+var keyFormat = regexp.MustCompile(`^nzr_[a-z2-7]{52}$`)
 
 const keyCacheCap = 10000
 
@@ -49,7 +53,7 @@ type cacheEntry struct {
 
 // KeyCache caches key lookups by hash in an in-process LRU and, when Redis is
 // configured, in Redis. Revoked keys are cached too, so revocation propagates
-// within the TTL.
+// within the TTL. Returned *store.APIKey values are shared and read-only.
 type KeyCache struct {
 	ttl time.Duration
 	rdb *redis.Client
@@ -165,6 +169,10 @@ func Middleware(r KeyResolver, l Limiter, defaultRate int, cache *KeyCache) func
 			plain := strings.TrimSpace(req.Header.Get("x-api-key"))
 			if plain == "" {
 				WriteError(w, http.StatusForbidden, "unauthorized", "missing API key")
+				return
+			}
+			if !keyFormat.MatchString(plain) {
+				WriteError(w, http.StatusForbidden, "unauthorized", "invalid API key")
 				return
 			}
 			hash := HashKey(plain)

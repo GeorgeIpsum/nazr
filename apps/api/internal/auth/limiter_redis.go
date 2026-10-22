@@ -15,7 +15,7 @@ type redisLimiter struct {
 
 // NewRedisLimiter returns a limiter shared across instances via Redis. Counters
 // live under nazr:rl:<key>:<unixMinute> and expire after 60 seconds. Errors are
-// returned to the caller; the middleware fails open on them.
+// returned to the caller; EXPIRE NX requires Redis 7+; the middleware fails open on them.
 func NewRedisLimiter(rdb *redis.Client) Limiter {
 	return &redisLimiter{rdb: rdb, now: time.Now}
 }

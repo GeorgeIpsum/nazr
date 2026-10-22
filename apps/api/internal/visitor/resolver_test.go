@@ -11,10 +11,11 @@ import (
 )
 
 type fakeRepo struct {
-	visitors map[string]*store.Visitor // key: keyID+"/"+id
-	marks    map[string]time.Time      // keyID/thumbmark -> last seen
-	markVis  map[string]string         // keyID/thumbmark -> visitor id
-	recorded int
+	visitors  map[string]*store.Visitor // key: keyID+"/"+id
+	marks     map[string]time.Time      // keyID/thumbmark -> last seen
+	markVis   map[string]string         // keyID/thumbmark -> visitor id
+	recorded  int
+	findCalls int
 }
 
 func newFake() *fakeRepo {
@@ -32,6 +33,7 @@ func (f *fakeRepo) GetVisitor(_ context.Context, keyID, id string) (*store.Visit
 }
 
 func (f *fakeRepo) FindVisitorByThumbmark(_ context.Context, keyID, thumb string, since time.Time) (*store.Visitor, error) {
+	f.findCalls++
 	k := keyID + "/" + thumb
 	if seen, ok := f.marks[k]; ok && !seen.Before(since) {
 		return f.visitors[keyID+"/"+f.markVis[k]], nil
@@ -63,12 +65,17 @@ func newResolver(f *fakeRepo) *Resolver {
 func TestResolveReusesBodyID(t *testing.T) {
 	f := newFake()
 	id := ulid.Make().String()
-	f.seed("k1", id, "tm", t0.Add(-time.Hour))
-	res, err := newResolver(f).Resolve(context.Background(), "k1", id, "other-tm")
+	f.seed("k1", id, "mine", t0.Add(-time.Hour))
+	other := ulid.Make().String()
+	f.seed("k1", other, "tm", t0.Add(-time.Minute))
+	res, err := newResolver(f).Resolve(context.Background(), "k1", id, "tm")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ID != id || res.IsNew || !res.LastSeen.Equal(t0) || res.Sharing != 1 || res.Total != 1 {
+	if f.findCalls != 0 {
+		t.Fatal("thumbmark lookup must not run when the body id matches")
+	}
+	if res.ID != id || res.IsNew || !res.LastSeen.Equal(t0) || res.Sharing != 1 || res.Total != 2 {
 		t.Fatalf("%+v", res)
 	}
 	if !res.FirstSeen.Equal(t0.Add(-time.Hour)) {
