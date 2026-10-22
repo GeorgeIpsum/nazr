@@ -19,8 +19,8 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_DATABASE_URL` | string, secret | empty | PostgreSQL URL. Required by `serve`, `migrate` and `keys` |
 | `NAZR_REDIS_URL` | string, secret | empty | Optional Redis URL. Enables a shared rate limiter and key cache across replicas; without it both are in-process. The Redis limiter needs Redis 7+. On Redis errors the limiter fails open (the request is allowed) and a warning is logged |
 | `NAZR_LISTEN_ADDR` | string | `:443` | Public listener address |
-| `NAZR_HTTP_ADDR` | string | `:80` | Plain-HTTP listener for ACME HTTP-01 and a 308 redirect to HTTPS. Used only when `NAZR_TLS_MODE=terminate`; set empty to disable |
-| `NAZR_METRICS_ADDR` | string | `127.0.0.1:9090` | Prometheus `/metrics` listener; empty disables it |
+| `NAZR_HTTP_ADDR` | string | `:80` | Plain-HTTP listener for ACME HTTP-01 and a 308 redirect to HTTPS. Used only when `NAZR_TLS_MODE=terminate`; set `off` to disable (an empty value means the default) |
+| `NAZR_METRICS_ADDR` | string | `127.0.0.1:9090` | Prometheus `/metrics` listener; set `off` to disable (an empty value means the default) |
 | `NAZR_TLS_MODE` | `terminate`, `proxied`, `plain` | `terminate` | See [connection modes](protocol.md#connection-modes-and-fingerprint-capture) |
 | `NAZR_TLS_CERT_PEM` | string | empty | Inline certificate chain (terminate mode). Set it together with `NAZR_TLS_KEY_PEM` or not at all; a half-set pair fails validation |
 | `NAZR_TLS_KEY_PEM` | string, secret | empty | Inline private key. Inline PEM wins over files, files over ACME |

@@ -5,7 +5,7 @@ services:
     environment:
       NAZR_TLS_MODE: plain
       NAZR_LISTEN_ADDR: ":8080"
-      NAZR_HTTP_ADDR: ""
+      NAZR_HTTP_ADDR: "off" # the redirect listener is terminate-only; off also silences the "ignored" log line
     ports: !override
       - "8080:8080"
       - "127.0.0.1:9090:9090"

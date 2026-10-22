@@ -199,7 +199,7 @@ Details and limits:
 - `plain` and `proxied`: header order is captured for every HTTP/1.1 request head on a connection, so keep-alive connections a proxy reuses across different end users still give each request its own order. Sniffing stops for the rest of a connection after a chunked request body, a protocol upgrade or a head over 32 KiB; later requests on it fall back to sorted names.
 - Header order is per request in every mode. Each HTTP/2 header block is HPACK-decoded (with the connection's dynamic table) and each HTTP/1.1 head is queued; a request takes the queued entry whose method and header names match its own. When nothing matches, `header.order` is the sorted header set and `ja4h` uses sorted names. This keeps `header.order`, `ja4h` and so the thumbmark the same whether or not a CORS preflight opened the connection first.
 - Server timeouts bound slow clients: `ReadHeaderTimeout` 10s, `ReadTimeout` 30s, `WriteTimeout` 30s, `IdleTimeout` 120s, 64 KiB of headers. They are what stops slowloris-style connections, which would otherwise hold the lazy ClientHello capture open.
-- `NAZR_HTTP_ADDR` is used only in `terminate` mode: it serves ACME HTTP-01 challenges and answers everything else with a 308 redirect to HTTPS.
+- `NAZR_HTTP_ADDR` is used only in `terminate` mode: it serves ACME HTTP-01 challenges and answers everything else with a 308 redirect to HTTPS. Set it to `off` to run without it.
 - Signals: `SIGHUP` reloads file-based certificates (`NAZR_TLS_CERT_FILE` and `NAZR_TLS_KEY_FILE`), which are also re-read every 12 hours; a failed reload keeps the previous certificate. In every other configuration `SIGHUP` is ignored. `SIGINT` and `SIGTERM` drain connections for up to 15 seconds.
 
 ## Operational routes

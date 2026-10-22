@@ -118,7 +118,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       NAZR_TLS_CERT_FILE: cert,
       NAZR_TLS_KEY_FILE: key,
       NAZR_LISTEN_ADDR: "127.0.0.1:8443",
-      NAZR_HTTP_ADDR: "127.0.0.1:18080", // empty falls back to :80, so use a loopback port
+      NAZR_HTTP_ADDR: "off", // empty would fall back to the :80 default
       NAZR_METRICS_ADDR: "127.0.0.1:19090",
       NAZR_DATA_DIR: join(tmp, "data"),
       NAZR_LISTS_DISABLE: "maxmind,apple,tor,datacenter,vpn,ja4db",

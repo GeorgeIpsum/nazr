@@ -22,8 +22,8 @@ type Config struct {
 	DatabaseURL      string   `env:"NAZR_DATABASE_URL" secret:"true"`
 	RedisURL         string   `env:"NAZR_REDIS_URL" secret:"true"`
 	ListenAddr       string   `env:"NAZR_LISTEN_ADDR" envDefault:":443"`
-	HTTPAddr         string   `env:"NAZR_HTTP_ADDR" envDefault:":80"`
-	MetricsAddr      string   `env:"NAZR_METRICS_ADDR" envDefault:"127.0.0.1:9090"`
+	HTTPAddr         string   `env:"NAZR_HTTP_ADDR" envDefault:":80"`               // "off" disables
+	MetricsAddr      string   `env:"NAZR_METRICS_ADDR" envDefault:"127.0.0.1:9090"` // "off" disables
 	TLSMode          string   `env:"NAZR_TLS_MODE" envDefault:"terminate"`
 	TLSCertPEM       string   `env:"NAZR_TLS_CERT_PEM"`
 	TLSKeyPEM        string   `env:"NAZR_TLS_KEY_PEM" secret:"true"`
@@ -69,6 +69,11 @@ type Config struct {
 	LogRetention       time.Duration `env:"NAZR_LOG_RETENTION"`
 }
 
+// AddrOff is the NAZR_HTTP_ADDR / NAZR_METRICS_ADDR value (case-insensitive)
+// that disables that listener. Load turns it into an empty address. An empty
+// value cannot: the env library treats it as unset and applies the default.
+const AddrOff = "off"
+
 // Load reads configuration through lookup, which receives full variable names
 // such as "NAZR_TLS_MODE". The process environment is never consulted.
 func Load(lookup func(string) (string, bool)) (Config, error) {
@@ -88,6 +93,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	for i := range v.NumField() {
 		if f := v.Field(i); f.Type() == reflect.TypeFor[[]string]() {
 			f.Set(reflect.ValueOf(cleanList(f.Interface().([]string))))
+		}
+	}
+	// An empty value counts as unset (and so as the default); "off" disables
+	// the HTTP and metrics listeners.
+	for _, a := range []*string{&c.HTTPAddr, &c.MetricsAddr} {
+		if strings.EqualFold(strings.TrimSpace(*a), AddrOff) {
+			*a = ""
 		}
 	}
 	if c.ACMEDir == "" && len(c.ACMEDomains) > 0 {

@@ -186,3 +186,27 @@ func TestACMEDirDefaultsUnderDataDir(t *testing.T) {
 		t.Fatalf("ACMEDir set without ACME: %q", c.ACMEDir)
 	}
 }
+
+// The env library treats an empty value as unset, so the listener defaults
+// can only be disabled with the "off" sentinel.
+func TestHTTPAddrOff(t *testing.T) {
+	for _, v := range []string{"off", "OFF", " Off "} {
+		c, err := Load(lookupFrom(map[string]string{"NAZR_HTTP_ADDR": v, "NAZR_METRICS_ADDR": v}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.HTTPAddr != "" || c.MetricsAddr != "" {
+			t.Errorf("%q: HTTPAddr = %q, MetricsAddr = %q, want both disabled", v, c.HTTPAddr, c.MetricsAddr)
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("NAZR_HTTP_ADDR=%q: %v", v, err)
+		}
+	}
+	c, err := Load(lookupFrom(map[string]string{"NAZR_HTTP_ADDR": "", "NAZR_METRICS_ADDR": ""}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HTTPAddr != ":80" || c.MetricsAddr != "127.0.0.1:9090" {
+		t.Errorf("empty values = %q, %q, want the defaults", c.HTTPAddr, c.MetricsAddr)
+	}
+}

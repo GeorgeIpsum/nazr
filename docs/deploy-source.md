@@ -26,9 +26,7 @@ cd apps/api
 NAZR_TLS_MODE=plain NAZR_LISTEN_ADDR=:8080 NAZR_HTTP_ADDR=off NAZR_DATA_DIR=./data go run ./cmd/nazr serve
 ```
 
-`NAZR_DATA_DIR` defaults to `/data`; point it somewhere writable. `plain` mode has no TLS, so it captures no JA4 or HTTP/2 fingerprint (HTTP/1.1 header order only). `NAZR_HTTP_ADDR=off` disables the redirect listener (it would otherwise try to bind `:80`; the listener is used only in `terminate` mode anyway).
-
-<!-- NAZR_HTTP_ADDR=off as the disable sentinel lands with the final fix wave of this plan; until then an empty value disables it (see configuration.md). -->
+`NAZR_DATA_DIR` defaults to `/data`; point it somewhere writable. `plain` mode has no TLS, so it captures no JA4 or HTTP/2 fingerprint (HTTP/1.1 header order only). The redirect listener runs only in `terminate` mode, so `plain` never binds `:80`; `NAZR_HTTP_ADDR=off` just silences the startup line saying the setting is ignored (an empty value would mean the `:80` default).
 
 Check it, then point a client at `http://127.0.0.1:8080` (see the [client README](../packages/thumbmark/README.md)), or run the demo with `pnpm --filter @nazr/demo dev`:
 
