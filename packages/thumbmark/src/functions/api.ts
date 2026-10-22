@@ -24,9 +24,12 @@ export interface infoInterface {
         bot: boolean;
         datacenter: boolean;
         danger_level: number; // 5 is highest and should be blocked. 0 is no danger.
+        private_relay?: boolean;
     };
     uniqueness?: {
         score: number | string;
+        visitors_sharing?: number;
+        visitors_total?: number;
     };
     country?: {
         iso_code: string;
@@ -43,7 +46,9 @@ export interface infoInterface {
         lastSeen: string;
     };
     signals?: {
+        [name: string]: boolean | undefined;
         timezone_country_mismatch?: boolean;
+        ua_tls_mismatch?: boolean;
     };
     timed_out?: boolean; // added for timeout handling
 }

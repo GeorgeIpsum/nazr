@@ -8,6 +8,7 @@ import {
 } from "./functions/legacy_functions";
 import { optionsInterface, setOption, stabilizationExclusionRules } from "./options";
 import { Thumbmark } from "./thumbmark";
+import { hash } from "./utils/hash";
 import { stableStringify } from "./utils/stableStringify";
 import { getVersion } from "./utils/version";
 
@@ -19,6 +20,7 @@ export {
     getFingerprintPerformance,
     getThumbmark,
     getVersion,
+    hash,
     includeComponent,
     optionsInterface,
     // deprecated functions. Don't use anymore.

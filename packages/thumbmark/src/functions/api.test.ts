@@ -95,6 +95,40 @@ describe("setCachedApiResponse", () => {
         const parsed = JSON.parse(rawCache!);
         expect("collect" in parsed.apiResponse).toBe(false);
     });
+
+    test("it should round-trip the nazr classification, uniqueness and signals fields through the cache", () => {
+        const longLived = { ...options, cache_lifetime_in_ms: 60000 };
+        const nazrResponse: apiResponse = {
+            info: {
+                classification: {
+                    tor: false,
+                    vpn: false,
+                    bot: false,
+                    datacenter: false,
+                    danger_level: 0,
+                    private_relay: true,
+                },
+                uniqueness: {
+                    score: 0.5,
+                    visitors_sharing: 2,
+                    visitors_total: 7,
+                },
+                signals: {
+                    timezone_country_mismatch: false,
+                    ua_tls_mismatch: true,
+                },
+            },
+        };
+
+        setCachedApiResponse(longLived, nazrResponse);
+        const cached = getCachedApiResponse(longLived);
+
+        expect(cached?.info?.classification?.private_relay).toBe(true);
+        expect(cached?.info?.uniqueness?.visitors_sharing).toBe(2);
+        expect(cached?.info?.uniqueness?.visitors_total).toBe(7);
+        expect(cached?.info?.signals?.ua_tls_mismatch).toBe(true);
+        expect(cached?.info?.signals?.timezone_country_mismatch).toBe(false);
+    });
 });
 
 describe("getCachedApiResponse", () => {
