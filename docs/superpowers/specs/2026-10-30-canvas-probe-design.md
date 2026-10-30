@@ -128,14 +128,22 @@ runs on the hot path.
 
 ## 6. Storage
 
-Migration `00005_events_canvas_probe.sql`:
+nazr is not yet deployed and has no consumers, so rather than add a fifth
+migration, the existing migrations 00001–00004 are collapsed into a single
+`00001_init.sql`, and the canvas-probe schema is added there:
 
-- `ALTER TABLE events ADD COLUMN canvas_probe text;` (nullable; NULL when the
-  request carried no probe).
+- `events.canvas_probe text` (nullable; NULL when the request carried no probe),
+  defined directly in the collapsed initial migration alongside everything
+  previously introduced by 00002 (`api_keys.visitor_count`), 00003 (events
+  thumbmark index) and 00004 (`events.ja3_hash`).
 - An index supporting both the cohort dominant-value query (section 5) and the
   per-key entropy aggregate (section 7). Exact columns fixed in the plan; it
   must cover `(api_key_id, created_at)` filtering with `canvas_probe` and
   `visitor_id` available, without a full scan.
+- Migration files 00002–00004 are deleted; the goose provider setup and the
+  migration tests are updated to the single-file layout. Because the collapse
+  only matters to a database that already ran the old sequence, and none
+  exists, no down-migration or data move is needed.
 
 The server stores the validated probe string on the event via the existing
 `InsertEvent` path (new `Event.CanvasProbe` field, mapped to SQL NULL when
@@ -207,7 +215,8 @@ An explicit "builder beware" block in both `packages/thumbmark/README.md` and
 - `apps/api/internal/server/thumbmark.go` — parse/validate `canvas_probe`;
   thread into the event and (when scoring on) classification.
 - `apps/api/internal/store/events.go` — `Event.CanvasProbe`; INSERT column.
-- `apps/api/migrations/00005_events_canvas_probe.sql` — column + index.
+- `apps/api/migrations/00001_init.sql` — collapsed single migration, including
+  the `canvas_probe` column and index; `00002`–`00004` deleted.
 - `apps/api/internal/store/` — cohort dominant-value query; per-key entropy
   aggregate query.
 - `apps/api/internal/classify/classify.go` — `canvas_probe_anomaly` signal and
@@ -240,4 +249,7 @@ An explicit "builder beware" block in both `packages/thumbmark/README.md` and
   additive and optional on the wire.
 - Existing fixtures (`apps/api/testdata/fixtures`) are unaffected: the probe is
   not a component and does not touch `StableStringify`.
-- Migration is purely additive (new nullable column).
+- The single new column is nullable and additive to the schema. The migration
+  files are collapsed (section 6), which is safe only because no database has
+  run the old 00001–00004 sequence; this is a one-time pre-release cleanup, not
+  a pattern for future migrations once nazr is deployed.
