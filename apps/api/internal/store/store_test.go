@@ -486,3 +486,28 @@ func TestRecordVisitConcurrentSharedThumbmark(t *testing.T) {
 		t.Fatalf("max sharing=%d", maxSharing)
 	}
 }
+
+func TestInsertEventCanvasProbeCohort(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "cp", Prefix: "cpcpcpcp"})
+	now := time.Now().UTC()
+	withID, withoutID := newID(), newID()
+	if err := s.InsertEvent(ctx, Event{ID: withID, APIKeyID: k.ID, VisitorID: newID(), Thumbmark: "tm",
+		IPHash: "iph", CanvasProbe: "deadbeef", Cohort: "chrome|chrome", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertEvent(ctx, Event{ID: withoutID, APIKeyID: k.ID, VisitorID: newID(), Thumbmark: "tm",
+		IPHash: "iph", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var probe, cohort string
+	if err := s.pool.QueryRow(ctx, `SELECT canvas_probe, cohort FROM events WHERE id=$1`, withID).Scan(&probe, &cohort); err != nil ||
+		probe != "deadbeef" || cohort != "chrome|chrome" {
+		t.Fatalf("round trip: %q %q %v", probe, cohort, err)
+	}
+	var isNull bool
+	if err := s.pool.QueryRow(ctx, `SELECT canvas_probe IS NULL AND cohort IS NULL FROM events WHERE id=$1`, withoutID).Scan(&isNull); err != nil || !isNull {
+		t.Fatalf("expected NULLs: %v %v", isNull, err)
+	}
+}

@@ -60,9 +60,12 @@ var browserFamilies = []string{"chrome", "edge", "firefox", "safari", "opera", "
 
 func isBrowser(family string) bool { return slices.Contains(browserFamilies, family) }
 
-// tlsFamily collapses Chromium derivatives onto chrome, which shares their
+// tlsFamily is the unexported alias of TLSFamily.
+func tlsFamily(f string) string { return TLSFamily(f) }
+
+// TLSFamily collapses Chromium derivatives onto chrome, which shares their
 // TLS stack.
-func tlsFamily(f string) string {
+func TLSFamily(f string) string {
 	switch f {
 	case "edge", "opera", "brave", "samsung":
 		return "chrome"
