@@ -30,6 +30,7 @@ type StoreAPI interface {
 	HasRecentEvent(ctx context.Context, ipHash, thumbmark string, since time.Time) (bool, error)
 	RecordUAJA4(ctx context.Context, ja4, family string, now time.Time) error
 	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
+	DominantCanvasProbe(ctx context.Context, keyID, cohort string, since time.Time, minSample int) (string, bool, error)
 	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error
 	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
 	ListKeys(ctx context.Context) ([]store.APIKey, error)

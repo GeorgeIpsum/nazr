@@ -19,32 +19,33 @@ const redacted = "<redacted>"
 // environment variable name; `secret:"true"` fields are hidden by Redacted.
 type Config struct {
 	// Core.
-	DatabaseURL      string   `env:"NAZR_DATABASE_URL" secret:"true"`
-	RedisURL         string   `env:"NAZR_REDIS_URL" secret:"true"`
-	ListenAddr       string   `env:"NAZR_LISTEN_ADDR" envDefault:":443"`
-	HTTPAddr         string   `env:"NAZR_HTTP_ADDR" envDefault:":80"`               // "off" disables
-	MetricsAddr      string   `env:"NAZR_METRICS_ADDR" envDefault:"127.0.0.1:9090"` // "off" disables
-	TLSMode          string   `env:"NAZR_TLS_MODE" envDefault:"terminate"`
-	TLSCertPEM       string   `env:"NAZR_TLS_CERT_PEM"`
-	TLSKeyPEM        string   `env:"NAZR_TLS_KEY_PEM" secret:"true"`
-	TLSCertFile      string   `env:"NAZR_TLS_CERT_FILE"`
-	TLSKeyFile       string   `env:"NAZR_TLS_KEY_FILE"`
-	ACMEDomains      []string `env:"NAZR_ACME_DOMAINS"`
-	ACMEEmail        string   `env:"NAZR_ACME_EMAIL"`
-	ACMEDir          string   `env:"NAZR_ACME_DIR"`
-	ProxyProtocol    bool     `env:"NAZR_PROXY_PROTOCOL"`
-	TrustedProxies   []string `env:"NAZR_TRUSTED_PROXIES"`
-	ClientIPHeader   string   `env:"NAZR_CLIENT_IP_HEADER" envDefault:"x-forwarded-for"`
-	JA4Header        string   `env:"NAZR_JA4_HEADER" envDefault:"x-ja4"`
-	CORSOrigins      []string `env:"NAZR_CORS_ORIGINS" envDefault:"*"`
-	AdminToken       string   `env:"NAZR_ADMIN_TOKEN" secret:"true"`
-	DefaultRateLimit int      `env:"NAZR_DEFAULT_RATE_LIMIT" envDefault:"600"`
-	BodyLimit        int      `env:"NAZR_BODY_LIMIT" envDefault:"262144"`
-	DataDir          string   `env:"NAZR_DATA_DIR" envDefault:"/data"`
-	DemoDir          string   `env:"NAZR_DEMO_DIR"`
-	AutoMigrate      bool     `env:"NAZR_AUTO_MIGRATE" envDefault:"true"`
-	LogLevel         string   `env:"NAZR_LOG_LEVEL" envDefault:"info"`
-	LogFormat        string   `env:"NAZR_LOG_FORMAT" envDefault:"json"`
+	DatabaseURL        string   `env:"NAZR_DATABASE_URL" secret:"true"`
+	RedisURL           string   `env:"NAZR_REDIS_URL" secret:"true"`
+	ListenAddr         string   `env:"NAZR_LISTEN_ADDR" envDefault:":443"`
+	HTTPAddr           string   `env:"NAZR_HTTP_ADDR" envDefault:":80"`               // "off" disables
+	MetricsAddr        string   `env:"NAZR_METRICS_ADDR" envDefault:"127.0.0.1:9090"` // "off" disables
+	TLSMode            string   `env:"NAZR_TLS_MODE" envDefault:"terminate"`
+	TLSCertPEM         string   `env:"NAZR_TLS_CERT_PEM"`
+	TLSKeyPEM          string   `env:"NAZR_TLS_KEY_PEM" secret:"true"`
+	TLSCertFile        string   `env:"NAZR_TLS_CERT_FILE"`
+	TLSKeyFile         string   `env:"NAZR_TLS_KEY_FILE"`
+	ACMEDomains        []string `env:"NAZR_ACME_DOMAINS"`
+	ACMEEmail          string   `env:"NAZR_ACME_EMAIL"`
+	ACMEDir            string   `env:"NAZR_ACME_DIR"`
+	ProxyProtocol      bool     `env:"NAZR_PROXY_PROTOCOL"`
+	TrustedProxies     []string `env:"NAZR_TRUSTED_PROXIES"`
+	ClientIPHeader     string   `env:"NAZR_CLIENT_IP_HEADER" envDefault:"x-forwarded-for"`
+	JA4Header          string   `env:"NAZR_JA4_HEADER" envDefault:"x-ja4"`
+	CORSOrigins        []string `env:"NAZR_CORS_ORIGINS" envDefault:"*"`
+	AdminToken         string   `env:"NAZR_ADMIN_TOKEN" secret:"true"`
+	DefaultRateLimit   int      `env:"NAZR_DEFAULT_RATE_LIMIT" envDefault:"600"`
+	BodyLimit          int      `env:"NAZR_BODY_LIMIT" envDefault:"262144"`
+	DataDir            string   `env:"NAZR_DATA_DIR" envDefault:"/data"`
+	DemoDir            string   `env:"NAZR_DEMO_DIR"`
+	AutoMigrate        bool     `env:"NAZR_AUTO_MIGRATE" envDefault:"true"`
+	CanvasProbeScoring bool     `env:"NAZR_CANVAS_PROBE_SCORING" envDefault:"false"`
+	LogLevel           string   `env:"NAZR_LOG_LEVEL" envDefault:"info"`
+	LogFormat          string   `env:"NAZR_LOG_FORMAT" envDefault:"json"`
 
 	// Intel.
 	MaxMindAccountID     string   `env:"NAZR_MAXMIND_ACCOUNT_ID"`

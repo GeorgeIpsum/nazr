@@ -934,3 +934,43 @@ func TestThumbmarkCanvasProbe(t *testing.T) {
 		}
 	}
 }
+
+func probeSignalResp(t *testing.T, scoring bool, dom string, established bool) (map[string]any, *fakeStore) {
+	t.Helper()
+	e := newEnv(t, func(c *config.Config, s *fakeStore) {
+		c.CanvasProbeScoring = scoring
+		s.domValue, s.domEstablished = dom, established
+	})
+	body := stockBody(t)
+	body["canvas_probe"] = "a1b2c3"
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", w.Code, w.Body.String())
+	}
+	return decodeResp(t, w), e.store
+}
+
+func TestCanvasProbeScoringOff(t *testing.T) {
+	resp, fs := probeSignalResp(t, false, "ffffff", true)
+	if _, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; ok {
+		t.Fatal("signal present with scoring off")
+	}
+	if fs.domCalls != 0 {
+		t.Fatalf("query ran %d times", fs.domCalls)
+	}
+}
+
+func TestCanvasProbeScoringOn(t *testing.T) {
+	resp, fs := probeSignalResp(t, true, "ffffff", true)
+	if path(resp, "info", "signals", "canvas_probe_anomaly") != true || fs.domCalls != 1 {
+		t.Fatalf("differs: %v calls %d", path(resp, "info", "signals"), fs.domCalls)
+	}
+	resp, _ = probeSignalResp(t, true, "a1b2c3", true)
+	if v, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; !ok || v != false {
+		t.Fatalf("matches: present=%v v=%v", ok, v)
+	}
+	resp, _ = probeSignalResp(t, true, "ffffff", false)
+	if _, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; ok {
+		t.Fatal("signal present for unestablished cohort")
+	}
+}

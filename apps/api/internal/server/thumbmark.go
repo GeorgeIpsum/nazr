@@ -328,7 +328,31 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 		h2fpStr = h2fp.Akamai(view.H2)
 		in.H2Fingerprint = h2fpStr
 	}
+	braveFlag := false
+	if sys, ok := body.components["system"].(map[string]any); ok {
+		if br, ok := sys["browser"].(map[string]any); ok {
+			name, _ := br["name"].(string)
+			braveFlag = name == "Brave"
+		}
+	}
+	cohort := classify.CohortKey(in.UserAgent, braveFlag, in.JA4Families)
+	// A determination needs scoring on, a probe, and an established cohort;
+	// without one the signal is left out of the response.
+	scored := s.Cfg.CanvasProbeScoring && body.canvasProbe != ""
+	if scored {
+		dominant, established, err := s.Store.DominantCanvasProbe(ctx, key.ID, cohort,
+			time.Now().Add(-store.ProbeWindowDays*24*time.Hour), store.ProbeNMin)
+		if err != nil {
+			s.Logger.Error("server: dominant canvas probe failed", "err", err, "request_id", requestIDFrom(ctx))
+			established = false
+		}
+		in.CanvasProbeAnomaly = established && dominant != body.canvasProbe
+		scored = established
+	}
 	cls := classify.Classify(in)
+	if !scored {
+		delete(cls.Signals, "canvas_probe_anomaly")
+	}
 	classificationTotal.WithLabelValues(strconv.FormatBool(cls.Tor), strconv.FormatBool(cls.VPN),
 		strconv.FormatBool(cls.Bot), strconv.FormatBool(cls.Datacenter), strconv.FormatBool(cls.PrivateRelay)).Inc()
 
@@ -377,16 +401,9 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 		resp.Collect = &collectDirective{JA4: "", Source: "none"}
 	}
 
-	braveFlag := false
-	if sys, ok := body.components["system"].(map[string]any); ok {
-		if br, ok := sys["browser"].(map[string]any); ok {
-			name, _ := br["name"].(string)
-			braveFlag = name == "Brave"
-		}
-	}
 	ev := store.Event{
 		CanvasProbe: body.canvasProbe,
-		Cohort:      classify.CohortKey(in.UserAgent, braveFlag, in.JA4Families),
+		Cohort:      cohort,
 		ID:          rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
 		IPHash: ipHash, JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent, Path: body.path,
 		// The component (and so the hash) uses the cookie-free ja4h; the

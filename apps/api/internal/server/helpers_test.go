@@ -44,6 +44,11 @@ type fakeStore struct {
 	uaFamilies []string
 	uaQueries  []string
 	seq        int
+
+	domCalls       int
+	domValue       string
+	domEstablished bool
+	domErr         error
 }
 
 func newFakeStore() *fakeStore {
@@ -433,3 +438,13 @@ func filterLikeClient(server, client map[string]any, opts fingerprint.Options) m
 }
 
 var errBoom = errors.New("boom")
+
+func (f *fakeStore) DominantCanvasProbe(_ context.Context, _, _ string, _ time.Time, _ int) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.domCalls++
+	if f.domErr != nil {
+		return "", false, f.domErr
+	}
+	return f.domValue, f.domEstablished, nil
+}

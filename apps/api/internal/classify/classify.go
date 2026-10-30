@@ -20,6 +20,7 @@ type Input struct {
 	Webdriver             bool   // components.privacy.webdriver, false when absent
 	JA4Families           []string
 	H2Fingerprint         string
+	CanvasProbeAnomaly    bool // canvas probe differs from the cohort's established dominant value
 }
 
 // Output is the classification plus every evaluated signal.
@@ -92,6 +93,7 @@ var rules = []rule{
 	{"datacenter_browser_ua", 1, 1, func(in Input) bool {
 		return in.IP.Datacenter && isBrowser(ua.Family(in.UserAgent))
 	}},
+	{signal: "canvas_probe_anomaly", danger: 1, bot: 1, test: func(in Input) bool { return in.CanvasProbeAnomaly }},
 }
 
 // iosMarkers identify iOS/iPadOS user agents. Every browser there must use

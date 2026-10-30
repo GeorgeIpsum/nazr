@@ -511,3 +511,33 @@ func TestInsertEventCanvasProbeCohort(t *testing.T) {
 		t.Fatalf("expected NULLs: %v %v", isNull, err)
 	}
 }
+
+func seedProbes(t *testing.T, s *Store, keyID, cohort string, probe string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := s.InsertEvent(context.Background(), Event{ID: newID(), APIKeyID: keyID, VisitorID: newID(), Thumbmark: "tm",
+			IPHash: "iph", CanvasProbe: probe, Cohort: cohort, CreatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDominantCanvasProbe(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "dom", Prefix: "domdomdo"})
+	since := time.Now().Add(-ProbeWindowDays * 24 * time.Hour)
+
+	seedProbes(t, s, k.ID, "big", "X", ProbeNMin)
+	seedProbes(t, s, k.ID, "big", "Y", 3)
+	v, ok, err := s.DominantCanvasProbe(ctx, k.ID, "big", since, ProbeNMin)
+	if err != nil || !ok || v != "X" {
+		t.Fatalf("established: %q %v %v", v, ok, err)
+	}
+
+	seedProbes(t, s, k.ID, "small", "X", ProbeNMin-5)
+	v, ok, err = s.DominantCanvasProbe(ctx, k.ID, "small", since, ProbeNMin)
+	if err != nil || ok || v != "" {
+		t.Fatalf("not established: %q %v %v", v, ok, err)
+	}
+}
