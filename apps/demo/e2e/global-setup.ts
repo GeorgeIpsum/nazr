@@ -10,6 +10,7 @@ const apiDir = join(root, "apps/api");
 const bin = join(apiDir, "bin/nazr");
 const compose = join(root, "deploy/compose/docker-compose.yml");
 const ENDPOINT = "https://127.0.0.1:8443";
+const widgetDir = join(root, "packages/widget/dist");
 const DEFAULT_DB = "postgres://nazr:nazr@localhost:5432/nazr?sslmode=disable";
 
 function portInUse(port: number): Promise<boolean> {
@@ -51,6 +52,12 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   };
 
   try {
+    if (!existsSync(join(widgetDir, "manifest.json"))) {
+      throw new Error(
+        `${widgetDir} is missing; run \`pnpm build --filter=@nazr/widget\` before the demo e2e`,
+      );
+    }
+
     let dbUrl = process.env.NAZR_E2E_DATABASE_URL;
     if (!dbUrl) {
       if (await portInUse(5432)) {
@@ -125,6 +132,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       NAZR_AUTO_MIGRATE: "true",
       NAZR_CORS_ORIGINS: "*",
       NAZR_LOG_FORMAT: "text",
+      NAZR_ADMIN_TOKEN: "e2e-admin",
+      NAZR_WIDGET_DIR: widgetDir,
     };
     execFileSync("mkdir", ["-p", env.NAZR_DATA_DIR]);
 
@@ -155,6 +164,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     if (!apiKey) throw new Error("keys create printed no key");
     process.env.NAZR_E2E_KEY = apiKey;
     process.env.NAZR_E2E_ENDPOINT = ENDPOINT;
+    process.env.NAZR_E2E_ADMIN_TOKEN = "e2e-admin";
   } catch (e) {
     await teardown();
     throw e;

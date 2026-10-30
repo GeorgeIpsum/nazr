@@ -135,6 +135,7 @@ jobs:
           cache-dependency-path: apps/api/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nazr/thumbmark build
+      - run: pnpm build --filter=@nazr/widget
       - run: pnpm --filter @nazr/demo build
       - run: pnpm --filter @nazr/api build
       - run: pnpm --filter @nazr/demo exec playwright install --with-deps chromium
