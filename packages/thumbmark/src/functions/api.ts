@@ -192,7 +192,13 @@ export const getApiPromise = (
     const visitorId = getVisitorId(options);
     // Omit api_key from the body — in normal mode it goes in the x-api-key header; in simple_request mode it is proxy-injected.
     // Also omit canvas_probe so the draw callback / dimensions are never echoed back.
-    const { api_key: _omitApiKey, canvas_probe: _omitCanvasProbe, ...optionsForBody } = options;
+    // nonce is likewise sent top-level only.
+    const {
+        api_key: _omitApiKey,
+        canvas_probe: _omitCanvasProbe,
+        nonce: _omitNonce,
+        ...optionsForBody
+    } = options;
     const requestBody: any = {
         components,
         options: optionsForBody,
@@ -207,6 +213,9 @@ export const getApiPromise = (
     // must not enter clientHash.
     if (canvasProbe) {
         requestBody.canvas_probe = canvasProbe;
+    }
+    if (typeof options.nonce === "string" && options.nonce !== "") {
+        requestBody.nonce = options.nonce;
     }
     if (visitorId) {
         requestBody.visitorId = visitorId;

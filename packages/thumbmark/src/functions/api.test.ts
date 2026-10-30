@@ -611,6 +611,47 @@ describe("getApiPromise timeout behavior", () => {
         });
     });
 
+    describe("request body: nonce", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = { ...testOptions, cache_api_call: false, timeout: 5000, api_key: "k" };
+
+        function bodyOf() {
+            const [, init] = mockFetch.mock.calls[0];
+            return JSON.parse(init.body);
+        }
+
+        test("sends nonce top-level, not in components or options, without changing clientHash", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise(baseOpts, testComponents);
+            const without = bodyOf();
+
+            mockFetch.mockClear();
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise({ ...baseOpts, nonce: "abc-123" }, testComponents);
+            const withNonce = bodyOf();
+
+            expect("nonce" in without).toBe(false);
+            expect(withNonce.nonce).toBe("abc-123");
+            expect(withNonce.components.nonce).toBeUndefined();
+            expect(withNonce.options.nonce).toBeUndefined();
+            expect(withNonce.clientHash).toBe(without.clientHash);
+        });
+    });
+
     describe("request headers", () => {
         beforeEach(() => {
             jest.useRealTimers();

@@ -74,6 +74,12 @@ export interface OptionsAfterDefaults {
      * enters `components` or `clientHash`.
      */
     canvas_probe?: CanvasProbe;
+    /**
+     * Optional opaque string that correlates this call with the nazr widget on the
+     * same page. Sent as a top-level request field; never in `components` or
+     * `clientHash`.
+     */
+    nonce?: string;
 }
 
 export type optionsInterface = Partial<OptionsAfterDefaults>;
