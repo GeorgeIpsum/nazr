@@ -37,6 +37,7 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_ADMIN_TOKEN` | string, secret | empty | Bearer token for `/admin/keys`. Admin routes return 404 when empty |
 | `NAZR_DEFAULT_RATE_LIMIT` | int | `600` | Requests per minute per key (overridable per key), and per IP on `/beacon` |
 | `NAZR_BODY_LIMIT` | int (bytes) | `262144` | Maximum request body size; larger bodies get 413 |
+| `NAZR_CANVAS_PROBE_SCORING` | bool | `false` | Enable opt-in canvas-probe anomaly scoring (the `canvas_probe_anomaly` signal). Storage of the probe and the admin entropy report are unaffected by it; see [signals.md](signals.md#consumer-canvas-probe-and-the-entropy-report) |
 | `NAZR_DATA_DIR` | path | `/data` | Cache for downloaded IP lists. Use a persistent volume |
 | `NAZR_DEMO_DIR` | path | empty | Serve static files at `/demo/` when set |
 | `NAZR_AUTO_MIGRATE` | bool | `true` | Apply database migrations on `serve` start. `nazr migrate` does it explicitly |

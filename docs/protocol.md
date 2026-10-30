@@ -43,11 +43,14 @@ Request body (see [`apps/api/testdata/requests/stock-client-body.json`](../apps/
   "version": "1.12.0",
   "path": "/page",
   "visitorId": "<ulid>",
-  "metadata": {}
+  "metadata": {},
+  "canvas_probe": "<hex, optional>"
 }
 ```
 
 `components` is required and must be an object. `options` (client options without the API key) selects which components the server hashes. `visitorId`, `path`, `clientHash` and `metadata` are optional. `metadata` is echoed back only when its stringified length is at most 1000 UTF-16 code units; otherwise it is dropped silently.
+
+`canvas_probe` is an optional top-level field, a sibling of `clientHash` and `path`, never inside `components`. It is a hex string of up to 64 bytes: the hash of the consumer's canvas-probe routine (see the [client README](../packages/thumbmark/README.md#canvas-probe)). It is never part of the thumbmark, and a malformed value is silently ignored (the request is not rejected with a 400). See [signals.md](signals.md#consumer-canvas-probe-and-the-entropy-report).
 
 ### Example
 
