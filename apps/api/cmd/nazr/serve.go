@@ -153,7 +153,11 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		return fmt.Errorf("widget assets: %w", err)
 	}
 	if !widgetassets.Present(widget) {
-		logger.Info("widget assets not found; widget routes disabled", "widget_dir", cfg.WidgetDir)
+		if cfg.WidgetDir != "" {
+			logger.Warn("widget assets not found in NAZR_WIDGET_DIR; widget routes disabled", "widget_dir", cfg.WidgetDir)
+		} else {
+			logger.Info("widget assets not embedded; widget routes disabled")
+		}
 		widget = nil
 	}
 
