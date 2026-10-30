@@ -560,6 +560,57 @@ describe("getApiPromise timeout behavior", () => {
         });
     });
 
+    describe("request body: canvas_probe", () => {
+        beforeEach(() => {
+            jest.useRealTimers();
+        });
+        afterEach(() => {
+            jest.useFakeTimers();
+        });
+
+        const baseOpts = { ...testOptions, cache_api_call: false, timeout: 5000, api_key: "k" };
+
+        function bodyOf() {
+            const [, init] = mockFetch.mock.calls[0];
+            return JSON.parse(init.body);
+        }
+
+        test("sends canvas_probe top-level, not in components, without changing clientHash", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise(baseOpts, testComponents);
+            const without = bodyOf();
+
+            mockFetch.mockClear();
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise(baseOpts, testComponents, "abc123");
+            const withProbe = bodyOf();
+
+            expect(without.canvas_probe).toBeUndefined();
+            expect(withProbe.canvas_probe).toBe("abc123");
+            expect(withProbe.components.canvas_probe).toBeUndefined();
+            expect(withProbe.clientHash).toBe(without.clientHash);
+            expect(withProbe.components).toEqual(without.components);
+        });
+
+        test("does not echo the canvas_probe option back inside options", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ thumbmark: "ok" }),
+            });
+            await getApiPromise({ ...baseOpts, canvas_probe: { draw: () => {} } }, testComponents);
+            expect("canvas_probe" in bodyOf().options).toBe(false);
+        });
+    });
+
     describe("request headers", () => {
         beforeEach(() => {
             jest.useRealTimers();

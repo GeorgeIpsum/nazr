@@ -1,3 +1,5 @@
+import type { CanvasProbe } from "./utils/canvasProbe";
+
 type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue };
 
 export interface OptionsAfterDefaults {
@@ -66,6 +68,12 @@ export interface OptionsAfterDefaults {
      * @example metadata: () => ({ timestamp: Date.now(), sessionId: "abc" })
      */
     metadata?: JSONValue | (() => JSONValue);
+    /**
+     * Optional canvas probe: a caller-supplied draw routine whose rendered output
+     * is hashed and sent to the API as a side signal (`canvas_probe`). It never
+     * enters `components` or `clientHash`.
+     */
+    canvas_probe?: CanvasProbe;
 }
 
 export type optionsInterface = Partial<OptionsAfterDefaults>;
