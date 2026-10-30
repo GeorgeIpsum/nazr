@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1188,4 +1189,172 @@ func TestFrameAncestors(t *testing.T) {
 			t.Errorf("frameAncestors(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+// widgetReportReq is a /widget/report POST carrying thumbmarkReq's headers
+// and an Origin the key is not scoped to.
+func widgetReportReq(t *testing.T, key string, body []byte) *http.Request {
+	t.Helper()
+	r := thumbmarkReq(t, key, body)
+	r.URL.Path, r.RequestURI = "/widget/report", "/widget/report"
+	r.Header.Set("Origin", "https://nazr.example")
+	return r
+}
+
+func widgetHolder(t *testing.T) *conn.Holder {
+	return fullHolderOrder(t, append(slices.Clone(testHeaderOrder), "Origin"))
+}
+
+func widgetBody(t *testing.T) map[string]any {
+	return map[string]any{"nonce": "n-1", "components": stockBody(t)["components"], "clientHash": "abc123"}
+}
+
+func TestWidgetReportStores(t *testing.T) {
+	post := func(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
+		t.Helper()
+		e := newEnv(t, mut)
+		r := widgetReportReq(t, e.key, marshal(t, widgetBody(t)))
+		w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
+		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+			t.Fatalf("status %d: %q", w.Code, w.Body.String())
+		}
+		if len(e.store.reports) != 1 {
+			t.Fatalf("reports %d", len(e.store.reports))
+		}
+		if len(e.repo.visitors) != 0 || len(e.store.events) != 0 {
+			t.Fatalf("visitors %v events %d", e.repo.visitors, len(e.store.events))
+		}
+		return e
+	}
+
+	e := post(t, nil)
+	rep := e.store.reports[0]
+	if rep.Nonce != "n-1" || rep.ClientHash != "abc123" || rep.APIKeyID != keyID || rep.ID == "" {
+		t.Fatalf("report %+v", rep)
+	}
+	if rep.IPHash != ipintel.Identifier(netip.MustParseAddr("203.0.113.42"), "salt") {
+		t.Fatalf("ip hash %q", rep.IPHash)
+	}
+	if rep.JA4 == "" || rep.H2FP == "" || rep.UserAgent != chromeUA {
+		t.Fatalf("ja4 %q h2fp %q ua %q", rep.JA4, rep.H2FP, rep.UserAgent)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(rep.Thumbmark) {
+		t.Fatalf("thumbmark %q", rep.Thumbmark)
+	}
+	if rep.IP == nil || rep.IP.String() != "203.0.113.42" || rep.Components != nil || !rep.CreatedAt.Equal(testNow) {
+		t.Fatalf("ip %v components %s created %v", rep.IP, rep.Components, rep.CreatedAt)
+	}
+
+	// The same components and connection through /thumbmark, with no
+	// options (the report carries none), hash the same.
+	tb := stockBody(t)
+	delete(tb, "options")
+	r := thumbmarkReq(t, e.key, marshal(t, tb))
+	r.Header.Set("Origin", "https://nazr.example")
+	w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
+	if w.Code != http.StatusOK {
+		t.Fatalf("thumbmark %d: %s", w.Code, w.Body.String())
+	}
+	if tm := decodeResp(t, w)["thumbmark"]; tm != rep.Thumbmark {
+		t.Fatalf("report thumbmark %q, /thumbmark %q", rep.Thumbmark, tm)
+	}
+
+	e = post(t, func(c *config.Config, _ *fakeStore) { c.StoreComponents = true })
+	var comps map[string]any
+	if err := json.Unmarshal(e.store.reports[0].Components, &comps); err != nil || comps["tls"] == nil || comps["system"] == nil {
+		t.Fatalf("components %s: %v", e.store.reports[0].Components, err)
+	}
+
+	e = post(t, func(c *config.Config, _ *fakeStore) { c.StoreIP = "hash" })
+	if rep := e.store.reports[0]; rep.IP != nil || rep.IPHash == "" {
+		t.Fatalf("hash mode ip %v hash %q", rep.IP, rep.IPHash)
+	}
+}
+
+func TestWidgetReportScopedKey(t *testing.T) {
+	e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.byID[keyID].AllowedOrigins = []string{"https://a.com"} })
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusNoContent {
+		t.Fatalf("widget report %d: %s", w.Code, w.Body.String())
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("Origin", "https://nazr.example")
+	wantError(t, e.do(r), 403, "origin_not_allowed")
+}
+
+func TestWidgetReportRejectsBody(t *testing.T) {
+	comps := func(t *testing.T) any { return stockBody(t)["components"] }
+	for name, body := range map[string]func(t *testing.T) []byte{
+		"array":        func(*testing.T) []byte { return []byte(`[]`) },
+		"empty":        func(*testing.T) []byte { return []byte(`{}`) },
+		"string comps": func(*testing.T) []byte { return []byte(`{"nonce":"n","components":"x"}`) },
+		"long nonce": func(t *testing.T) []byte {
+			return marshal(t, map[string]any{"nonce": strings.Repeat("a", 65), "components": comps(t)})
+		},
+		"bad hash": func(t *testing.T) []byte {
+			return marshal(t, map[string]any{"nonce": "n", "components": comps(t), "clientHash": "zz"})
+		},
+		"over the limit": func(*testing.T) []byte {
+			return []byte(`{"nonce":"n","components":{"x":"` + strings.Repeat("a", 1000) + `"}}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = 256 })
+			w := e.do(widgetReportReq(t, e.key, body(t)))
+			if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+				t.Fatalf("status %d: %q", w.Code, w.Body.String())
+			}
+			if len(e.store.reports) != 0 {
+				t.Fatalf("stored %+v", e.store.reports)
+			}
+		})
+	}
+
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
+	wantError(t, e.do(widgetReportReq(t, "", marshal(t, widgetBody(t)))), 403, "unauthorized")
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusNoContent {
+		t.Fatalf("first %d", w.Code)
+	}
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second %d, want 429", w.Code)
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+}
+
+func TestAdminWidgetSummary(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest("GET", "/admin/keys/key-1/widget", nil)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		return r
+	}
+	wantError(t, e.do(req("")), 403, "unauthorized")
+
+	e.store.summary = store.WidgetSummary{Reports: 10, Matched: 7, Unmatched: 3, IPMismatch: 1, JA4Mismatch: 2, JA4Unknown: 4, UAMismatch: 5}
+	w := e.do(req("s3cret"))
+	if w.Code != 200 {
+		t.Fatalf("summary %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"window_days": float64(30), "reports": float64(10), "matched": float64(7), "unmatched": float64(3),
+		"ip_mismatch": float64(1), "ja4_mismatch": float64(2), "ja4_unknown": float64(4), "ua_mismatch": float64(5)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("body %v", got)
+	}
+	if e.store.summaryKeyID != "key-1" || e.store.summaryWindow != 10*time.Minute ||
+		!e.store.summarySince.Equal(testNow.Add(-30*24*time.Hour)) {
+		t.Fatalf("args %q %v %v", e.store.summaryKeyID, e.store.summarySince, e.store.summaryWindow)
+	}
+
+	e.store.summaryErr = errBoom
+	wantError(t, e.do(req("s3cret")), 503, "store_unavailable")
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +14,15 @@ import (
 	"time"
 
 	"nazr/api/internal/auth"
+	"nazr/api/internal/fingerprint"
+	"nazr/api/internal/h2fp"
+	"nazr/api/internal/ipintel"
+	"nazr/api/internal/store"
 )
+
+// widgetMatchWindow is how far apart a widget report and a /thumbmark event
+// with the same nonce may be and still correlate.
+const widgetMatchWindow = 10 * time.Minute
 
 const (
 	widgetJSType     = "text/javascript; charset=utf-8"
@@ -155,4 +164,56 @@ func validNonce(s string) bool {
 		}
 	}
 	return true
+}
+
+// handleWidgetReport stores the frame's report: its nonce, client components
+// and client hash, with the thumbmark recomputed from this connection. The
+// key's origin scoping is skipped (the frame runs on nazr's origin), and the
+// response is always 204: a malformed body is dropped, never answered.
+func (s *server) handleWidgetReport(w http.ResponseWriter, r *http.Request) {
+	s.storeWidgetReport(r)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// storeWidgetReport validates and stores one report, dropping it silently
+// when the body is malformed.
+func (s *server) storeWidgetReport(r *http.Request) {
+	ctx := r.Context()
+	key := auth.KeyFromContext(ctx)
+	raw, err := fingerprint.Decode(r.Body, int64(s.Cfg.BodyLimit))
+	if key == nil || err != nil {
+		return
+	}
+	nonce, _ := raw["nonce"].(string)
+	comps, ok := raw["components"].(map[string]any)
+	clientHash, _ := raw["clientHash"].(string)
+	if !validNonce(nonce) || !ok || (clientHash != "" && !validCanvasProbe(clientHash)) {
+		return
+	}
+
+	addr, view := s.clientIP(r)
+	s.countParseErrors(ctx, view)
+	var lookup ipintel.Lookup
+	if s.Intel != nil && addr.IsValid() {
+		lookup = s.Intel.Lookup(addr)
+	}
+	sc, ja4 := serverComponents(r, view, requestOrder(r), s.Cfg, addr, lookup)
+	merged := fingerprint.Merge(comps, filterServer(sc, comps, fingerprint.OptionsFromRequest(nil)))
+
+	rep := store.WidgetReport{
+		ID: requestIDFrom(ctx), APIKeyID: key.ID, Nonce: nonce, Thumbmark: fingerprint.Hash(merged),
+		ClientHash: clientHash, IP: s.storedIP(addr), JA4: ja4, UserAgent: r.Header.Get("User-Agent"),
+		Components: s.storedComponents(comps, sc), CreatedAt: s.Now().UTC(),
+	}
+	if addr.IsValid() {
+		rep.IPHash = ipintel.Identifier(addr, s.Cfg.IPHashSalt)
+	}
+	if view.H2 != nil {
+		rep.H2FP = h2fp.Akamai(view.H2)
+	}
+	ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	if err := s.Store.InsertWidgetReport(ictx, rep); err != nil {
+		s.Logger.Error("server: insert widget report failed", "err", err, "request_id", rep.ID)
+	}
 }

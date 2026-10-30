@@ -421,17 +421,10 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	if view.TLS != nil {
 		ev.JA3Hash = view.TLS.JA3Hash
 	}
-	if s.Cfg.StoreIP == "raw" && addr.IsValid() {
-		a := addr
-		ev.IP = &a
-	}
+	ev.IP = s.storedIP(addr)
 	ev.Classification, _ = marshalJSON(resp.Info.Classification)
 	ev.Signals, _ = marshalJSON(cls.Signals)
-	if s.Cfg.StoreComponents {
-		if b, err := marshalJSON(fingerprint.Merge(body.components, sc)); err == nil {
-			ev.Components = b
-		}
-	}
+	ev.Components = s.storedComponents(body.components, sc)
 	ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 	if err := s.Store.InsertEvent(ictx, ev); err != nil {
 		s.Logger.Error("server: insert event failed", "err", err, "request_id", rid)
@@ -439,6 +432,27 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	cancel()
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// storedIP is the raw address to store under NAZR_STORE_IP=raw, else nil.
+func (s *server) storedIP(addr netip.Addr) *netip.Addr {
+	if s.Cfg.StoreIP != "raw" || !addr.IsValid() {
+		return nil
+	}
+	return &addr
+}
+
+// storedComponents is the merged client and unfiltered server components to
+// store under NAZR_STORE_COMPONENTS, else nil.
+func (s *server) storedComponents(client, server map[string]any) json.RawMessage {
+	if !s.Cfg.StoreComponents {
+		return nil
+	}
+	b, err := marshalJSON(fingerprint.Merge(client, server))
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (s *server) countParseErrors(ctx context.Context, view conn.HolderView) {

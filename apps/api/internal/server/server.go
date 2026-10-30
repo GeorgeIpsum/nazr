@@ -33,6 +33,8 @@ type StoreAPI interface {
 	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
 	DominantCanvasProbe(ctx context.Context, keyID, cohort string, since time.Time, minSample int) (string, bool, error)
 	CanvasProbeEntropy(ctx context.Context, keyID string, since time.Time) (visitors, distinct int64, err error)
+	InsertWidgetReport(ctx context.Context, r store.WidgetReport) error
+	WidgetSummary(ctx context.Context, keyID string, since time.Time, window time.Duration) (store.WidgetSummary, error)
 	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error
 	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
 	ListKeys(ctx context.Context) ([]store.APIKey, error)
@@ -94,6 +96,9 @@ func New(d Deps) http.Handler {
 	thumb := s.globalCORS(s.bodyLimit(authMW(s.keyCORS(http.HandlerFunc(s.handleThumbmark)))))
 	mux.Handle("POST /thumbmark", s.route("thumbmark", thumb))
 	mux.Handle("OPTIONS /thumbmark", s.route("preflight", http.HandlerFunc(s.preflight)))
+	// The widget frame runs on nazr's own origin, so origin scoping is skipped.
+	reportMW := auth.MiddlewareOpts(d.Store, d.Limiter, d.Cfg.DefaultRateLimit, d.KeyCache, auth.MiddlewareOptions{SkipOrigin: true})
+	mux.Handle("POST /widget/report", s.route("widget_report", s.bodyLimit(reportMW(http.HandlerFunc(s.handleWidgetReport)))))
 	mux.Handle("POST /beacon", s.route("beacon", s.globalCORS(http.HandlerFunc(s.handleBeacon))))
 	mux.Handle("OPTIONS /beacon", s.route("preflight", http.HandlerFunc(s.preflight)))
 	mux.Handle("POST /log", s.route("log", s.globalCORS(http.HandlerFunc(s.handleLog))))
@@ -108,6 +113,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleCreateKey))))
 	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
 	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
+	mux.Handle("GET /admin/keys/{id}/widget", s.route("admin", admin(http.HandlerFunc(s.handleWidgetSummary))))
 
 	if d.WidgetAssets != nil {
 		if wa, err := newWidgetAssets(d.WidgetAssets); err != nil {

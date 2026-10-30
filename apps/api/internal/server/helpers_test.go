@@ -56,6 +56,13 @@ type fakeStore struct {
 	entErr                   error
 	entKeyID                 string
 	entSince                 time.Time
+
+	reports       []store.WidgetReport
+	summary       store.WidgetSummary
+	summaryErr    error
+	summaryKeyID  string
+	summarySince  time.Time
+	summaryWindow time.Duration
 }
 
 func newFakeStore() *fakeStore {
@@ -475,4 +482,18 @@ func (f *fakeStore) CanvasProbeEntropy(_ context.Context, keyID string, since ti
 	defer f.mu.Unlock()
 	f.entKeyID, f.entSince = keyID, since
 	return f.entVisitors, f.entDistinct, f.entErr
+}
+
+func (f *fakeStore) InsertWidgetReport(_ context.Context, r store.WidgetReport) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reports = append(f.reports, r)
+	return nil
+}
+
+func (f *fakeStore) WidgetSummary(_ context.Context, keyID string, since time.Time, window time.Duration) (store.WidgetSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.summaryKeyID, f.summarySince, f.summaryWindow = keyID, since, window
+	return f.summary, f.summaryErr
 }
