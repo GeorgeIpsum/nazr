@@ -541,3 +541,38 @@ func TestDominantCanvasProbe(t *testing.T) {
 		t.Fatalf("not established: %q %v %v", v, ok, err)
 	}
 }
+
+func TestCanvasProbeEntropy(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "ent", Prefix: "ententxx"})
+	other, _ := s.CreateKey(ctx, NewKey{Hash: "ent2", Prefix: "entent22"})
+	now := time.Now().UTC()
+	ins := func(keyID, visitor, probe string, at time.Time) {
+		t.Helper()
+		if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: keyID, VisitorID: visitor, Thumbmark: "tm",
+			IPHash: "iph", CanvasProbe: probe, CreatedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// v1 twice with A; v2, v3 share B; v4 has C. -> 4 visitors, 3 probes.
+	ins(k.ID, "v1", "A", now)
+	ins(k.ID, "v1", "A", now)
+	ins(k.ID, "v2", "B", now)
+	ins(k.ID, "v3", "B", now)
+	ins(k.ID, "v4", "C", now)
+	// Excluded: NULL probe, old event, other key.
+	ins(k.ID, "v5", "", now)
+	ins(k.ID, "v6", "D", now.Add(-60*24*time.Hour))
+	ins(other.ID, "v7", "E", now)
+
+	since := now.Add(-ProbeWindowDays * 24 * time.Hour)
+	visitors, distinct, err := s.CanvasProbeEntropy(ctx, k.ID, since)
+	if err != nil || visitors != 4 || distinct != 3 {
+		t.Fatalf("got %d %d %v", visitors, distinct, err)
+	}
+	visitors, distinct, err = s.CanvasProbeEntropy(ctx, "00000000-0000-0000-0000-000000000000", since)
+	if err != nil || visitors != 0 || distinct != 0 {
+		t.Fatalf("empty: %d %d %v", visitors, distinct, err)
+	}
+}

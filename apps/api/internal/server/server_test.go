@@ -974,3 +974,58 @@ func TestCanvasProbeScoringOn(t *testing.T) {
 		t.Fatal("signal present for unestablished cohort")
 	}
 }
+
+func TestProbeVerdict(t *testing.T) {
+	for _, c := range []struct {
+		visitors, distinct int64
+		ratio              float64
+		verdict            string
+	}{
+		{0, 0, 0, "insufficient_data"},
+		{10, 1, 0.1, "insufficient_data"},
+		{100, 3, 0.03, "too_low"},
+		{100, 5, 0.05, "too_low"},
+		{100, 98, 0.98, "too_unique"},
+		{100, 95, 0.95, "too_unique"},
+		{100, 50, 0.5, "ok"},
+	} {
+		r, v := probeVerdict(c.visitors, c.distinct)
+		if r != c.ratio || v != c.verdict {
+			t.Errorf("probeVerdict(%d,%d) = %v,%q want %v,%q", c.visitors, c.distinct, r, v, c.ratio, c.verdict)
+		}
+	}
+}
+
+func TestAdminCanvasProbeReport(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest("GET", "/admin/keys/key-1/canvas-probe", nil)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		return r
+	}
+	wantError(t, e.do(req("")), 403, "unauthorized")
+
+	e.store.entVisitors, e.store.entDistinct = 100, 3
+	w := e.do(req("s3cret"))
+	if w.Code != 200 {
+		t.Fatalf("report %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["window_days"] != float64(30) || got["visitors"] != float64(100) || got["distinct_probes"] != float64(3) ||
+		got["ratio"] != 0.03 || got["verdict"] != "too_low" {
+		t.Fatalf("body %v", got)
+	}
+	if e.store.entKeyID != "key-1" || !e.store.entSince.Equal(testNow.Add(-30*24*time.Hour)) {
+		t.Fatalf("args %q %v", e.store.entKeyID, e.store.entSince)
+	}
+
+	e.store.entErr = errBoom
+	if w := e.do(req("s3cret")); w.Code != 503 {
+		t.Fatalf("store error %d: %s", w.Code, w.Body.String())
+	}
+}

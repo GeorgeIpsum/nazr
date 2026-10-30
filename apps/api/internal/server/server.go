@@ -31,6 +31,7 @@ type StoreAPI interface {
 	RecordUAJA4(ctx context.Context, ja4, family string, now time.Time) error
 	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
 	DominantCanvasProbe(ctx context.Context, keyID, cohort string, since time.Time, minSample int) (string, bool, error)
+	CanvasProbeEntropy(ctx context.Context, keyID string, since time.Time) (visitors, distinct int64, err error)
 	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error
 	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
 	ListKeys(ctx context.Context) ([]store.APIKey, error)
@@ -102,6 +103,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleListKeys))))
 	mux.Handle("POST /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleCreateKey))))
 	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
+	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
 
 	if d.Cfg.DemoDir != "" {
 		mux.Handle("GET /demo/", s.route("demo", demoHandler(d.Cfg.DemoDir)))

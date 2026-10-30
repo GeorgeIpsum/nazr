@@ -49,6 +49,11 @@ type fakeStore struct {
 	domValue       string
 	domEstablished bool
 	domErr         error
+
+	entVisitors, entDistinct int64
+	entErr                   error
+	entKeyID                 string
+	entSince                 time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -447,4 +452,11 @@ func (f *fakeStore) DominantCanvasProbe(_ context.Context, _, _ string, _ time.T
 		return "", false, f.domErr
 	}
 	return f.domValue, f.domEstablished, nil
+}
+
+func (f *fakeStore) CanvasProbeEntropy(_ context.Context, keyID string, since time.Time) (int64, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.entKeyID, f.entSince = keyID, since
+	return f.entVisitors, f.entDistinct, f.entErr
 }

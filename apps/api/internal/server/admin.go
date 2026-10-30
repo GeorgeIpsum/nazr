@@ -118,3 +118,45 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// probeReportJSON is the canvas-probe entropy report.
+type probeReportJSON struct {
+	WindowDays     int     `json:"window_days"`
+	Visitors       int64   `json:"visitors"`
+	DistinctProbes int64   `json:"distinct_probes"`
+	Ratio          float64 `json:"ratio"`
+	Verdict        string  `json:"verdict"`
+}
+
+// probeVerdict classifies the distinct-probe/visitor ratio. Too few visitors
+// (including none) is insufficient_data.
+func probeVerdict(visitors, distinct int64) (ratio float64, verdict string) {
+	if visitors == 0 {
+		return 0, "insufficient_data"
+	}
+	ratio = float64(distinct) / float64(visitors)
+	switch {
+	case visitors < store.ProbeNMin:
+		return ratio, "insufficient_data"
+	case ratio <= store.ProbeRLow:
+		return ratio, "too_low"
+	case ratio >= store.ProbeRHigh:
+		return ratio, "too_unique"
+	}
+	return ratio, "ok"
+}
+
+// handleCanvasProbeReport reports how well a key's canvas probe discriminates
+// visitors. An unknown key simply has no events.
+func (s *server) handleCanvasProbeReport(w http.ResponseWriter, r *http.Request) {
+	since := s.Now().Add(-store.ProbeWindowDays * 24 * time.Hour)
+	visitors, distinct, err := s.Store.CanvasProbeEntropy(r.Context(), r.PathValue("id"), since)
+	if err != nil {
+		s.Logger.Error("server: canvas probe report failed", "err", err)
+		storeUnavailable(w, "could not compute canvas probe report")
+		return
+	}
+	ratio, verdict := probeVerdict(visitors, distinct)
+	writeJSON(w, http.StatusOK, probeReportJSON{WindowDays: store.ProbeWindowDays, Visitors: visitors,
+		DistinctProbes: distinct, Ratio: ratio, Verdict: verdict})
+}
