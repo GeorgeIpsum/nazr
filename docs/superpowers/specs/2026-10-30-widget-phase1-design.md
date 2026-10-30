@@ -209,7 +209,7 @@ pre-release cleanup and NOT a pattern, Phase 1 adds a normal new migration.
 
   ```json
   {
-    "window_days": 7,
+    "window_days": 30,
     "reports": 1200,
     "matched": 1100,
     "unmatched": 100,
