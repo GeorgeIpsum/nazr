@@ -102,6 +102,22 @@ describe("mountWidget", () => {
     expect(() => mountWidget(document, win)).not.toThrow();
   });
 
+  it("waits for DOMContentLoaded when document.body is null, then appends once", () => {
+    const body = vi.spyOn(document, "body", "get").mockReturnValue(null as unknown as HTMLElement);
+    setCurrentScript();
+    mountWidget(document, win);
+    expect(win.__nazrWidget).toBeDefined();
+    body.mockRestore();
+    expect(document.body.children).toHaveLength(0);
+
+    const append = vi.spyOn(document.body, "appendChild");
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(document.body.children).toHaveLength(1);
+    expect(document.body.lastElementChild?.shadowRoot).toBeNull();
+  });
+
   it("mounts only one widget per page", () => {
     setCurrentScript();
     mountWidget(document, win);
