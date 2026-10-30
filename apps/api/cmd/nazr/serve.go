@@ -30,6 +30,7 @@ import (
 	"nazr/api/internal/store"
 	"nazr/api/internal/version"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgetassets"
 )
 
 const (
@@ -147,10 +148,19 @@ func runServer(cfg config.Config, logw io.Writer) error {
 	keyCache := auth.NewKeyCache(60*time.Second, st.Redis())
 	resolver := &visitor.Resolver{Repo: st, Window: cfg.VisitorMatchWindow, Now: time.Now, NewID: newULID}
 
+	widget, err := widgetassets.Open(cfg.WidgetDir)
+	if err != nil {
+		return fmt.Errorf("widget assets: %w", err)
+	}
+	if !widgetassets.Present(widget) {
+		logger.Info("widget assets not found; widget routes disabled", "widget_dir", cfg.WidgetDir)
+		widget = nil
+	}
+
 	handler := server.New(server.Deps{
 		Cfg: cfg, Store: st, Intel: intel, Resolver: resolver, Limiter: limiter,
 		KeyCache: keyCache, Logger: logger, Version: version.Version,
-		Now: time.Now, Rand: rand.Float64,
+		Now: time.Now, Rand: rand.Float64, WidgetAssets: widget,
 	})
 
 	tlsCfg, acme, err := certs.Setup(ctx, cfg, logger)

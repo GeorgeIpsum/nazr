@@ -42,6 +42,7 @@ type Config struct {
 	BodyLimit          int      `env:"NAZR_BODY_LIMIT" envDefault:"262144"`
 	DataDir            string   `env:"NAZR_DATA_DIR" envDefault:"/data"`
 	DemoDir            string   `env:"NAZR_DEMO_DIR"`
+	WidgetDir          string   `env:"NAZR_WIDGET_DIR"` // empty: the embedded widget
 	AutoMigrate        bool     `env:"NAZR_AUTO_MIGRATE" envDefault:"true"`
 	CanvasProbeScoring bool     `env:"NAZR_CANVAS_PROBE_SCORING" envDefault:"false"`
 	LogLevel           string   `env:"NAZR_LOG_LEVEL" envDefault:"info"`

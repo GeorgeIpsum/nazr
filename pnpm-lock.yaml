@@ -18,7 +18,11 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  apps/api: {}
+  apps/api:
+    devDependencies:
+      '@nazr/widget':
+        specifier: workspace:*
+        version: link:../../packages/widget
 
   apps/demo:
     dependencies:

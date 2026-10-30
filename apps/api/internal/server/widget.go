@@ -1,5 +1,148 @@
 package server
 
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"net/http"
+	"strings"
+	"time"
+
+	"nazr/api/internal/auth"
+)
+
+const (
+	widgetJSType     = "text/javascript; charset=utf-8"
+	widgetFrameRules = "; default-src 'none'; script-src 'self'; connect-src 'self'"
+)
+
+// widgetAssets is the built widget, loaded into memory once at startup.
+type widgetAssets struct {
+	loader     []byte
+	loaderETag string
+	bundleName string
+	bundle     []byte
+	frame      *template.Template
+}
+
+// newWidgetAssets loads loader.js, the frame bundle named by manifest.json
+// and the frame.html template from fsys.
+func newWidgetAssets(fsys fs.FS) (*widgetAssets, error) {
+	loader, err := fs.ReadFile(fsys, "loader.js")
+	if err != nil {
+		return nil, err
+	}
+	mb, err := fs.ReadFile(fsys, "manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	var manifest struct {
+		Frame string `json:"frame"`
+	}
+	if err := json.Unmarshal(mb, &manifest); err != nil {
+		return nil, fmt.Errorf("manifest.json: %w", err)
+	}
+	bundle, err := fs.ReadFile(fsys, manifest.Frame)
+	if err != nil {
+		return nil, err
+	}
+	html, err := fs.ReadFile(fsys, "frame.html")
+	if err != nil {
+		return nil, err
+	}
+	tmpl, err := template.New("frame.html").Parse(string(html))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(loader)
+	return &widgetAssets{
+		loader:     loader,
+		loaderETag: `"` + hex.EncodeToString(sum[:])[:16] + `"`,
+		bundleName: manifest.Frame,
+		bundle:     bundle,
+		frame:      tmpl,
+	}, nil
+}
+
+// handleWidgetLoader serves loader.js. Its path is fixed, so it is cached
+// briefly and revalidated by ETag rather than marked immutable.
+func (s *server) handleWidgetLoader(wa *widgetAssets) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Type", widgetJSType)
+		h.Set("Cache-Control", "public, max-age=300")
+		h.Set("ETag", wa.loaderETag)
+		http.ServeContent(w, r, "loader.js", time.Time{}, bytes.NewReader(wa.loader))
+	}
+}
+
+// handleWidgetBundle serves the content-hashed frame bundle named by the
+// manifest; any other name is 404.
+func (s *server) handleWidgetBundle(wa *widgetAssets) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("bundle") != wa.bundleName {
+			notFound(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", widgetJSType)
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		http.ServeContent(w, r, wa.bundleName, time.Time{}, bytes.NewReader(wa.bundle))
+	}
+}
+
+// handleWidgetFrame renders the frame for the key in ?k=, allowing it to be
+// framed only by the key's allowed origins. An unknown, malformed, missing or
+// revoked key is 403 with an empty body.
+func (s *server) handleWidgetFrame(wa *widgetAssets) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		k, err := auth.LookupKey(r.Context(), s.KeyCache, s.Store, r.URL.Query().Get("k"))
+		if err != nil {
+			s.Logger.Error("server: widget key lookup failed", "err", err, "request_id", requestIDFrom(r.Context()))
+			storeUnavailable(w, "key store unavailable")
+			return
+		}
+		if k == nil || k.RevokedAt != nil {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		var buf bytes.Buffer
+		if err := wa.frame.Execute(&buf, struct{ Bundle string }{wa.bundleName}); err != nil {
+			s.Logger.Error("server: widget frame template failed", "err", err, "request_id", requestIDFrom(r.Context()))
+			writeError(w, http.StatusInternalServerError, codeInternal, "internal server error")
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Content-Security-Policy", "frame-ancestors "+frameAncestors(k.AllowedOrigins)+widgetFrameRules)
+		_, _ = w.Write(buf.Bytes())
+	}
+}
+
+// frameAncestors maps a key's allowed origins to a CSP frame-ancestors
+// source list: "*" when the list is empty or contains "*".
+func frameAncestors(origins []string) string {
+	var out []string
+	for _, o := range origins {
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			return "*"
+		}
+		if o != "" {
+			out = append(out, o)
+		}
+	}
+	if len(out) == 0 {
+		return "*"
+	}
+	return strings.Join(out, " ")
+}
+
 // validNonce reports whether s is 1..64 printable ASCII bytes (0x20..0x7e);
 // anything else is treated as an absent nonce.
 func validNonce(s string) bool {

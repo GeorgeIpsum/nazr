@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -51,7 +52,8 @@ var (
 )
 
 // Deps are the server's collaborators. Logger, Now and Rand default to
-// slog.Default, time.Now and math/rand/v2.Float64.
+// slog.Default, time.Now and math/rand/v2.Float64. WidgetAssets is the built
+// widget (widgetassets.Open); nil leaves the widget routes unregistered (404).
 type Deps struct {
 	Cfg      config.Config
 	Store    StoreAPI
@@ -63,6 +65,8 @@ type Deps struct {
 	Version  string
 	Now      func() time.Time
 	Rand     func() float64
+
+	WidgetAssets fs.FS
 }
 
 type server struct {
@@ -105,6 +109,16 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
 	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
 
+	if d.WidgetAssets != nil {
+		if wa, err := newWidgetAssets(d.WidgetAssets); err != nil {
+			d.Logger.Error("server: widget assets unusable; widget routes disabled", "err", err)
+		} else {
+			// The literal loader.js and frame patterns win over {bundle}.
+			mux.Handle("GET /widget/v1/loader.js", s.route("widget", s.handleWidgetLoader(wa)))
+			mux.Handle("GET /widget/v1/frame", s.route("widget", s.handleWidgetFrame(wa)))
+			mux.Handle("GET /widget/v1/{bundle}", s.route("widget", s.handleWidgetBundle(wa)))
+		}
+	}
 	if d.Cfg.DemoDir != "" {
 		mux.Handle("GET /demo/", s.route("demo", demoHandler(d.Cfg.DemoDir)))
 	}

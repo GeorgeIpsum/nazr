@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -1069,6 +1070,122 @@ func TestThumbmarkNonce(t *testing.T) {
 		tm, ev, _ := postNonce(t, v, true)
 		if ev.Nonce != "" || tm != baseTM {
 			t.Fatalf("%s: nonce %q", name, ev.Nonce)
+		}
+	}
+}
+
+func widgetFS() fstest.MapFS {
+	return fstest.MapFS{
+		"loader.js":         {Data: []byte("/* loader */")},
+		"frame.abcd1234.js": {Data: []byte("/* frame */")},
+		"frame.html":        {Data: []byte(`<script src="/widget/v1/{{.Bundle}}"></script>`)},
+		"manifest.json":     {Data: []byte(`{"frame":"frame.abcd1234.js"}`)},
+	}
+}
+
+func TestWidgetRoutes404WithoutAssets(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, p := range []string{"/widget/v1/loader.js", "/widget/v1/frame?k=" + e.key, "/widget/v1/frame.abcd1234.js"} {
+		wantError(t, e.do(httptest.NewRequest("GET", p, nil)), 404, "not_found")
+	}
+}
+
+func TestWidgetLoaderAndBundle(t *testing.T) {
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/loader.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* loader */" {
+		t.Fatalf("loader %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("loader Content-Type %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("loader Cache-Control %q", cc)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("loader has no ETag")
+	}
+	r := httptest.NewRequest("GET", "/widget/v1/loader.js", nil)
+	r.Header.Set("If-None-Match", etag)
+	if w := e.do(r); w.Code != 304 || w.Body.Len() != 0 {
+		t.Fatalf("conditional loader %d %q", w.Code, w.Body.String())
+	}
+
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame.abcd1234.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* frame */" {
+		t.Fatalf("bundle %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("bundle Content-Type %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("bundle Cache-Control %q", cc)
+	}
+	for _, p := range []string{"/widget/v1/other.js", "/widget/v1/frame.html", "/widget/v1/manifest.json"} {
+		wantError(t, e.do(httptest.NewRequest("GET", p, nil)), 404, "not_found")
+	}
+}
+
+func TestWidgetFrame(t *testing.T) {
+	const csp = "; default-src 'none'; script-src 'self'; connect-src 'self'"
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `src="/widget/v1/frame.abcd1234.js"`) {
+		t.Fatalf("frame %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("frame Content-Type %q", ct)
+	}
+	if got := w.Header().Get("Content-Security-Policy"); got != "frame-ancestors *"+csp {
+		t.Fatalf("frame CSP %q", got)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("frame Cache-Control %q", cc)
+	}
+	if _, ok := w.Header()["X-Frame-Options"]; ok {
+		t.Fatal("frame sets X-Frame-Options")
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) {
+		s.byID[keyID].AllowedOrigins = []string{"https://a.com", "https://*.b.com"}
+	}, widgetFS())
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if got := w.Header().Get("Content-Security-Policy"); w.Code != 200 || got != "frame-ancestors https://a.com https://*.b.com"+csp {
+		t.Fatalf("scoped frame %d CSP %q", w.Code, got)
+	}
+
+	unknown, _, _ := auth.GenerateKey()
+	for name, q := range map[string]string{"unknown": "?k=" + unknown, "malformed": "?k=nope", "missing": ""} {
+		w := e.do(httptest.NewRequest("GET", "/widget/v1/frame"+q, nil))
+		if w.Code != 403 || w.Body.Len() != 0 {
+			t.Fatalf("%s key: %d %q", name, w.Code, w.Body.String())
+		}
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) {
+		s.byID[keyID].RevokedAt = &testNow
+	}, widgetFS())
+	if w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)); w.Code != 403 || w.Body.Len() != 0 {
+		t.Fatalf("revoked key: %d %q", w.Code, w.Body.String())
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) { s.findErr = errBoom }, widgetFS())
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "store_unavailable")
+}
+
+func TestFrameAncestors(t *testing.T) {
+	for _, tc := range []struct {
+		in   []string
+		want string
+	}{
+		{nil, "*"},
+		{[]string{}, "*"},
+		{[]string{"*"}, "*"},
+		{[]string{"https://a.com", " https://b.com "}, "https://a.com https://b.com"},
+	} {
+		if got := frameAncestors(tc.in); got != tc.want {
+			t.Errorf("frameAncestors(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

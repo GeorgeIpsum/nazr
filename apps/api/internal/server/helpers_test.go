@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -40,6 +41,7 @@ type fakeStore struct {
 	logKeys    []*string
 	revoked    []string
 	pingErr    error
+	findErr    error
 	panicPing  bool
 	uaFamilies []string
 	uaQueries  []string
@@ -84,6 +86,9 @@ func (f *fakeStore) FindKeyByHash(_ context.Context, hash string) (*store.APIKey
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.findCalls++
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
 	return f.keys[hash], nil
 }
 
@@ -279,6 +284,17 @@ func newEnv(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
 // newEnvCache is newEnv with a key cache wired into the server.
 func newEnvCache(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache) *env {
 	t.Helper()
+	return newEnvWith(t, mut, cache, nil)
+}
+
+// newEnvWidget is newEnv with widget assets wired into the server.
+func newEnvWidget(t *testing.T, mut func(c *config.Config, s *fakeStore), fsys fs.FS) *env {
+	t.Helper()
+	return newEnvWith(t, mut, nil, fsys)
+}
+
+func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS) *env {
+	t.Helper()
 	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
 		intel: &fakeIntel{
 			lookup: ipintel.Lookup{ASN: 64496, ASOrg: "Example Networks", Country: "US", CountryName: "United States",
@@ -297,7 +313,7 @@ func newEnvCache(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *
 		Cfg: e.cfg, Store: e.store, Intel: e.intel,
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
-		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache,
+		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget,
 		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
 	})
 	return e
