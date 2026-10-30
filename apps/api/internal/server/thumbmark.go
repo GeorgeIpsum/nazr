@@ -41,6 +41,7 @@ type thumbmarkBody struct {
 	path        string
 	visitorID   string
 	canvasProbe string // side signal only; never part of the thumbmark
+	nonce       string // side signal only; never part of the thumbmark
 	metadata    any    // nil when absent, null, or over the size cap
 	metadataRaw json.RawMessage
 }
@@ -162,6 +163,9 @@ func parseThumbmarkBody(raw map[string]any) (thumbmarkBody, error) {
 	b.visitorID, _ = raw["visitorId"].(string)
 	if cp, _ := raw["canvas_probe"].(string); validCanvasProbe(cp) {
 		b.canvasProbe = cp
+	}
+	if n, _ := raw["nonce"].(string); validNonce(n) {
+		b.nonce = n
 	}
 	if md, present := raw["metadata"]; present && md != nil {
 		enc, err := marshalJSON(md)
@@ -403,6 +407,7 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 
 	ev := store.Event{
 		CanvasProbe: body.canvasProbe,
+		Nonce:       body.nonce,
 		Cohort:      cohort,
 		ID:          rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
 		IPHash: ipHash, JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent, Path: body.path,

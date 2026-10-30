@@ -1029,3 +1029,46 @@ func TestAdminCanvasProbeReport(t *testing.T) {
 		t.Fatalf("store error %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func postNonce(t *testing.T, nonce any, set bool) (string, store.Event, string) {
+	t.Helper()
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	if set {
+		body["nonce"] = nonce
+	}
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+	if len(e.store.events) != 1 {
+		t.Fatalf("events %d", len(e.store.events))
+	}
+	tm, _ := resp["thumbmark"].(string)
+	return tm, e.store.events[0], w.Body.String()
+}
+
+func TestThumbmarkNonce(t *testing.T) {
+	baseTM, baseEv, _ := postNonce(t, nil, false)
+	if baseEv.Nonce != "" || baseTM == "" {
+		t.Fatalf("baseline nonce %q tm %q", baseEv.Nonce, baseTM)
+	}
+	tm, ev, raw := postNonce(t, "n-1", true)
+	if ev.Nonce != "n-1" || tm != baseTM {
+		t.Fatalf("nonce %q tm %q vs %q", ev.Nonce, tm, baseTM)
+	}
+	if strings.Contains(raw, "nonce") || strings.Contains(raw, "n-1") {
+		t.Fatalf("response leaks nonce: %s", raw)
+	}
+	for name, v := range map[string]any{
+		"numeric":  5,
+		"too-long": strings.Repeat("a", 65),
+		"control":  "a\tb",
+	} {
+		tm, ev, _ := postNonce(t, v, true)
+		if ev.Nonce != "" || tm != baseTM {
+			t.Fatalf("%s: nonce %q", name, ev.Nonce)
+		}
+	}
+}
