@@ -1,10 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "deny": [
-      "Read(./packages/jb/**)",
-      "Edit(./packages/jb/**)",
-      "Write(./packages/jb/**)"
-    ]
+    "deny": ["Read(./packages/jb/**)", "Edit(./packages/jb/**)", "Write(./packages/jb/**)"]
   }
 }
