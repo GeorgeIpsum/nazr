@@ -11,14 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/oklog/ulid/v2"
-	"github.com/pressly/goose/v3"
 	"github.com/testcontainers/testcontainers-go"
 	tcpg "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-
-	"nazr/api/migrations"
 )
 
 var (
@@ -111,31 +107,15 @@ func newUnmigrated(t *testing.T) *Store {
 
 func newID() string { return ulid.Make().String() }
 
-// latestMigration is the highest migration in migrations/.
-const latestMigration = 4
+// latestMigration is the highest migration in migrations/ (a single initial
+// migration).
+const latestMigration = 1
 
-func TestVisitorCountBackfillAndIncrement(t *testing.T) {
-	s := newUnmigrated(t)
+func TestVisitorCountIncrement(t *testing.T) {
+	s := newStore(t)
 	ctx := context.Background()
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.UpTo(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
 	var keyID string
 	if err := s.pool.QueryRow(ctx, `INSERT INTO api_keys (key_hash, prefix, label) VALUES ('h', 'pppppppp', 'l') RETURNING id::text`).Scan(&keyID); err != nil {
-		t.Fatal(err)
-	}
-	for range 3 {
-		if _, err := s.pool.Exec(ctx, `INSERT INTO visitors (id, api_key_id, first_seen, last_seen, request_count) VALUES ($1, $2::uuid, now(), now(), 0)`, newID(), keyID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	count := func() int64 {
@@ -145,8 +125,13 @@ func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 		}
 		return n
 	}
+	for range 3 {
+		if _, err := s.CreateVisitor(ctx, keyID, newID(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if n := count(); n != 3 {
-		t.Fatalf("backfilled visitor_count = %d, want 3", n)
+		t.Fatalf("visitor_count after 3 CreateVisitor = %d, want 3", n)
 	}
 	v := newID()
 	if _, err := s.CreateVisitor(ctx, keyID, v, time.Now()); err != nil {
@@ -163,6 +148,26 @@ func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 	}
 	if _, total, err := s.RecordVisit(ctx, keyID, v, "tm", time.Now()); err != nil || total != 4 {
 		t.Fatalf("RecordVisit total = %d, err %v", total, err)
+	}
+}
+
+func TestMigrateSchema(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for _, c := range [][2]string{
+		{"events", "canvas_probe"}, {"events", "cohort"},
+		{"events", "ja3_hash"}, {"api_keys", "visitor_count"},
+	} {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, c[0], c[1]).Scan(&n); err != nil || n != 1 {
+			t.Errorf("column %s.%s: count %d, err %v", c[0], c[1], n, err)
+		}
+	}
+	for _, idx := range []string{"events_thumbmark_created_idx", "events_probe_cohort_idx"} {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1`, idx).Scan(&n); err != nil || n != 1 {
+			t.Errorf("index %s: count %d, err %v", idx, n, err)
+		}
 	}
 }
 
