@@ -293,3 +293,44 @@ func TestWriteErrorDoesNotEscapeHTML(t *testing.T) {
 		t.Fatalf("body %q", got)
 	}
 }
+
+func TestMiddlewareSkipOrigin(t *testing.T) {
+	revoked := time.Now()
+	hdr := map[string]string{"x-api-key": testKey, "Origin": "https://b.com"}
+	scoped := func() *fakeResolver {
+		return &fakeResolver{key: &store.APIKey{ID: "id1", AllowedOrigins: []string{"https://a.com"}}}
+	}
+	inCtx := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		inCtx = KeyFromContext(req.Context()) != nil
+		w.WriteHeader(200)
+	})
+	build := func(r *fakeResolver, o MiddlewareOptions) http.Handler {
+		return MiddlewareOpts(r, NewMemoryLimiter(time.Now), 600, NewKeyCache(time.Minute, nil), o)(next)
+	}
+
+	t.Run("default enforces origin", func(t *testing.T) {
+		rr := doReq(Middleware(scoped(), NewMemoryLimiter(time.Now), 600, NewKeyCache(time.Minute, nil))(next), hdr)
+		if rr.Code != 403 || errCode(t, rr) != "origin_not_allowed" {
+			t.Fatalf("status %d (%s)", rr.Code, rr.Body)
+		}
+	})
+	t.Run("skip origin allows and sets key", func(t *testing.T) {
+		inCtx = false
+		r := scoped()
+		rr := doReq(build(r, MiddlewareOptions{SkipOrigin: true}), hdr)
+		if rr.Code != 200 || !inCtx {
+			t.Fatalf("status %d inCtx %v (%s)", rr.Code, inCtx, rr.Body)
+		}
+		if r.touched != 1 {
+			t.Fatalf("touched %d", r.touched)
+		}
+	})
+	t.Run("skip origin still rejects revoked", func(t *testing.T) {
+		r := &fakeResolver{key: &store.APIKey{ID: "id1", RevokedAt: &revoked}}
+		rr := doReq(build(r, MiddlewareOptions{SkipOrigin: true}), hdr)
+		if rr.Code != 403 || errCode(t, rr) != "key_revoked" {
+			t.Fatalf("status %d (%s)", rr.Code, rr.Body)
+		}
+	})
+}
