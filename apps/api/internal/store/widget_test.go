@@ -65,6 +65,11 @@ func TestWidgetSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	v2, err := s.CreateVisitor(ctx, k2.ID, newID(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitors := map[string]string{k.ID: v.ID, k2.ID: v2.ID}
 	report := func(keyID, nonce, ja4 string, at time.Time) {
 		t.Helper()
 		if err := s.InsertWidgetReport(ctx, WidgetReport{ID: newID(), APIKeyID: keyID, Nonce: nonce, Thumbmark: "tm",
@@ -72,12 +77,16 @@ func TestWidgetSummary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	event := func(nonce, ipHash, ja4, ua string, at time.Time) {
+	keyEvent := func(keyID, nonce, ipHash, ja4, ua string, at time.Time) {
 		t.Helper()
-		if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: k.ID, VisitorID: v.ID, Thumbmark: "tm",
+		if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: keyID, VisitorID: visitors[keyID], Thumbmark: "tm",
 			ClientHash: "ch", IPHash: ipHash, JA4: ja4, UserAgent: ua, Nonce: nonce, CreatedAt: at}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	event := func(nonce, ipHash, ja4, ua string, at time.Time) {
+		t.Helper()
+		keyEvent(k.ID, nonce, ipHash, ja4, ua, at)
 	}
 	min := time.Minute
 	report(k.ID, "n1", "j", now)
@@ -98,15 +107,34 @@ func TestWidgetSummary(t *testing.T) {
 	report(k.ID, "n9", "j", now)
 	event("n9", "iph", "j", "ua", now.Add(-3*min))
 	event("n9", "other", "j", "ua", now.Add(-min))
-	// Excluded: older than since, and under another key.
+	// A page call with no report at all.
+	event("n10", "iph", "j", "ua", now.Add(-min))
+	// One nonce on two reports and one event: both reports match, the event matches.
+	report(k.ID, "n11", "j", now)
+	report(k.ID, "n11", "j", now.Add(min))
+	event("n11", "iph", "j", "ua", now.Add(-min))
+	// One-sided JA4 is unknown, not a mismatch.
+	report(k.ID, "n12", "", now)
+	event("n12", "iph", "j", "ua", now.Add(-min))
+	// Excluded: older than since, and under another key. k2's n4 event must
+	// not match k's n4 report, nor count as k's unmatched event.
 	report(k.ID, "old", "j", now.Add(-3*time.Hour))
+	event("old-event", "iph", "j", "ua", now.Add(-2*time.Hour))
 	report(k2.ID, "n1", "j", now)
+	keyEvent(k2.ID, "n4", "iph", "j", "ua", now.Add(-min))
 
 	got, err := s.WidgetSummary(ctx, k.ID, now.Add(-time.Hour), 10*min)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := WidgetSummary{Reports: 9, Matched: 7, Unmatched: 2, IPMismatch: 2, JA4Mismatch: 1, JA4Unknown: 1, UAMismatch: 1}
+	// Reports n1,n2,n3,n4,n5,n6,n7,n8,n9,n11,n11,n12 = 12. Unmatched reports:
+	// n3 (event 11 min away, outside the 10 min window) and n4 (only k2 has an
+	// n4 event) = 2. JA4Unknown: n6 (both empty) and n12 (report empty) = 2.
+	// Unmatched events of k since `since`: n3 (no report within 10 min) and
+	// n10 (no report) = 2; both n9 events and the n11 event have a report in
+	// the window, "old-event" predates since, and k2's n4 is another key.
+	want := WidgetSummary{Reports: 12, Matched: 10, Unmatched: 2, IPMismatch: 2, JA4Mismatch: 1, JA4Unknown: 2,
+		UAMismatch: 1, EventsUnmatched: 2}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

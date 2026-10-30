@@ -163,14 +163,15 @@ func (s *server) handleCanvasProbeReport(w http.ResponseWriter, r *http.Request)
 
 // widgetSummaryJSON is the per-key widget correlation summary.
 type widgetSummaryJSON struct {
-	WindowDays  int   `json:"window_days"`
-	Reports     int64 `json:"reports"`
-	Matched     int64 `json:"matched"`
-	Unmatched   int64 `json:"unmatched"`
-	IPMismatch  int64 `json:"ip_mismatch"`
-	JA4Mismatch int64 `json:"ja4_mismatch"`
-	JA4Unknown  int64 `json:"ja4_unknown"`
-	UAMismatch  int64 `json:"ua_mismatch"`
+	WindowDays      int   `json:"window_days"`
+	Reports         int64 `json:"reports"`
+	Matched         int64 `json:"matched"`
+	Unmatched       int64 `json:"unmatched"`
+	EventsUnmatched int64 `json:"events_unmatched"`
+	IPMismatch      int64 `json:"ip_mismatch"`
+	JA4Mismatch     int64 `json:"ja4_mismatch"`
+	JA4Unknown      int64 `json:"ja4_unknown"`
+	UAMismatch      int64 `json:"ua_mismatch"`
 }
 
 // handleWidgetSummary reports how a key's widget reports correlate with its
@@ -184,6 +185,6 @@ func (s *server) handleWidgetSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, widgetSummaryJSON{WindowDays: store.ProbeWindowDays, Reports: sum.Reports,
-		Matched: sum.Matched, Unmatched: sum.Unmatched, IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch,
-		JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch})
+		Matched: sum.Matched, Unmatched: sum.Unmatched, EventsUnmatched: sum.EventsUnmatched,
+		IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch, JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch})
 }

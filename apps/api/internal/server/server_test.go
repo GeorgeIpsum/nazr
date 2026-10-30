@@ -1347,7 +1347,8 @@ func TestAdminWidgetSummary(t *testing.T) {
 	}
 	wantError(t, e.do(req("")), 403, "unauthorized")
 
-	e.store.summary = store.WidgetSummary{Reports: 10, Matched: 7, Unmatched: 3, IPMismatch: 1, JA4Mismatch: 2, JA4Unknown: 4, UAMismatch: 5}
+	e.store.summary = store.WidgetSummary{Reports: 10, Matched: 7, Unmatched: 3, IPMismatch: 1, JA4Mismatch: 2, JA4Unknown: 4,
+		UAMismatch: 5, EventsUnmatched: 6}
 	w := e.do(req("s3cret"))
 	if w.Code != 200 {
 		t.Fatalf("summary %d: %s", w.Code, w.Body.String())
@@ -1357,7 +1358,7 @@ func TestAdminWidgetSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]any{"window_days": float64(30), "reports": float64(10), "matched": float64(7), "unmatched": float64(3),
-		"ip_mismatch": float64(1), "ja4_mismatch": float64(2), "ja4_unknown": float64(4), "ua_mismatch": float64(5)}
+		"events_unmatched": float64(6), "ip_mismatch": float64(1), "ja4_mismatch": float64(2), "ja4_unknown": float64(4), "ua_mismatch": float64(5)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("body %v", got)
 	}
