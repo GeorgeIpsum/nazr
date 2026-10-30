@@ -107,9 +107,9 @@ func newUnmigrated(t *testing.T) *Store {
 
 func newID() string { return ulid.Make().String() }
 
-// latestMigration is the highest migration in migrations/ (a single initial
-// migration).
-const latestMigration = 1
+// latestMigration is the highest migration in migrations/ (initial schema plus
+// the widget migration).
+const latestMigration = 2
 
 func TestVisitorCountIncrement(t *testing.T) {
 	s := newStore(t)
@@ -157,13 +157,19 @@ func TestMigrateSchema(t *testing.T) {
 	for _, c := range [][2]string{
 		{"events", "canvas_probe"}, {"events", "cohort"},
 		{"events", "ja3_hash"}, {"api_keys", "visitor_count"},
+		{"events", "nonce"},
+		{"widget_reports", "id"}, {"widget_reports", "api_key_id"}, {"widget_reports", "nonce"},
+		{"widget_reports", "thumbmark"}, {"widget_reports", "client_hash"}, {"widget_reports", "ip"},
+		{"widget_reports", "ip_hash"}, {"widget_reports", "ja4"}, {"widget_reports", "h2fp"},
+		{"widget_reports", "user_agent"}, {"widget_reports", "components"}, {"widget_reports", "created_at"},
 	} {
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, c[0], c[1]).Scan(&n); err != nil || n != 1 {
 			t.Errorf("column %s.%s: count %d, err %v", c[0], c[1], n, err)
 		}
 	}
-	for _, idx := range []string{"events_thumbmark_created_idx", "events_probe_cohort_idx"} {
+	for _, idx := range []string{"events_thumbmark_created_idx", "events_probe_cohort_idx",
+		"events_nonce_idx", "widget_reports_key_nonce_idx", "widget_reports_created_idx"} {
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1`, idx).Scan(&n); err != nil || n != 1 {
 			t.Errorf("index %s: count %d, err %v", idx, n, err)
@@ -350,6 +356,9 @@ func TestInsertEventAndPrune(t *testing.T) {
 		e := Event{ID: newID(), APIKeyID: k.ID, VisitorID: vid, Thumbmark: "tm", ClientHash: "ch",
 			IPHash: "iph", JA4: "j", JA4H: "jh", H2FP: "h2", UserAgent: "ua", Path: "/",
 			Classification: []byte(`{"bot":false}`), Signals: []byte(`[]`), CreatedAt: now.Add(-age)}
+		if i == 1 {
+			e.Nonce = "abc"
+		}
 		if i == 0 {
 			e.JA3Hash = "03117a8ed39ef02427ebbc39f121275c"
 			e.IP = &ip
@@ -377,6 +386,23 @@ func TestInsertEventAndPrune(t *testing.T) {
 	if rows.Err() != nil || len(ja3s) != 3 || ja3s[0] == nil || *ja3s[0] != "03117a8ed39ef02427ebbc39f121275c" ||
 		ja3s[1] != nil || ja3s[2] != nil {
 		t.Fatalf("ja3_hash rows %v (%v)", ja3s, rows.Err())
+	}
+	// events.nonce holds the nonce when given and NULL otherwise.
+	var nonces []*string
+	nrows, err := s.pool.Query(ctx, `SELECT nonce FROM events WHERE api_key_id = $1::uuid ORDER BY created_at`, k.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nrows.Close()
+	for nrows.Next() {
+		var v *string
+		if err := nrows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		nonces = append(nonces, v)
+	}
+	if nrows.Err() != nil || len(nonces) != 3 || nonces[0] != nil || nonces[1] == nil || *nonces[1] != "abc" || nonces[2] != nil {
+		t.Fatalf("nonce rows %v (%v)", nonces, nrows.Err())
 	}
 	if err := s.InsertClientLog(ctx, &k.ID, []byte(`{"m":"x"}`)); err != nil {
 		t.Fatal(err)
