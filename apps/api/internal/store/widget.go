@@ -31,3 +31,35 @@ func (s *Store) InsertWidgetReport(ctx context.Context, r WidgetReport) error {
 		r.JA4, r.H2FP, r.UserAgent, nullJSON(r.Components), r.CreatedAt)
 	return err
 }
+
+// WidgetSummary counts widget reports for a key and how they correlate with
+// /thumbmark events. Counts are over report rows.
+type WidgetSummary struct {
+	Reports, Matched, Unmatched, IPMismatch, JA4Mismatch, JA4Unknown, UAMismatch int64
+}
+
+// WidgetSummary correlates each report since `since` with the most recent
+// event of the same key and nonce within `window` of the report, in either
+// direction. A JA4 comparison is unknown when either side is empty.
+func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time, window time.Duration) (WidgetSummary, error) {
+	var out WidgetSummary
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*),
+		   count(e.id),
+		   count(*) FILTER (WHERE e.id IS NOT NULL AND r.ip_hash <> e.ip_hash),
+		   count(*) FILTER (WHERE e.id IS NOT NULL AND r.ja4 <> '' AND e.ja4 <> '' AND r.ja4 <> e.ja4),
+		   count(*) FILTER (WHERE e.id IS NOT NULL AND (r.ja4 = '' OR e.ja4 = '')),
+		   count(*) FILTER (WHERE e.id IS NOT NULL AND r.user_agent <> e.user_agent)
+		 FROM widget_reports r
+		 LEFT JOIN LATERAL (
+		   SELECT id, ip_hash, ja4, user_agent FROM events e
+		   WHERE e.api_key_id = r.api_key_id AND e.nonce = r.nonce
+		     AND e.created_at BETWEEN r.created_at - $3::interval AND r.created_at + $3::interval
+		   ORDER BY e.created_at DESC LIMIT 1
+		 ) e ON true
+		 WHERE r.api_key_id = $1::uuid AND r.created_at >= $2`,
+		keyID, since, window).
+		Scan(&out.Reports, &out.Matched, &out.IPMismatch, &out.JA4Mismatch, &out.JA4Unknown, &out.UAMismatch)
+	out.Unmatched = out.Reports - out.Matched
+	return out, err
+}

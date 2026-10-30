@@ -54,3 +54,60 @@ func TestInsertWidgetReportAndPrune(t *testing.T) {
 		t.Fatalf("remaining: %d %v", left, err)
 	}
 }
+
+func TestWidgetSummary(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	k2, _ := s.CreateKey(ctx, NewKey{Hash: "b", Prefix: "bbbbbbbb"})
+	now := time.Now().UTC().Truncate(time.Second)
+	v, err := s.CreateVisitor(ctx, k.ID, newID(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := func(keyID, nonce, ja4 string, at time.Time) {
+		t.Helper()
+		if err := s.InsertWidgetReport(ctx, WidgetReport{ID: newID(), APIKeyID: keyID, Nonce: nonce, Thumbmark: "tm",
+			ClientHash: "ch", IPHash: "iph", JA4: ja4, UserAgent: "ua", CreatedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	event := func(nonce, ipHash, ja4, ua string, at time.Time) {
+		t.Helper()
+		if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: k.ID, VisitorID: v.ID, Thumbmark: "tm",
+			ClientHash: "ch", IPHash: ipHash, JA4: ja4, UserAgent: ua, Nonce: nonce, CreatedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	min := time.Minute
+	report(k.ID, "n1", "j", now)
+	event("n1", "iph", "j", "ua", now.Add(-2*min))
+	report(k.ID, "n2", "j", now)
+	event("n2", "iph", "j", "ua", now.Add(2*min))
+	report(k.ID, "n3", "j", now)
+	event("n3", "iph", "j", "ua", now.Add(-11*min))
+	report(k.ID, "n4", "j", now)
+	report(k.ID, "n5", "j", now)
+	event("n5", "other", "j", "ua", now.Add(-min))
+	report(k.ID, "n6", "", now)
+	event("n6", "iph", "", "ua", now.Add(-min))
+	report(k.ID, "n7", "j", now)
+	event("n7", "iph", "k", "ua", now.Add(-min))
+	report(k.ID, "n8", "j", now)
+	event("n8", "iph", "j", "curl", now.Add(-min))
+	report(k.ID, "n9", "j", now)
+	event("n9", "iph", "j", "ua", now.Add(-3*min))
+	event("n9", "other", "j", "ua", now.Add(-min))
+	// Excluded: older than since, and under another key.
+	report(k.ID, "old", "j", now.Add(-3*time.Hour))
+	report(k2.ID, "n1", "j", now)
+
+	got, err := s.WidgetSummary(ctx, k.ID, now.Add(-time.Hour), 10*min)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := WidgetSummary{Reports: 9, Matched: 7, Unmatched: 2, IPMismatch: 2, JA4Mismatch: 1, JA4Unknown: 1, UAMismatch: 1}
+	if got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
