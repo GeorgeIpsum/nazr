@@ -40,7 +40,8 @@ type thumbmarkBody struct {
 	version     string
 	path        string
 	visitorID   string
-	metadata    any // nil when absent, null, or over the size cap
+	canvasProbe string // side signal only; never part of the thumbmark
+	metadata    any    // nil when absent, null, or over the size cap
 	metadataRaw json.RawMessage
 }
 
@@ -132,6 +133,21 @@ func isTooLarge(err error) bool {
 	return errors.As(err, &mbe) || errors.Is(err, fingerprint.ErrTooLarge)
 }
 
+// validCanvasProbe reports whether s is 1..64 hex digits; anything else is
+// treated as an absent probe.
+func validCanvasProbe(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func parseThumbmarkBody(raw map[string]any) (thumbmarkBody, error) {
 	var b thumbmarkBody
 	comps, ok := raw["components"].(map[string]any)
@@ -144,6 +160,9 @@ func parseThumbmarkBody(raw map[string]any) (thumbmarkBody, error) {
 	b.version, _ = raw["version"].(string)
 	b.path, _ = raw["path"].(string)
 	b.visitorID, _ = raw["visitorId"].(string)
+	if cp, _ := raw["canvas_probe"].(string); validCanvasProbe(cp) {
+		b.canvasProbe = cp
+	}
 	if md, present := raw["metadata"]; present && md != nil {
 		enc, err := marshalJSON(md)
 		size := 0
@@ -358,8 +377,17 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 		resp.Collect = &collectDirective{JA4: "", Source: "none"}
 	}
 
+	braveFlag := false
+	if sys, ok := body.components["system"].(map[string]any); ok {
+		if br, ok := sys["browser"].(map[string]any); ok {
+			name, _ := br["name"].(string)
+			braveFlag = name == "Brave"
+		}
+	}
 	ev := store.Event{
-		ID: rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
+		CanvasProbe: body.canvasProbe,
+		Cohort:      classify.CohortKey(in.UserAgent, braveFlag, in.JA4Families),
+		ID:          rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
 		IPHash: ipHash, JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent, Path: body.path,
 		// The component (and so the hash) uses the cookie-free ja4h; the
 		// event keeps the complete fingerprint for analysis.

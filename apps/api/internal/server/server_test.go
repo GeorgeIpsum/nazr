@@ -891,3 +891,46 @@ func TestReadyzIgnoresProberCancellation(t *testing.T) {
 		t.Fatalf("next prober got cached %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func postProbe(t *testing.T, probe any, set bool) (string, store.Event, int) {
+	t.Helper()
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	if set {
+		body["canvas_probe"] = probe
+	}
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		return "", store.Event{}, w.Code
+	}
+	resp := decodeResp(t, w)
+	if len(e.store.events) != 1 {
+		t.Fatalf("events %d", len(e.store.events))
+	}
+	tm, _ := resp["thumbmark"].(string)
+	return tm, e.store.events[0], w.Code
+}
+
+func TestThumbmarkCanvasProbe(t *testing.T) {
+	baseTM, baseEv, _ := postProbe(t, nil, false)
+	if baseEv.CanvasProbe != "" {
+		t.Fatalf("baseline probe %q", baseEv.CanvasProbe)
+	}
+	tm, ev, code := postProbe(t, "a1b2c3", true)
+	if code != http.StatusOK || ev.CanvasProbe != "a1b2c3" || ev.Cohort == "" {
+		t.Fatalf("code %d probe %q cohort %q", code, ev.CanvasProbe, ev.Cohort)
+	}
+	if tm != baseTM || tm == "" {
+		t.Fatalf("probe changed thumbmark: %q vs %q", tm, baseTM)
+	}
+	for name, v := range map[string]any{
+		"non-hex":  "NOT-HEX!!",
+		"too-long": strings.Repeat("ab", 100),
+		"numeric":  5,
+	} {
+		tm, ev, code := postProbe(t, v, true)
+		if code != http.StatusOK || ev.CanvasProbe != "" || tm != baseTM {
+			t.Fatalf("%s: code %d probe %q", name, code, ev.CanvasProbe)
+		}
+	}
+}
