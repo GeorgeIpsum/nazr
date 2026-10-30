@@ -1285,24 +1285,27 @@ func TestWidgetReportScopedKey(t *testing.T) {
 }
 
 func TestWidgetReportRejectsBody(t *testing.T) {
-	comps := func(t *testing.T) any { return stockBody(t)["components"] }
-	for name, body := range map[string]func(t *testing.T) []byte{
-		"array":        func(*testing.T) []byte { return []byte(`[]`) },
-		"empty":        func(*testing.T) []byte { return []byte(`{}`) },
-		"string comps": func(*testing.T) []byte { return []byte(`{"nonce":"n","components":"x"}`) },
-		"long nonce": func(t *testing.T) []byte {
-			return marshal(t, map[string]any{"nonce": strings.Repeat("a", 65), "components": comps(t)})
-		},
-		"bad hash": func(t *testing.T) []byte {
-			return marshal(t, map[string]any{"nonce": "n", "components": comps(t), "clientHash": "zz"})
-		},
-		"over the limit": func(*testing.T) []byte {
-			return []byte(`{"nonce":"n","components":{"x":"` + strings.Repeat("a", 1000) + `"}}`)
-		},
+	// Every body but "over the limit" fits in BodyLimit, so it is rejected by
+	// validation, not size; "control" proves a valid small body is stored.
+	const limit = 256
+	small := `"components":{"a":1}`
+	for name, body := range map[string]string{
+		"array":          `[]`,
+		"empty":          `{}`,
+		"string comps":   `{"nonce":"n","components":"x"}`,
+		"long nonce":     `{"nonce":"` + strings.Repeat("a", 65) + `",` + small + `}`,
+		"bad hash":       `{"nonce":"n",` + small + `,"clientHash":"zz"}`,
+		"numeric hash":   `{"nonce":"n",` + small + `,"clientHash":5}`,
+		"empty hash":     `{"nonce":"n",` + small + `,"clientHash":""}`,
+		"over the limit": `{"nonce":"n","components":{"x":"` + strings.Repeat("a", 1000) + `"}}`,
 	} {
+		if name != "over the limit" && len(body) > limit {
+			t.Fatalf("%s: body %d bytes exceeds the limit", name, len(body))
+		}
+		body := []byte(body)
 		t.Run(name, func(t *testing.T) {
-			e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = 256 })
-			w := e.do(widgetReportReq(t, e.key, body(t)))
+			e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
+			w := e.do(widgetReportReq(t, e.key, body))
 			if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
 				t.Fatalf("status %d: %q", w.Code, w.Body.String())
 			}
@@ -1311,6 +1314,14 @@ func TestWidgetReportRejectsBody(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("control", func(t *testing.T) {
+		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
+		w := e.do(widgetReportReq(t, e.key, []byte(`{"nonce":"n",`+small+`,"clientHash":"abc123"}`)))
+		if w.Code != http.StatusNoContent || len(e.store.reports) != 1 {
+			t.Fatalf("status %d reports %d", w.Code, len(e.store.reports))
+		}
+	})
 
 	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
 	wantError(t, e.do(widgetReportReq(t, "", marshal(t, widgetBody(t)))), 403, "unauthorized")

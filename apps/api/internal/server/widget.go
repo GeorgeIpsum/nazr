@@ -186,9 +186,16 @@ func (s *server) storeWidgetReport(r *http.Request) {
 	}
 	nonce, _ := raw["nonce"].(string)
 	comps, ok := raw["components"].(map[string]any)
-	clientHash, _ := raw["clientHash"].(string)
-	if !validNonce(nonce) || !ok || (clientHash != "" && !validCanvasProbe(clientHash)) {
+	if !validNonce(nonce) || !ok {
 		return
+	}
+	// clientHash is absent or 1..64 hex; any other value drops the report.
+	clientHash := ""
+	if v, present := raw["clientHash"]; present {
+		clientHash, _ = v.(string)
+		if !validCanvasProbe(clientHash) {
+			return
+		}
 	}
 
 	addr, view := s.clientIP(r)
