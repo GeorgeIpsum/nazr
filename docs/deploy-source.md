@@ -19,6 +19,8 @@ cd apps/api && go run ./cmd/nazr migrate && go run ./cmd/nazr keys create --labe
 
 `keys create` prints the API key once; store it. `pnpm build` also produces the demo bundle and the client package. `pnpm --filter @nazr/api build` compiles a standalone binary at `apps/api/bin/nazr`, which takes the same subcommands (`serve`, `migrate`, `keys`, `lists`, `version`).
 
+The binary embeds the [widget](widget.md) only when its assets were synced before the Go build. `pnpm build` (or `pnpm build --filter=@nazr/api`) builds the widget and runs the sync. Plain `go build`/`go run` embed whatever was last synced, and `pnpm --filter @nazr/api build` bypasses Turborepo, so it syncs the widget's existing `dist/` without rebuilding it. Before those, run `pnpm install && pnpm build --filter=@nazr/widget && pnpm --filter @nazr/api sync-widget`. Without it the widget routes (`/widget/v1/*`) return 404 while everything else works.
+
 ## Local: plain HTTP
 
 ```bash

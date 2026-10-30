@@ -213,6 +213,7 @@ pre-release cleanup and NOT a pattern, Phase 1 adds a normal new migration.
     "reports": 1200,
     "matched": 1100,
     "unmatched": 100,
+    "events_unmatched": 40,
     "ip_mismatch": 3,
     "ja4_mismatch": 1,
     "ja4_unknown": 0,
@@ -222,6 +223,9 @@ pre-release cleanup and NOT a pattern, Phase 1 adds a normal new migration.
 
   Counts are over report rows. A nonce reused across many reports yields
   many rows, each matched independently; this is documented.
+  `events_unmatched` is the exception: it counts the key's `events` rows in
+  the window that carry a nonce but have no report of the same key and nonce
+  within `widgetMatchWindow` (section 1.1's first detected case).
 - Phase 1 does NOT feed this into the live danger score (section 2); the
   derived verdict and the stored components are the deliverable.
 
@@ -344,3 +348,5 @@ pre-release cleanup and NOT a pattern, Phase 1 adds a normal new migration.
   route; `X-Frame-Options` dropped.
 - Added retention, raw `ip` column parity, partial nonce index, cache policy
   per asset, response/summary shapes, loader edge cases, stock-client caveat.
+- 2026-10-30 final review: added `events_unmatched`; section 1.1's first
+  bullet had no field.

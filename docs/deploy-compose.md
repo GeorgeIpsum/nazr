@@ -6,6 +6,14 @@ The compose stack in `deploy/compose` runs nazr, PostgreSQL and a one-shot certi
 
 Prerequisites: Docker with Compose v2.24.4 or newer (for `env_file.required` and the `!override` tag), plus `curl` and `jq` for the smoke script.
 
+The image embeds the [widget](widget.md) only if its assets were synced into `apps/api` before the build. With Node 22 and pnpm, run this once first, and again after widget changes:
+
+```bash
+pnpm install && pnpm build --filter=@nazr/widget && pnpm --filter @nazr/api sync-widget
+```
+
+Without it the widget routes (`/widget/v1/*`) return 404 while everything else works.
+
 ```bash
 docker compose -f deploy/compose/docker-compose.yml up -d --build
 for i in $(seq 30); do curl -skf https://localhost/readyz && break; sleep 1; done

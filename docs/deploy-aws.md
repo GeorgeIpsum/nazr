@@ -21,9 +21,12 @@ nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, a
     terraform apply -target=module.nazr.module.service.aws_ecr_repository.this   # examples; drop "module.nazr." at the root
     REPO=$(aws ecr describe-repositories --repository-names nazr --query 'repositories[0].repositoryUri' --output text)
     aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
+    pnpm install && pnpm build --filter=@nazr/widget && pnpm --filter @nazr/api sync-widget   # embed the widget
     docker buildx build --platform linux/arm64 -t "$REPO:v1.0.0" --push apps/api
     terraform apply
     ```
+
+    The sync step copies the built [widget](widget.md) into the Docker context before the build, as the release workflow does. Without it the image still works, but its widget routes (`/widget/v1/*`) return 404.
 
   Tasks run on **ARM64 (Graviton)** by default, which is about 20% cheaper per vCPU. This needs the multi-arch (`linux/amd64` + `linux/arm64`) image published by the release workflow; for an amd64-only image set `cpu_architecture = "X86_64"`.
 - The AWS CLI with the Session Manager plugin for the first-key command ([install the plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)).

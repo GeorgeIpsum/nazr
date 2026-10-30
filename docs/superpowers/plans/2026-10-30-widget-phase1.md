@@ -94,7 +94,7 @@ ALTER TABLE events DROP COLUMN nonce;
 
 **Interfaces:**
 - Consumes: Task 1 types.
-- Produces: `type WidgetSummary struct { Reports, Matched, Unmatched, IPMismatch, JA4Mismatch, JA4Unknown, UAMismatch int64 }`; `func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time, window time.Duration) (WidgetSummary, error)`.
+- Produces: `type WidgetSummary struct { Reports, Matched, Unmatched, IPMismatch, JA4Mismatch, JA4Unknown, UAMismatch, EventsUnmatched int64 }` (`EventsUnmatched` added in the final review: nonce-carrying events with no report in the window); `func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time, window time.Duration) (WidgetSummary, error)`.
 
 - [ ] **Step 1: Write the failing test** `TestWidgetSummary` (DB-gated). Seed one key, a visitor, and these report/event pairs (all `ja4 = "j"`, `ip_hash = "iph"`, `user_agent = "ua"` unless stated), then assert the exact struct:
   - `n1`: event 2 min **before** report → matched, all equal.
@@ -219,7 +219,7 @@ ALTER TABLE events DROP COLUMN nonce;
 
 **Interfaces:**
 - Consumes: `InsertWidgetReport`, `WidgetSummary` (Tasks 1–2); `MiddlewareOpts` (Task 3); `validNonce` (Task 5); `validCanvasProbe` (reused for `clientHash`).
-- Produces: `const widgetMatchWindow = 10 * time.Minute`; `StoreAPI` gains `InsertWidgetReport(ctx, store.WidgetReport) error` and `WidgetSummary(ctx, keyID string, since time.Time, window time.Duration) (store.WidgetSummary, error)`; `POST /widget/report` → always 204 after auth; `GET /admin/keys/{id}/widget` → `{"window_days":30,"reports":n,"matched":n,"unmatched":n,"ip_mismatch":n,"ja4_mismatch":n,"ja4_unknown":n,"ua_mismatch":n}`.
+- Produces: `const widgetMatchWindow = 10 * time.Minute`; `StoreAPI` gains `InsertWidgetReport(ctx, store.WidgetReport) error` and `WidgetSummary(ctx, keyID string, since time.Time, window time.Duration) (store.WidgetSummary, error)`; `POST /widget/report` → always 204 after auth; `GET /admin/keys/{id}/widget` → `{"window_days":30,"reports":n,"matched":n,"unmatched":n,"events_unmatched":n,"ip_mismatch":n,"ja4_mismatch":n,"ja4_unknown":n,"ua_mismatch":n}`.
 
 - [ ] **Step 1: Write the failing tests.**
   - `TestWidgetReportStores`: POST with `x-api-key`, `Origin: https://nazr.example`, body `{nonce:"n-1", components: stockBody(t)["components"], clientHash:"abc123"}` through `fullHolder(t)` (set `r = r.WithContext(conn.WithHolder(...))` the way the `/thumbmark` TLS tests do) → 204; `store.reports[0]` has `Nonce "n-1"`, `ClientHash "abc123"`, `IPHash == ipintel.Identifier(203.0.113.42, "salt")`, non-empty `JA4`, `H2FP`, `UserAgent == chromeUA`, `Thumbmark` matching `^[0-9a-f]{32}$`, `IP != nil` (default `StoreIP=raw`), `Components == nil` (default `StoreComponents=false`); with `StoreComponents=true` → `Components` non-empty; with `StoreIP=hash` → `IP == nil`. No visitor was created (`repo.visitors` empty).

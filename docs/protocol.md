@@ -24,7 +24,7 @@ Every response carries an `X-Request-Id` header (a ULID). On `/thumbmark` the sa
 | `POST /admin/keys` | admin token | 201 | Create a key |
 | `DELETE /admin/keys/{id}` | admin token | 204 | Revoke a key |
 | `GET /widget/v1/loader.js` | none | 200 | Widget loader script; only when the widget assets are present |
-| `GET /widget/v1/frame?k=&n=` | key in `k` | 200 | Widget frame document; 403 for an unknown or revoked key; only when the assets are present |
+| `GET /widget/v1/frame?k=&n=` | key in `k` | 200 | Widget frame document; 403 for an unknown or revoked key, 503 `store_unavailable` when the key store is unreachable; only when the assets are present |
 | `GET /widget/v1/frame.<hash>.js` | none | 200 | Content-hashed frame bundle; only when the assets are present |
 | `POST /widget/report` | `x-api-key` | 204 | Store the widget frame's report (always 204 once authenticated) |
 | `GET /admin/keys/{id}/widget` | admin token | 200 | Widget correlation summary for a key |
@@ -212,7 +212,7 @@ Sent by the frame, same-origin to nazr, with the key in `x-api-key`:
 
 ### `GET /widget/v1/frame`
 
-Query: `k` is the API key, `n` the nonce. An unknown, malformed, missing or revoked key gets `403` with an empty body. Otherwise the response is HTML with:
+Query: `k` is the API key, `n` the nonce. An unknown, malformed, missing or revoked key gets `403` with an empty body. When the key store is unreachable the answer is `503` `store_unavailable` (JSON error, `Retry-After: 2`). Otherwise the response is HTML with:
 
 ```http
 Content-Security-Policy: frame-ancestors <allowed_origins or *>; default-src 'none'; script-src 'self'; connect-src 'self'
@@ -276,7 +276,7 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
 | Request | Response |
 |---|---|
 | `GET /admin/keys` | 200, array of keys (never secrets) |
-| `POST /admin/keys` body `{"label": "site", "allowed_origins": ["https://example.com"], "rate_limit_per_minute": 120}` | 201, key object including `key`, the plaintext, shown once. `label` is required. Each `allowed_origins` entry must be `*` or `scheme://host[:port]` (the host may start with `*.`); anything else is a 400 `bad_request` naming the entry |
+| `POST /admin/keys` body `{"label": "site", "allowed_origins": ["https://example.com"], "rate_limit_per_minute": 120}` | 201, key object including `key`, the plaintext, shown once. `label` is required. Each `allowed_origins` entry must be `*` or `scheme://host[:port]` (the host may start with `*.` and may not contain `;`, `,` or `'`, which would split the widget frame's `frame-ancestors` list); anything else is a 400 `bad_request` naming the entry |
 | `DELETE /admin/keys/{id}` | 204, or 404 `not_found` |
 
 `GET /admin/keys/{id}/widget` summarises the widget reports of a key over the last 30 days. An unknown key simply has no reports.
@@ -287,6 +287,7 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
   "reports": 1200,
   "matched": 1100,
   "unmatched": 100,
+  "events_unmatched": 40,
   "ip_mismatch": 3,
   "ja4_mismatch": 1,
   "ja4_unknown": 0,
@@ -294,7 +295,7 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
 }
 ```
 
-Counts are over report rows. A report is matched when the key has a `/thumbmark` event with the same `nonce` within 10 minutes of it, in either direction (the most recent one is used); the rest are `unmatched`. Among matched reports, `ip_mismatch` is a differing IP hash, `ja4_mismatch` a differing raw JA4 string, `ja4_unknown` a pair where either side has no JA4 (such as `plain` mode), and `ua_mismatch` a differing raw `User-Agent`. The verdict is computed on read and does not feed the danger score. What it does and does not detect is in [widget.md](widget.md#what-the-summary-shows).
+Counts are over report rows, except `events_unmatched`. A report is matched when the key has a `/thumbmark` event with the same `nonce` within 10 minutes of it, in either direction (the most recent one is used). `unmatched` counts widget reports with no page call carrying the same nonce (stock client, cached call, or a forged report). `events_unmatched` counts the key's `/thumbmark` events in the window that carry a nonce but have no widget report with that nonce within 10 minutes (the iframe was blocked or never ran, or the caller never loaded the page). Among matched reports, `ip_mismatch` is a differing IP hash, `ja4_mismatch` a differing raw JA4 string, `ja4_unknown` a pair where either side has no JA4 (such as `plain` mode), and `ua_mismatch` a differing raw `User-Agent`. The verdict is computed on read and does not feed the danger score. What it does and does not detect is in [widget.md](widget.md#what-the-summary-shows).
 
 Revocation takes effect within the key-cache TTL (60 seconds), because the cache is keyed by key hash and is not invalidated on revoke. The same operations are available offline as `nazr keys create|list|revoke`.
 
