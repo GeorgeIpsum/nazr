@@ -23,6 +23,11 @@ Every response carries an `X-Request-Id` header (a ULID). On `/thumbmark` the sa
 | `GET /admin/keys` | admin token | 200 | List keys |
 | `POST /admin/keys` | admin token | 201 | Create a key |
 | `DELETE /admin/keys/{id}` | admin token | 204 | Revoke a key |
+| `GET /widget/v1/loader.js` | none | 200 | Widget loader script; only when the widget assets are present |
+| `GET /widget/v1/frame?k=&n=` | key in `k` | 200 | Widget frame document; 403 for an unknown or revoked key; only when the assets are present |
+| `GET /widget/v1/frame.<hash>.js` | none | 200 | Content-hashed frame bundle; only when the assets are present |
+| `POST /widget/report` | `x-api-key` | 204 | Store the widget frame's report (always 204 once authenticated) |
+| `GET /admin/keys/{id}/widget` | admin token | 200 | Widget correlation summary for a key |
 | `GET /demo/*` | none | 200 | Static demo, only when `NAZR_DEMO_DIR` is set |
 | `GET /` | none | 200 | Plain-text banner with the version |
 | `GET /metrics` | none | 200 | Prometheus; served on `NAZR_METRICS_ADDR` (default `127.0.0.1:9090`), not the public listener |
@@ -44,13 +49,16 @@ Request body (see [`apps/api/testdata/requests/stock-client-body.json`](../apps/
   "path": "/page",
   "visitorId": "<ulid>",
   "metadata": {},
-  "canvas_probe": "<hex, optional>"
+  "canvas_probe": "<hex, optional>",
+  "nonce": "<1-64 printable ASCII, optional>"
 }
 ```
 
 `components` is required and must be an object. `options` (client options without the API key) selects which components the server hashes. `visitorId`, `path`, `clientHash` and `metadata` are optional. `metadata` is echoed back only when its stringified length is at most 1000 UTF-16 code units; otherwise it is dropped silently.
 
 `canvas_probe` is an optional top-level field, a sibling of `clientHash` and `path`, never inside `components`. It is a hex string of up to 64 bytes: the hash of the consumer's canvas-probe routine (see the [client README](../packages/thumbmark/README.md#canvas-probe)). It is never part of the thumbmark, and a malformed value is silently ignored (the request is not rejected with a 400). See [signals.md](signals.md#consumer-canvas-probe-and-the-entropy-report).
+
+`nonce` is an optional top-level string of 1 to 64 printable ASCII characters that ties this call to a widget report from the same visit (see [Widget](#widget)). It is stored on the event, never enters `components` or the thumbmark, and is not echoed in the response. An invalid value is treated as absent.
 
 ### Example
 
@@ -184,6 +192,43 @@ Because the route is unauthenticated, observations can still be seeded by a clie
 
 204, 413 `payload_too_large` for a body over 16 KiB, or 429 `rate_limited` (with `Retry-After`) when the client IP exceeds `NAZR_DEFAULT_RATE_LIMIT` requests per minute, the same per-IP limit as `/beacon`. The body is discarded unless `NAZR_LOG_RETENTION` is set; then a valid JSON body is stored and pruned on that retention. If a valid, unrevoked `x-api-key` accompanies the request, the log is tied to that key; the key is resolved through the same cache as authenticated routes. No authentication is required.
 
+## Widget
+
+The widget is a loader plus a hidden cross-origin frame that reports to nazr; the embedding guide is [widget.md](widget.md). The three `GET /widget/v1/*` routes exist only when the widget assets are embedded or served from `NAZR_WIDGET_DIR`; otherwise they return the JSON 404. `POST /widget/report` is always registered.
+
+### `POST /widget/report`
+
+Sent by the frame, same-origin to nazr, with the key in `x-api-key`:
+
+```json
+{ "nonce": "<1-64 printable ASCII>", "components": {}, "clientHash": "<1-64 hex, optional>" }
+```
+
+- Authentication, revocation, the per-key rate limit and the key touch work as for `/thumbmark`, so errors from those (403, 429) are returned as usual. Reports share the key's `rate_limit_per_minute` with `/thumbmark`.
+- The key's `allowed_origins` check is skipped on this route: the browser sends nazr's own origin, which is never in a key's list. Origin scoping is enforced on the frame document by `frame-ancestors` instead.
+- After authentication the answer is always `204`. A body that is not a JSON object, has an invalid `nonce`, a non-object `components`, or a `clientHash` that is not 1 to 64 hex characters is dropped silently, never a 400, so the widget cannot break the host page.
+- The server adds its own components (`tls`, `h2`, `header`, `ip`) and stores a row with a server-computed `thumbmark`. That value uses no client stabilization options and is not expected to equal `clientHash` or the page thumbmark. No visitor is created or touched.
+- Rows are pruned under `NAZR_EVENT_RETENTION`. The raw IP and the merged components are stored under `NAZR_STORE_IP` and `NAZR_STORE_COMPONENTS`.
+
+### `GET /widget/v1/frame`
+
+Query: `k` is the API key, `n` the nonce. An unknown, malformed, missing or revoked key gets `403` with an empty body. Otherwise the response is HTML with:
+
+```http
+Content-Security-Policy: frame-ancestors <allowed_origins or *>; default-src 'none'; script-src 'self'; connect-src 'self'
+Cache-Control: no-store
+```
+
+`frame-ancestors` lists the key's `allowed_origins` entry by entry (wildcard hosts such as `https://*.example.com` are valid syntax), or `*` when the key has no list or contains `*`. There is no `X-Frame-Options`, which has no allow-all value.
+
+### Cache policy
+
+| Asset | `Cache-Control` |
+|---|---|
+| `loader.js` | `public, max-age=300`, with an `ETag` (fixed path, so fixes reach embeds within minutes) |
+| `frame.<hash>.js` | `public, max-age=31536000, immutable` (content-hashed name) |
+| `frame` | `no-store` |
+
 ## Connection modes and fingerprint capture
 
 `NAZR_TLS_MODE` decides which fingerprints the server can observe.
@@ -233,6 +278,23 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
 | `GET /admin/keys` | 200, array of keys (never secrets) |
 | `POST /admin/keys` body `{"label": "site", "allowed_origins": ["https://example.com"], "rate_limit_per_minute": 120}` | 201, key object including `key`, the plaintext, shown once. `label` is required. Each `allowed_origins` entry must be `*` or `scheme://host[:port]` (the host may start with `*.`); anything else is a 400 `bad_request` naming the entry |
 | `DELETE /admin/keys/{id}` | 204, or 404 `not_found` |
+
+`GET /admin/keys/{id}/widget` summarises the widget reports of a key over the last 30 days. An unknown key simply has no reports.
+
+```json
+{
+  "window_days": 30,
+  "reports": 1200,
+  "matched": 1100,
+  "unmatched": 100,
+  "ip_mismatch": 3,
+  "ja4_mismatch": 1,
+  "ja4_unknown": 0,
+  "ua_mismatch": 2
+}
+```
+
+Counts are over report rows. A report is matched when the key has a `/thumbmark` event with the same `nonce` within 10 minutes of it, in either direction (the most recent one is used); the rest are `unmatched`. Among matched reports, `ip_mismatch` is a differing IP hash, `ja4_mismatch` a differing raw JA4 string, `ja4_unknown` a pair where either side has no JA4 (such as `plain` mode), and `ua_mismatch` a differing raw `User-Agent`. The verdict is computed on read and does not feed the danger score. What it does and does not detect is in [widget.md](widget.md#what-the-summary-shows).
 
 Revocation takes effect within the key-cache TTL (60 seconds), because the cache is keyed by key hash and is not invalidated on revoke. The same operations are available offline as `nazr keys create|list|revoke`.
 

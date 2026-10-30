@@ -33,6 +33,8 @@ const tm = new Thumbmark({
 
 See the [client README](packages/thumbmark/README.md) and [protocol.md](docs/protocol.md).
 
+An optional embeddable widget collects a second, isolated fingerprint in a cross-origin iframe and correlates it with the page's call by nonce: see [docs/widget.md](docs/widget.md).
+
 ## Quick start (60 seconds, Docker Compose)
 
 ```bash
@@ -52,6 +54,7 @@ The API is at `https://localhost` with a self-signed certificate (use `curl -k`)
 ## Reference
 
 - [docs/protocol.md](docs/protocol.md): routes, request and response, errors, CORS, connection modes
+- [docs/widget.md](docs/widget.md): embeddable widget, nonce correlation and what its summary detects
 - [docs/signals.md](docs/signals.md): components, classification table, IP list sources
 - [docs/configuration.md](docs/configuration.md): every `NAZR_*` variable
 
@@ -86,6 +89,7 @@ The repository is GPL-3.0 ([LICENSE](LICENSE)). `packages/thumbmark` is a fork o
 apps/api/            Go API (cmd/nazr: serve, migrate, keys, lists)
 apps/demo/           Vite demo page; Playwright e2e in e2e/
 packages/thumbmark/  @nazr/thumbmark, the ThumbmarkJS fork
+packages/widget/     @nazr/widget, the embeddable loader and frame
 deploy/compose/      Docker Compose stack and smoke script
 deploy/terraform/aws Terraform module (NLB, ECS Fargate, RDS)
 docs/                protocol, signals, configuration, deploy guides

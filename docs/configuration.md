@@ -40,6 +40,7 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_CANVAS_PROBE_SCORING` | bool | `false` | Enable opt-in canvas-probe anomaly scoring (the `canvas_probe_anomaly` signal). Storage of the probe and the admin entropy report are unaffected by it; see [signals.md](signals.md#consumer-canvas-probe-and-the-entropy-report) |
 | `NAZR_DATA_DIR` | path | `/data` | Cache for downloaded IP lists. Use a persistent volume |
 | `NAZR_DEMO_DIR` | path | empty | Serve static files at `/demo/` when set |
+| `NAZR_WIDGET_DIR` | path | empty (the embedded widget) | Serve the widget assets from this directory instead of the ones embedded in the binary, for development. The directory holds `loader.js`, `frame.html`, `manifest.json` and the frame bundle, as built by `@nazr/widget`. See [widget.md](widget.md) |
 | `NAZR_AUTO_MIGRATE` | bool | `true` | Apply database migrations on `serve` start. `nazr migrate` does it explicitly |
 | `NAZR_LOG_LEVEL` | string | `info` | `debug`, `info`, `warn`, `error` |
 | `NAZR_LOG_FORMAT` | `json`, `text` | `json` | Log encoding |
@@ -66,10 +67,10 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | Variable | Type | Default | Meaning |
 |---|---|---|---|
 | `NAZR_VISITOR_MATCH_WINDOW` | duration | `720h` | How far back a thumbmark can be matched to an existing visitor |
-| `NAZR_STORE_IP` | `raw`, `hash` | `raw` | Store the client IP as is, or only its salted hash |
+| `NAZR_STORE_IP` | `raw`, `hash` | `raw` | Store the client IP as is, or only its salted hash (events and widget reports) |
 | `NAZR_IP_HASH_SALT` | string, secret | empty | Salt for `ip_identifier` (and stored hashes). Set it to a random value; changing it changes every identifier |
-| `NAZR_STORE_COMPONENTS` | bool | `false` | Persist the full merged components with each event |
-| `NAZR_EVENT_RETENTION` | duration | `2160h` (90 days) | Events older than this are pruned hourly; `0` keeps them forever |
+| `NAZR_STORE_COMPONENTS` | bool | `false` | Persist the full merged components with each event and each widget report |
+| `NAZR_EVENT_RETENTION` | duration | `2160h` (90 days) | Events and widget reports older than this are pruned hourly; `0` keeps them forever |
 | `NAZR_LOG_RETENTION` | duration | `0s` | Enables storing `/log` bodies and sets their retention; `0` discards them |
 
 ## Reference output
@@ -82,6 +83,7 @@ NAZR_ADMIN_TOKEN=
 NAZR_APPLE_RELAY_URL=
 NAZR_AUTO_MIGRATE=true
 NAZR_BODY_LIMIT=262144
+NAZR_CANVAS_PROBE_SCORING=false
 NAZR_CLIENT_IP_HEADER=x-forwarded-for
 NAZR_COLLECT_SAMPLE_RATE=0.01
 NAZR_CORS_ORIGINS=*
@@ -119,6 +121,7 @@ NAZR_TRUSTED_PROXIES=
 NAZR_UA_JA4_MIN_OBSERVATIONS=20
 NAZR_VISITOR_MATCH_WINDOW=720h0m0s
 NAZR_VPN_URLS=
+NAZR_WIDGET_DIR=
 ```
 
 ## Subcommands

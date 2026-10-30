@@ -27,6 +27,7 @@
       "!**/testpage",
       "!**/test-results",
       "!apps/api/testdata",
+      "!apps/api/internal/widgetassets/assets",
       "!packages/jb"
     ]
   },

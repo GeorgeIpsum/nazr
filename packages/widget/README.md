@@ -21,3 +21,7 @@ and POSTs `{ nonce, components, clientHash }` to `/widget/report` on the nazr or
 
 The API server (`apps/api`) embeds these files. It reads `manifest.json` to learn the bundle
 name, renders `frame.html` with it as `Bundle`, and serves the bundle under `/widget/v1/`.
+
+## Embedding and docs
+
+The embedding guide, including correlating the page call with `nonce` and what the server-side summary detects, is [docs/widget.md](../../docs/widget.md). A runnable host page is `apps/demo/widget-host.html`. The package is private and consumed by `apps/api`: its build step (`sync-widget`) copies `dist/` into the Go embed directory, and `NAZR_WIDGET_DIR` serves a directory from disk instead.
