@@ -201,7 +201,9 @@ pre-release cleanup and NOT a pattern, Phase 1 adds a normal new migration.
   JA4 string equality** (the same browser talking to the same host produces
   the same JA4; `classify.TLSFamily` is a UA-family collapse and does not
   apply), and is **unknown** when either side has no JA4 (every request in
-  `plain` mode); `ua_match` is `ua.Family` equality.
+  `plain` mode); `ua_match` is raw `user_agent` string equality, for the same
+  reason (the family is not computable inside the summary query, and the
+  same browser sends an identical UA string from both contexts).
 - Admin endpoint `GET /admin/keys/{id}/widget` summarises the key's reports
   over the last `ProbeWindowDays` (reuse the canvas-probe window):
 
