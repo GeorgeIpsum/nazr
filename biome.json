@@ -26,7 +26,8 @@
       "!.superpowers",
       "!**/testpage",
       "!**/test-results",
-      "!apps/api/testdata"
+      "!apps/api/testdata",
+      "!packages/jb"
     ]
   },
   "overrides": [
