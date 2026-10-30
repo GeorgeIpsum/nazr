@@ -80,7 +80,8 @@ func validOrigin(o string) bool {
 	if rest, ok := strings.CutPrefix(host, "*."); ok {
 		host = rest
 	}
-	if host == "" || strings.ContainsAny(host, "*") || strings.HasPrefix(host, ".") {
+	// ';', ',' and "'" would split or quote a CSP frame-ancestors source list.
+	if host == "" || strings.ContainsAny(host, "*;,'") || strings.HasPrefix(host, ".") {
 		return false
 	}
 	if p := u.Port(); p != "" {
