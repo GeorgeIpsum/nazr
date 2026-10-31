@@ -198,6 +198,7 @@ describe("frame messages", () => {
       vi.advanceTimersByTime(1);
       await expect(widget?.ready).resolves.toEqual({ nonce: "" });
       expect(widget?.nonce).toBeUndefined();
+      expect(widget?.state).toBe("failed");
       expect(cb).toHaveBeenCalledTimes(1);
       expect(cb).toHaveBeenCalledWith("network");
       send(iframe, { type: "nazr:challenge", id: "late" });

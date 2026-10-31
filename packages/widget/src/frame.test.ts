@@ -294,6 +294,38 @@ describe("reportFromFrame interactive step", () => {
     expect(messages[2]).toEqual({ type: "nazr:error", reason: "network" });
   });
 
+  it("fails with invalid once the staged challenge expires before the click", async () => {
+    vi.useFakeTimers({ now: 1_000_000_000_000 });
+    try {
+      const staged = `${b64url(JSON.stringify({ id: ID, exp: 1_000_000_060, bits: 12 }))}.mac`;
+      const { deps, fetch, messages } = makeDeps({
+        search: "?k=nzr_x&i=1",
+        fetchImpl: sequence({
+          verdict: "inconclusive",
+          interactive: { challenge: staged, bits: 12 },
+        }),
+      });
+      const done = reportFromFrame(deps);
+      const b = await button();
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(messages).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await done;
+      expect(messages).toEqual([
+        { type: "nazr:challenge", id: ID },
+        { type: "nazr:interactive" },
+        { type: "nazr:error", reason: "invalid" },
+      ]);
+      expect(b.textContent).toBe("Verification failed");
+      press(b);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(messages).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("answers inconclusive without i=1 and never renders", async () => {
     const { deps, fetch, solve, messages } = makeDeps({ fetchImpl: sequence(OFFER) });
     await reportFromFrame(deps);

@@ -122,12 +122,17 @@ export function renderInteractive(doc: Document, now: () => number): Interactive
 
   doc.addEventListener("pointermove", onMove);
   button.addEventListener("pointerdown", (ev) => {
+    if ((ev as PointerEvent).button !== 0) return;
     const pointerType = (ev as PointerEvent).pointerType || "mouse";
     activate({ isTrusted: ev.isTrusted, type: ev.type, pointerType });
   });
-  // Fallback for environments without pointer events; ignored after a pointerdown.
+  // Ignored after a pointerdown or keydown. A click with detail 0 came from no pointer
+  // (assistive technology, Enter on some platforms), so it counts as a keyboard activation
+  // and skips the path rules; otherwise it is the fallback for browsers without pointer events.
   button.addEventListener("click", (ev) => {
-    activate({ isTrusted: ev.isTrusted, type: "click", pointerType: "mouse" });
+    if (ev.button !== 0) return;
+    if (ev.detail === 0) activate({ isTrusted: ev.isTrusted, type: "keydown" });
+    else activate({ isTrusted: ev.isTrusted, type: "click", pointerType: "mouse" });
   });
   button.addEventListener("keydown", (ev) => {
     if (ev.key !== " " && ev.key !== "Enter") return;

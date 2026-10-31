@@ -164,12 +164,49 @@ describe("renderInteractive", () => {
       document.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: y }));
     }
     (document.querySelector("button") as HTMLButtonElement).dispatchEvent(
-      new MouseEvent("click", { bubbles: true }),
+      new MouseEvent("click", { detail: 1, bubbles: true }),
     );
     const s = await ui.activated;
     expect(s).toMatchObject({ input: "pointer", pointer_type: "mouse", moves: 2, path_px: 5 });
     // jsdom dispatches untrusted events.
     expect(s.trusted).toBe(false);
+  });
+
+  it("records a click without a pointer (detail 0) as a keyboard activation", async () => {
+    const ui = renderInteractive(document, () => 0);
+    await ui.shown;
+    document.dispatchEvent(new MouseEvent("pointermove", { clientX: 1, clientY: 1 }));
+    (document.querySelector("button") as HTMLButtonElement).dispatchEvent(
+      new MouseEvent("click", { detail: 0, bubbles: true }),
+    );
+    const s = await ui.activated;
+    expect(s.input).toBe("keyboard");
+    expect(s.pointer_type).toBe("");
+  });
+
+  it("records a click with detail 1 as a mouse pointer activation", async () => {
+    const ui = renderInteractive(document, () => 0);
+    await ui.shown;
+    (document.querySelector("button") as HTMLButtonElement).dispatchEvent(
+      new MouseEvent("click", { detail: 1, bubbles: true }),
+    );
+    expect(await ui.activated).toMatchObject({ input: "pointer", pointer_type: "mouse" });
+  });
+
+  it("ignores non-primary buttons", async () => {
+    const ui = renderInteractive(document, () => 0);
+    await ui.shown;
+    const button = document.querySelector("button") as HTMLButtonElement;
+    let done = false;
+    void ui.activated.then(() => {
+      done = true;
+    });
+    button.dispatchEvent(new MouseEvent("pointerdown", { button: 2, bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { button: 1, detail: 1, bubbles: true }));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    button.dispatchEvent(new MouseEvent("pointerdown", { button: 0, bubbles: true }));
+    expect(await ui.activated).toMatchObject({ input: "pointer", pointer_type: "mouse" });
   });
 
   it("changes the button for each state", async () => {

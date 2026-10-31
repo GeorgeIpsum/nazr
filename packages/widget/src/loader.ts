@@ -144,6 +144,7 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
       readyTimer = undefined;
       if (resolved) return;
       resolved = true;
+      widget.state = "failed";
       resolveReady({ nonce: "" });
       callGlobal(script.dataset.errorCallback, "network");
     }, readyTimeoutMs);

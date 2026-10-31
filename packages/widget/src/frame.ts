@@ -37,17 +37,25 @@ function asOffer(v: unknown): InteractiveOffer | null {
   return { challenge, bits };
 }
 
-/** Reads the challenge id from the payload segment (base64url JSON) before the first dot. */
-function challengeId(challenge: string): string | null {
+/** Decodes the payload segment (base64url JSON) before the first dot; null when malformed. */
+function challengePayload(challenge: string): { id?: unknown; exp?: unknown } | null {
   try {
     let b64 = challenge.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
     while (b64.length % 4) b64 += "=";
-    const id = (JSON.parse(atob(b64)) as { id?: unknown }).id;
-    return typeof id === "string" && id !== "" ? id : null;
+    const payload: unknown = JSON.parse(atob(b64));
+    return typeof payload === "object" && payload !== null ? payload : null;
   } catch {
     return null;
   }
 }
+
+/** Reads the challenge id from the payload. */
+function challengeId(challenge: string): string | null {
+  const id = challengePayload(challenge)?.id;
+  return typeof id === "string" && id !== "" ? id : null;
+}
+
+const maxTimerMs = 2_147_483_647;
 
 /**
  * Runs the widget handshake inside the nazr frame: announces the challenge, solves the
@@ -125,7 +133,22 @@ async function interact(
   // Observed below, after the click; keep an early failure from surfacing as unhandled.
   solution.catch(() => {});
 
-  const trace = await ui.activated;
+  // The staged challenge's exp is wall-clock seconds; once it passes the server would answer
+  // invalid, so fail the box then instead of waiting for a click that cannot succeed.
+  const exp = challengePayload(offer.challenge)?.exp;
+  let expiry: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    if (typeof exp !== "number" || !Number.isFinite(exp)) return;
+    const ms = Math.min(Math.max(0, exp * 1000 - Date.now()), maxTimerMs);
+    expiry = setTimeout(() => resolve(null), ms);
+  });
+  const trace = await Promise.race([ui.activated, expired]);
+  clearTimeout(expiry);
+  if (trace === null) {
+    ui.setState("failed");
+    deps.post({ type: "nazr:error", reason: "invalid" });
+    return;
+  }
   ui.setState("working");
   try {
     const pow = await solution;

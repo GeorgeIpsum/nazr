@@ -37,7 +37,7 @@ interface Siteverify {
     path_px: number;
     straightness: number;
     elapsed_ms: number;
-    signals: string[];
+    signals: Record<string, boolean>;
   };
   error_codes: string[];
 }
