@@ -16,3 +16,6 @@ deploy/terraform/**/.terraform
 apps/demo/test-results
 apps/api/internal/widgetassets/assets/*
 !apps/api/internal/widgetassets/assets/.gitkeep
+
+# mise personal overrides
+mise.local.toml

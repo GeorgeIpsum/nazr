@@ -1,0 +1,9 @@
+# Local development toolchain. CI does not use mise: it reads .node-version
+# through actions/setup-node and installs pnpm with pnpm/action-setup.
+[settings]
+# Read the Node version from .node-version, the single source CI also uses.
+idiomatic_version_file_enable_tools = ["node"]
+
+[tools]
+# Standalone pnpm binary; keep in step with "packageManager" in package.json.
+pnpm = "10.27.0"
