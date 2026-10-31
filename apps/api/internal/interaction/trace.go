@@ -11,7 +11,7 @@ const (
 	MinMoves        = 3      // fewest pointer moves a mouse or pen click should show
 	MaxStraightness = 0.98   // straightness at or above this is a synthetic path
 
-	maxTimeMS   = 86400000 // validity bound for shown_ms and click_ms
+	maxTimeMS   = 1 << 31 // validity bound for shown_ms and click_ms (spec 3.2)
 	maxMoves    = 200
 	maxPathPX   = 1e6
 	maxStringLn = 16
