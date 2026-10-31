@@ -265,12 +265,12 @@ type widgetReportBody struct {
 	components                 map[string]any
 }
 
-// parseWidgetReport applies the report bounds: challenge 1..512 bytes, pow
+// parseWidgetReport applies the report bounds: challenge 1..768 bytes, pow
 // 1..32 ASCII digits, components an object, clientHash absent or 1..64 hex.
 func parseWidgetReport(raw map[string]any) (widgetReportBody, bool) {
 	var b widgetReportBody
 	var ok bool
-	if b.challenge, ok = raw["challenge"].(string); !ok || len(b.challenge) < 1 || len(b.challenge) > 512 {
+	if b.challenge, ok = raw["challenge"].(string); !ok || len(b.challenge) < 1 || len(b.challenge) > 768 {
 		return b, false
 	}
 	if b.pow, ok = raw["pow"].(string); !ok || !validPow(b.pow) {

@@ -198,7 +198,7 @@ func TestInteractInvalid(t *testing.T) {
 		"bad input":       func(_ *testing.T, _ *env, b map[string]any, _ string) { b["trace"].(map[string]any)["input"] = "tap" },
 		"float shown_ms":  func(_ *testing.T, _ *env, b map[string]any, _ string) { b["trace"].(map[string]any)["shown_ms"] = 1.5 },
 		"string trusted":  func(_ *testing.T, _ *env, b map[string]any, _ string) { b["trace"].(map[string]any)["trusted"] = "yes" },
-		"long challenge":  func(_ *testing.T, _ *env, b map[string]any, _ string) { b["challenge"] = strings.Repeat("a", 513) },
+		"long challenge":  func(_ *testing.T, _ *env, b map[string]any, _ string) { b["challenge"] = strings.Repeat("a", 769) },
 		"empty challenge": func(_ *testing.T, _ *env, b map[string]any, _ string) { b["challenge"] = "" },
 		"long pow":        func(_ *testing.T, _ *env, b map[string]any, _ string) { b["pow"] = strings.Repeat("1", 33) },
 		"numeric pow":     func(_ *testing.T, _ *env, b map[string]any, _ string) { b["pow"] = 12 },

@@ -76,10 +76,36 @@ func TestChallengeRoundTrip(t *testing.T) {
 		t.Fatalf("expired: %v", err)
 	}
 	// Malformed.
-	for _, m := range []string{"abc", strings.Repeat("a", 513), "a.b.c", "!!!.???"} {
+	for _, m := range []string{"abc", strings.Repeat("a", 769), "a.b.c", "!!!.???"} {
 		if _, err := ParseChallenge(m, lookup, now); !errors.Is(err, ErrChallengeMalformed) {
 			t.Fatalf("%.10q: %v", m, err)
 		}
+	}
+}
+
+func TestChallengeMaxLength(t *testing.T) {
+	s1 := []byte("s1")
+	lookup := func(string) ([]byte, bool) { return s1, true }
+	now := time.Unix(1_700_000_000, 0)
+	var s string
+	for n := 400; n < 700; n++ {
+		s = MintChallenge(s1, Challenge{ID: strings.Repeat("x", n), Expires: now.Unix() + 600, Kid: "k1"})
+		if len(s) >= 768 {
+			break
+		}
+	}
+	if len(s) != 768 {
+		t.Skipf("could not build a 768-char challenge (got %d)", len(s))
+	}
+	if _, err := ParseChallenge(s, lookup, now); err != nil {
+		t.Fatalf("768 chars: %v", err)
+	}
+	// Tamper the MAC: still parsed as far as the MAC check.
+	if _, err := ParseChallenge(s[:767]+"A", lookup, now); errors.Is(err, ErrChallengeMalformed) {
+		t.Fatalf("768 chars tampered: %v", err)
+	}
+	if _, err := ParseChallenge(s+"A", lookup, now); !errors.Is(err, ErrChallengeMalformed) {
+		t.Fatalf("769 chars: %v", err)
 	}
 }
 

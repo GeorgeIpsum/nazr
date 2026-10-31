@@ -31,10 +31,13 @@ func TestSigningKeys(t *testing.T) {
 	}
 	// The first key activates as soon as it exists.
 	if got.PrivateKeyPEM != "pem-k1" || string(got.PublicJWK) != `{"kid": "k1"}` || string(got.HMACSecret) != "secret-k1" ||
-		!got.CreatedAt.Equal(k1.CreatedAt) || got.RetiredAt != nil || !got.ActivatesAt.Equal(k1.CreatedAt) {
+		!got.CreatedAt.Equal(k1.CreatedAt) || got.RetiredAt != nil {
 		t.Fatalf("round trip: %+v", got)
 	}
 
+	if d := got.CreatedAt.Sub(got.ActivatesAt); d < 58*time.Second || d > 62*time.Second {
+		t.Fatalf("first key activates %v before created_at, want 60s", d)
+	}
 	before := time.Now()
 	if err := s.RotateSigningKey(ctx, k2, time.Hour); err != nil {
 		t.Fatal(err)
@@ -49,7 +52,7 @@ func TestSigningKeys(t *testing.T) {
 	// retires one hour ahead.
 	list, err := s.ListSigningKeys(ctx, now.Add(-time.Hour))
 	if err != nil || len(list) != 2 || list[0].Kid != "k2" || list[0].RetiredAt != nil || !within(list[0].ActivatesAt) ||
-		list[1].Kid != "k1" || list[1].RetiredAt == nil || !within(*list[1].RetiredAt) || !list[1].ActivatesAt.Equal(k1.CreatedAt) {
+		list[1].Kid != "k1" || list[1].RetiredAt == nil || !within(*list[1].RetiredAt) || list[1].ActivatesAt.After(k1.CreatedAt) {
 		t.Fatalf("list: %+v %v", list, err)
 	}
 	list, err = s.ListSigningKeys(ctx, now.Add(2*time.Hour))

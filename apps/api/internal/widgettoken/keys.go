@@ -22,9 +22,10 @@ const (
 	// for verification.
 	SigningKeyGrace = 24 * time.Hour
 	// SigningKeyPublish is how long a rotated-in key is published in the
-	// JWKS before it starts signing: the JWKS cache time, so consumers have
-	// it before the first token it signs.
-	SigningKeyPublish = time.Hour
+	// JWKS before it starts signing: the JWKS cache time (one hour) plus two
+	// refresh periods, so every replica has loaded the key before it signs
+	// and consumers have it cached before its first token.
+	SigningKeyPublish = time.Hour + 2*SigningKeyRefresh
 	// SigningKeyRefresh is how often the keyring reloads from the database.
 	SigningKeyRefresh = 60 * time.Second
 )

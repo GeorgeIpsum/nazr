@@ -26,13 +26,13 @@ type interactBody struct {
 	trace          interaction.Trace
 }
 
-// parseInteract applies the interact bounds: challenge 1..512 bytes, pow
+// parseInteract applies the interact bounds: challenge 1..768 bytes, pow
 // 1..32 ASCII digits, trace an object that decodes into a valid Trace.
 // Unknown trace keys are ignored.
 func parseInteract(raw map[string]any) (interactBody, bool) {
 	var b interactBody
 	var ok bool
-	if b.challenge, ok = raw["challenge"].(string); !ok || len(b.challenge) < 1 || len(b.challenge) > 512 {
+	if b.challenge, ok = raw["challenge"].(string); !ok || len(b.challenge) < 1 || len(b.challenge) > 768 {
 		return b, false
 	}
 	if b.pow, ok = raw["pow"].(string); !ok || !validPow(b.pow) {

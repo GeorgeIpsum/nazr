@@ -142,7 +142,11 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		return fmt.Errorf("signing keyring: %w", err)
 	}
 	go ring.Run(ctx, widgettoken.SigningKeyRefresh)
-	logger.Info("widget signing key ready", "kid", sk.Kid)
+	if active, ok := ring.Active(time.Now()); ok {
+		logger.Info("widget signing key ready", "kid", active.Kid)
+	} else {
+		logger.Warn("widget signing key ready, but no key is active yet", "kid", sk.Kid, "note", "kid is the ensured key, not an active signer")
+	}
 
 	intel, err := newIntel(cfg, logger)
 	if err != nil {

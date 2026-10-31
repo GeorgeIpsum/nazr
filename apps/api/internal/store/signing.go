@@ -39,11 +39,16 @@ const insertSigningKeySQL = `INSERT INTO signing_keys (kid, private_key_pem, pub
 
 // signingKeyLock is the advisory lock key ("nazrsign") that serialises
 // EnsureSigningKey and RotateSigningKey across processes.
+// firstKeyLead is how far before created_at the first key activates.
+const firstKeyLead = 60 * time.Second
+
 const signingKeyLock int64 = 0x6e617a727369676e
 
 // EnsureSigningKey returns the newest unretired signing key, inserting the
-// key made by gen when none exists. An inserted key activates at its
-// created_at, so a fresh database never has a key that is not yet active.
+// key made by gen when none exists. An inserted key activates 60 seconds
+// before its created_at, so a fresh database never has a key that is not yet
+// active: a replica whose clock lags the database by less than the refresh
+// period still sees it as active.
 // The check and insert run under an advisory lock, so concurrent callers
 // (several tasks booting together) end with one key; gen is called only
 // when this call inserts.
@@ -63,7 +68,7 @@ func (s *Store) EnsureSigningKey(ctx context.Context, gen func() (SigningKey, er
 		if err != nil {
 			return SigningKey{}, err
 		}
-		k.ActivatesAt = k.CreatedAt
+		k.ActivatesAt = k.CreatedAt.Add(-firstKeyLead)
 		if _, err = tx.Exec(ctx, insertSigningKeySQL,
 			k.Kid, k.PrivateKeyPEM, []byte(k.PublicJWK), k.HMACSecret, k.CreatedAt, k.ActivatesAt); err != nil {
 			return SigningKey{}, err

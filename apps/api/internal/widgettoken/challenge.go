@@ -19,7 +19,7 @@ var (
 )
 
 // maxChallengeLen bounds the encoded challenge before anything is decoded.
-const maxChallengeLen = 512
+const maxChallengeLen = 768
 
 // Challenge is the server-minted payload a browser must solve before it can
 // ask for a token. Field order fixes the encoded form. Key is the API key id

@@ -1552,7 +1552,7 @@ func TestWidgetReportInvalid(t *testing.T) {
 			b["challenge"] = payload + "." + first + mac[1:]
 		},
 		"expired":           func(e *env, _ map[string]any) { e.now = testNow.Add(11 * time.Minute) },
-		"long challenge":    func(_ *env, b map[string]any) { b["challenge"] = strings.Repeat("a", 513) },
+		"long challenge":    func(_ *env, b map[string]any) { b["challenge"] = strings.Repeat("a", 769) },
 		"empty challenge":   func(_ *env, b map[string]any) { b["challenge"] = "" },
 		"non-digit pow":     func(_ *env, b map[string]any) { b["pow"] = "12a" },
 		"long pow":          func(_ *env, b map[string]any) { b["pow"] = strings.Repeat("1", 33) },
