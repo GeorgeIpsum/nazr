@@ -89,6 +89,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # The smoke image embeds the widget: build and sync it before the docker build.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build --filter=@nazr/widget
+      - run: pnpm --filter @nazr/api sync-widget
       - name: Build and start the stack
         run: docker compose -f deploy/compose/docker-compose.yml up -d --build
       - name: Smoke test

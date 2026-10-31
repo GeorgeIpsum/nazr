@@ -17,7 +17,7 @@ pnpm lint:biome      # Biome across the whole repo, including Markdown
 pnpm typecheck       # builds dependency packages first (turbo ^build)
 pnpm test
 pnpm build
-pnpm smoke:compose   # brings up the compose stack, runs 15 checks, tears down (KEEP=1 keeps it)
+pnpm smoke:compose   # brings up the compose stack, runs 21 checks, tears down (KEEP=1 keeps it)
 ```
 
 Single tests:
