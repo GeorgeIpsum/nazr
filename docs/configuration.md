@@ -6,7 +6,7 @@ nazr is configured entirely through `NAZR_*` environment variables. Inspect the 
 nazr serve --print-config
 ```
 
-Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, ACME domains combined with inline PEM, `NAZR_POW_BITS` outside 0-32, a non-positive `NAZR_WIDGET_TOKEN_TTL`, or `NAZR_WIDGET_PASS_MAX_DANGER` outside 0-5) stop startup with an error.
+Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, ACME domains combined with inline PEM, `NAZR_POW_BITS` outside 0-32, a `NAZR_WIDGET_TOKEN_TTL` not greater than 0 or above 1h, or `NAZR_WIDGET_PASS_MAX_DANGER` outside 0-5) stop startup with an error.
 
 Secrets (redacted in `--print-config` and in the debug log): `NAZR_DATABASE_URL`, `NAZR_REDIS_URL`, `NAZR_TLS_KEY_PEM`, `NAZR_MAXMIND_LICENSE_KEY`, `NAZR_ADMIN_TOKEN`, `NAZR_IP_HASH_SALT`, `NAZR_JA4DB_TOKEN`.
 
@@ -78,8 +78,8 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | Variable | Type | Default | Meaning |
 |---|---|---|---|
 | `NAZR_POW_BITS` | int 0-32 | `18` | Leading zero bits of `sha256(id + ":" + counter)` the frame must find before it can get a token. Each extra bit doubles the expected work; 18 is a fraction of a second on a laptop. `0` disables proof-of-work (any counter passes), which tests use |
-| `NAZR_WIDGET_TOKEN_TTL` | duration | `5m` | Lifetime of an issued token. Must be greater than 0 |
-| `NAZR_WIDGET_ISSUER` | string | empty (`https://<Host>` of the request) | The token's `iss` claim. Set it when the request `Host` seen by nazr is not the public name |
+| `NAZR_WIDGET_TOKEN_TTL` | duration | `5m` | Lifetime of an issued token. Must be greater than 0 and at most `1h`: tokens must expire well inside the 24 h signing-key grace minus the 1 h JWKS cache. The loader also clamps its own expiry timer |
+| `NAZR_WIDGET_ISSUER` | string | empty (`https://<Host>` of the request) | The token's `iss` claim. Set it in production: the default derives from the request `Host`. It is required when the `Host` seen by nazr is not the public name |
 | `NAZR_WIDGET_PASS_MAX_DANGER` | int 0-5 | `2` | Highest classification danger level that still earns a token. Bots never pass, whatever their level |
 
 Trust boundary: the signing keys' private halves and their HMAC secrets are stored in plaintext in Postgres, so anyone who can read the database can mint tokens. The server creates the first signing key on its first `serve`; see [the trust boundary](widget.md#trust-boundary-and-deployment). `NAZR_WIDGET_DIR` (in Core) also applies. How the widget works is in [widget.md](widget.md).

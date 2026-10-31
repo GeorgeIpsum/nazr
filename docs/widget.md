@@ -43,7 +43,7 @@ window.__nazrWidget = {
 
 | Member | Meaning |
 |---|---|
-| `ready` | Resolves with `{ nonce }` when the frame has decoded its challenge. It does not wait for the proof-of-work or the report |
+| `ready` | Resolves with `{ nonce }` when the frame has decoded its challenge. It does not wait for the proof-of-work or the report. It always settles within 10 seconds: if no challenge arrives by then it resolves with `{ nonce: "" }` and the error callback gets `network` |
 | `nonce` | The current challenge id. Set asynchronously, so it is `undefined` right after the loader runs: always `await ready` first. It changes on every `reset()` |
 | `token` | The current token, or `undefined` before the first pass, after expiry and after `reset()` |
 | `reset()` | Clears the token and the hidden input and reloads the frame, which fetches a fresh challenge and starts over |
@@ -88,7 +88,7 @@ A bearer credential: anyone holding it can present it, once. It is an ES256 JWS 
 
 | Claim | Value |
 |---|---|
-| `iss` | `NAZR_WIDGET_ISSUER`, or `https://<Host>` of the request when empty |
+| `iss` | `NAZR_WIDGET_ISSUER`, or `https://<Host>` of the request when empty. Set `NAZR_WIDGET_ISSUER` in production so `iss` does not depend on the `Host` header a request arrives with |
 | `aud` | The id of the API key the widget was loaded with (the key's `id`, not the `nzr_` string) |
 | `jti` | The challenge id. Single use at siteverify |
 | `iat`, `exp` | Issue time and expiry, `NAZR_WIDGET_TOKEN_TTL` apart (default 5 minutes) |
@@ -138,7 +138,8 @@ curl -s https://nazr.example.com/widget/v1/siteverify \
 - An expired token is rejected before it is spent, so it cannot burn the row.
 - `remoteip-mismatch` still returns `hostname`, `verdict`, `correlation`, `classification` and `signals` with `success: false`, and the token is spent. Treat it as a failure.
 - Siteverify shares the key's rate-limit bucket (`rate_limit_per_minute`) with page traffic, so budget for it.
-- If the store fails after the token was marked spent, the answer is 503 `store_unavailable`. A retry then gets `replayed`. Ask the user to submit again; the widget will have refreshed the token by then.
+- A store failure before the token is spent answers 503 `store_unavailable`, and a retry with the same token works. `correlation` is absent when nazr could not compute it after spending the token; the rest of the answer is unaffected.
+- On success and on `remoteip-mismatch`, `hostname` is always present (`""` when nazr did not observe the embedding origin) and `signals` is always an object (`{}` when empty).
 - `remoteip` is compared with the IP stored for the frame's request. Under `NAZR_STORE_IP=raw` that is the address itself; under `hash` nazr compares the salted identifier, so `NAZR_IP_HASH_SALT` must not change between report and verify. An unparseable `remoteip` never matches. IPv4-mapped IPv6 addresses are unmapped first.
 - `correlation` is the Phase 1 comparison of the frame's report with the `/thumbmark` event carrying the same nonce. `matched: false` means no such event. A refreshed token (after expiry and `reset()`) has a new `jti`, so its `correlation` is `matched: false` unless the host sends `/thumbmark` again with the new `nonce`.
 
@@ -209,6 +210,8 @@ const result = await getThumbmark({
 
 The optional chaining matters: an ad blocker, a CSP or a network error can stop the loader, and an unguarded `window.__nazrWidget.ready` would then throw and skip the page call. A page call without a nonce is simply uncorrelated.
 
+`ready` always settles within 10 seconds. When the loader ran but the frame never delivered a challenge (it was blocked or failed to load), `ready` resolves with an empty `nonce` and the `data-error-callback` global gets `network`. The `nonce ? { nonce } : {}` guard above then sends the page call without a nonce, so it goes ahead uncorrelated.
+
 `nonce` is sent as a top-level field of the `POST /thumbmark` body. It is never part of `components`, never in the hash, and not echoed in `options` or the response, so the thumbmark is unchanged. A runnable page is [`apps/demo/widget-host.html`](../apps/demo/widget-host.html) with [`src/widget-host.ts`](../apps/demo/src/widget-host.ts): it loads the widget inside a form with a `data-callback`, awaits `ready`, then calls `getThumbmark` with the nonce.
 
 Set `cache_api_call: false` when you pass a nonce. By default the client caches the API call's promise; a cached promise sends no request, so the nonce would never reach the server and the page event would stay uncorrelated.
@@ -251,6 +254,7 @@ The server computes a `thumbmark` for each widget report with the frame client's
 | Frame URL `?k=&n=` | `n` is ignored; the frame carries a challenge and the CSP gains `worker-src 'self'` |
 | Server thumbmark unfiltered | Default stabilization (`private`, `iframe`) |
 | No host-side check | Verify the token with siteverify or the JWKS |
+| A Phase 1 loader still in a browser cache (at most 300 s) | It gets the new frame, because the frame document is `no-store`. That frame earns a token the old loader ignores, and the page call carries the old loader's own nonce, so correlation is unmatched for at most 300 s |
 
 The `/thumbmark` `nonce` field, the correlation summary, retention and the admin counts are unchanged. Remove any synchronous read of `window.__nazrWidget.nonce` from host code.
 

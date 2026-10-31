@@ -271,7 +271,7 @@ Called by the host's backend. No `x-api-key` and no CORS; the key's verify secre
 }
 ```
 
-- On success all fields are present. `challenge_ts` is the issue time in RFC 3339 UTC. `correlation.ip_match`, `ja4_match` and `ua_match` are `null` when `matched` is false or the comparison is unknown (for example no JA4 on either side).
+- On success all fields are present, except `correlation`, which is absent when nazr could not compute it after spending the token. `hostname` is `""` when nazr did not observe the embedding origin, and `signals` is `{}` when empty. `challenge_ts` is the issue time in RFC 3339 UTC. `correlation.ip_match`, `ja4_match` and `ua_match` are `null` when `matched` is false or the comparison is unknown (for example no JA4 on either side).
 - A failure is `{"success": false, "error_codes": ["<code>"]}` with no other field, except `remoteip-mismatch`, which keeps every field of the success response and sets `success` to false. The token is spent in that case too.
 
 | Status | `error_codes` | Meaning |
@@ -282,7 +282,7 @@ Called by the host's backend. No `x-api-key` and no CORS; the key's verify secre
 | 200 | `replayed` | The token was already verified |
 | 200 | `remoteip-mismatch` | `remoteip` differs from the frame's request IP (the raw address under `NAZR_STORE_IP=raw`, the salted identifier under `hash`) |
 | 429 | none | `rate_limited` error with `Retry-After`; siteverify shares the key's rate-limit bucket |
-| 503 | none | `store_unavailable`. After the token was marked spent, a retry answers `replayed` |
+| 503 | none | `store_unavailable`: a store failure before the token is spent. A retry with the same token works |
 
 ### Cache policy
 

@@ -453,9 +453,10 @@ outcome as one of the messages above. `fetch` failure or a non-200 status is
   defaults (`verdict=''`, `pow_ok=false`), are counted under none of the new
   verdict buckets, and never issued tokens.
 - A Phase 1 loader still in a browser cache (at most 300 s) requests the
-  frame with `n`, which is ignored; its frame posts the Phase 1 body, which
-  the new handler answers with `200 {verdict:"invalid"}`. Harmless and
-  short-lived.
+  frame with `n`, which is ignored. The frame document is `no-store`, so it
+  gets the new frame, which earns a token the old loader ignores. The page
+  call carries the old loader's own nonce, so correlation is unmatched for
+  at most 300 s. Harmless and short-lived.
 - Hosts that read `window.__nazrWidget.nonce` synchronously after the script
   tag get `undefined`; the Phase 1 guide's Promise form is the supported
   one.
