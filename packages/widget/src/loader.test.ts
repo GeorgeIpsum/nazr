@@ -98,6 +98,69 @@ function spySrc(iframe: HTMLIFrameElement): string[] {
 }
 
 describe("mountWidget", () => {
+  describe("data-form", () => {
+    const exp = () => Math.floor(Date.now() / 1000) + 60;
+    function mountWithForms(attrs: Record<string, string>, scriptForm: boolean) {
+      const roots = captureShadowRoots();
+      const target = document.createElement("form");
+      target.id = "f";
+      document.body.appendChild(target);
+      const div = document.createElement("div");
+      div.id = "d";
+      document.body.appendChild(div);
+      const script = setCurrentScript(attrs);
+      let own: HTMLFormElement | null = null;
+      if (scriptForm) {
+        own = document.createElement("form");
+        own.appendChild(script);
+        document.body.appendChild(own);
+      } else {
+        document.body.appendChild(script);
+      }
+      mountWidget(document, win);
+      const iframe = roots[0].querySelector("iframe") as HTMLIFrameElement;
+      return { iframe, target, own };
+    }
+    const tokenInput = (f: HTMLFormElement | null) =>
+      f?.querySelector('input[name="nazr-token"]') as HTMLInputElement | null;
+
+    it("uses the explicit form when the script is outside any form", () => {
+      const { iframe, target } = mountWithForms({ "data-form": "#f" }, false);
+      const token = jwt(exp());
+      send(iframe, { type: "nazr:token", token });
+      const input = tokenInput(target);
+      expect(input?.type).toBe("hidden");
+      expect(input?.value).toBe(token);
+    });
+
+    it.each(["#d", "#["])("falls back to the closest form for selector %s", (sel) => {
+      const { iframe, target, own } = mountWithForms({ "data-form": sel }, true);
+      send(iframe, { type: "nazr:token", token: jwt(exp()) });
+      expect(tokenInput(own)).not.toBeNull();
+      expect(tokenInput(target)).toBeNull();
+    });
+
+    it("prefers the explicit form over the enclosing one", () => {
+      const { iframe, target, own } = mountWithForms({ "data-form": "#f" }, true);
+      send(iframe, { type: "nazr:token", token: jwt(exp()) });
+      expect(tokenInput(target)).not.toBeNull();
+      expect(tokenInput(own)).toBeNull();
+    });
+
+    it("writes no input but still calls back when nothing resolves", () => {
+      const cb = vi.fn();
+      (win as unknown as Record<string, unknown>).onNazr = cb;
+      const { iframe, target } = mountWithForms(
+        { "data-form": "#nope", "data-callback": "onNazr" },
+        false,
+      );
+      const token = jwt(exp());
+      send(iframe, { type: "nazr:token", token });
+      expect(tokenInput(target)).toBeNull();
+      expect(cb).toHaveBeenCalledWith(token);
+    });
+  });
+
   it("mounts inside a closed shadow root", () => {
     setCurrentScript();
     mountWidget(document, win);

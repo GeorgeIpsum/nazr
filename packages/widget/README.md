@@ -26,6 +26,10 @@ resizes the iframe to 300x65 and calls `data-interactive-callback` (no argument)
 `window.__nazrWidget.state` is `pending`, `pass`, `interactive` (stays so after the token) or
 `failed`; `reset()` collapses the frame and returns it to `pending`.
 
+`data-form` is a CSS selector for the host `<form>` that receives the hidden token input. When it
+resolves to a form it wins; otherwise the loader uses the form enclosing its own tag. Set it when a
+framework injects the loader outside the form (for example `next/script`, which appends to `<body>`).
+
 ## Build outputs
 
 `pnpm --filter @nazr/widget build` writes `dist/`:

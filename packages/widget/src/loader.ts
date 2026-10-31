@@ -71,7 +71,16 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     if (container) src.searchParams.set("i", "1");
 
     const fieldName = script.dataset.responseFieldName || "nazr-token";
-    const form = script.closest("form");
+    let explicitForm: Element | null = null;
+    if (script.dataset.form) {
+      try {
+        explicitForm = doc.querySelector(script.dataset.form);
+      } catch {
+        explicitForm = null;
+      }
+    }
+    const form =
+      explicitForm instanceof win.HTMLFormElement ? explicitForm : script.closest("form");
     let input: HTMLInputElement | undefined;
     let timer: number | undefined;
     let resolveReady: (v: { nonce: string }) => void = () => {};

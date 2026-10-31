@@ -23,6 +23,7 @@ Put the loader tag inside the form you want to protect:
 | `data-error-callback` | Name of a global function called with a reason string when no token can be issued |
 | `data-expired-callback` | Name of a global function called, without arguments, when the token expires |
 | `data-container` | CSS selector of an element on your page. When it resolves, the loader mounts the widget there and enables the [interactive step](#interactive-step). Without it, or when the selector matches nothing or is invalid, the widget stays hidden |
+| `data-form` | CSS selector of the `<form>` that receives the hidden token input. When it resolves to a form it wins; otherwise the loader uses the form enclosing its own tag. Needed when the loader tag is injected outside the form, for example by `next/script`, which appends it to `<body>` |
 | `data-interactive-callback` | Name of a global function called, without arguments, when the frame shows its click-to-verify box |
 | `data-nonce` | Ignored since Phase 2a. The loader logs a console warning. The nonce is now the server-issued challenge id |
 
