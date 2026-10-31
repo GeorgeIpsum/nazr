@@ -633,6 +633,9 @@ func (f *fakeStore) MarkWidgetVerified(_ context.Context, keyID, id string) (sto
 		if r.ID != id || r.APIKeyID != keyID {
 			continue
 		}
+		if r.TokenIssuedAt == nil || (r.Verdict != "pass" && r.Verdict != "interactive") {
+			return store.WidgetReport{}, store.ErrNotFound
+		}
 		if r.VerifiedAt != nil {
 			r.ReplayCount++
 			return store.WidgetReport{}, store.ErrAlreadyVerified

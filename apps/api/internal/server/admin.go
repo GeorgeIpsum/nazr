@@ -206,6 +206,9 @@ type widgetSummaryJSON struct {
 	PowFailed       int64 `json:"pow_failed"`
 	Verified        int64 `json:"verified"`
 	Replayed        int64 `json:"replayed"`
+
+	Interactive       int64 `json:"interactive"`
+	InteractiveFailed int64 `json:"interactive_failed"`
 }
 
 // handleWidgetSummary reports how a key's widget reports correlate with its
@@ -221,5 +224,6 @@ func (s *server) handleWidgetSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, widgetSummaryJSON{WindowDays: store.ProbeWindowDays, Reports: sum.Reports,
 		Matched: sum.Matched, Unmatched: sum.Unmatched, EventsUnmatched: sum.EventsUnmatched,
 		IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch, JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch,
-		Pass: sum.Pass, Inconclusive: sum.Inconclusive, PowFailed: sum.PowFailed, Verified: sum.Verified, Replayed: sum.Replayed})
+		Pass: sum.Pass, Inconclusive: sum.Inconclusive, PowFailed: sum.PowFailed, Verified: sum.Verified, Replayed: sum.Replayed,
+		Interactive: sum.Interactive, InteractiveFailed: sum.InteractiveFailed})
 }

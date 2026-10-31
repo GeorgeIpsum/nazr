@@ -51,7 +51,21 @@ type siteverifyResponse struct {
 	Correlation    *correlationJSON    `json:"correlation,omitempty"`
 	Classification *classificationInfo `json:"classification,omitempty"`
 	Signals        map[string]bool     `json:"signals"`
+	Interaction    *interactionJSON    `json:"interaction,omitempty"`
 	ErrorCodes     []string            `json:"error_codes"`
+}
+
+// interactionJSON is the interactive step's summary for the host: what the
+// visitor did and which rules fired. Absent unless the report was upgraded.
+type interactionJSON struct {
+	Input        string          `json:"input"`
+	PointerType  string          `json:"pointer_type"`
+	Trusted      bool            `json:"trusted"`
+	Moves        int             `json:"moves"`
+	PathPX       float64         `json:"path_px"`
+	Straightness float64         `json:"straightness"`
+	ElapsedMS    int             `json:"elapsed_ms"`
+	Signals      map[string]bool `json:"signals"`
 }
 
 // siteverifyFailureResponse carries only success false and one error code.
@@ -162,6 +176,15 @@ func (s *server) handleSiteverify(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(row.Signals, &out.Signals)
 		if out.Signals == nil { // a JSON null
 			out.Signals = map[string]bool{}
+		}
+	}
+	if len(row.Interaction) > 0 && string(row.Interaction) != "null" {
+		var in interactionJSON
+		if json.Unmarshal(row.Interaction, &in) == nil {
+			if in.Signals == nil {
+				in.Signals = map[string]bool{}
+			}
+			out.Interaction = &in
 		}
 	}
 	if req.RemoteIP != "" && !s.remoteIPMatches(req.RemoteIP, row) {

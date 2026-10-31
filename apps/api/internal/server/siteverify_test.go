@@ -458,3 +458,57 @@ func TestAdminKeySecret(t *testing.T) {
 	off := newEnv(t, nil)
 	wantError(t, off.do(req("POST", "/admin/keys/"+id+"/secret", "", "s3cret")), 404, "not_found")
 }
+
+func TestSiteverifyInteractive(t *testing.T) {
+	t.Run("interactive row carries the block", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		id := e.seedReport(&svIP, "")
+		for i := range e.store.reports {
+			if e.store.reports[i].ID == id {
+				e.store.reports[i].Verdict = "interactive"
+				e.store.reports[i].Interaction = json.RawMessage(`{"shown_ms":100,"click_ms":1940,"input":"pointer","trusted":true,"moves":12,"path_px":240.5,"straightness":0.8,"pointer_type":"mouse","visible":true,"signals":{},"elapsed_ms":1840}`)
+			}
+		}
+		status, got := e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id)})
+		if status != 200 || got["success"] != true {
+			t.Fatalf("status %d body %v", status, got)
+		}
+		in, ok := got["interaction"].(map[string]any)
+		if !ok {
+			t.Fatalf("no interaction in %v", got)
+		}
+		if in["input"] != "pointer" || in["pointer_type"] != "mouse" || in["trusted"] != true ||
+			in["moves"] != float64(12) || in["path_px"] != 240.5 || in["straightness"] != 0.8 || in["elapsed_ms"] != float64(1840) {
+			t.Fatalf("interaction %v", in)
+		}
+		if sig, ok := in["signals"].(map[string]any); !ok || len(sig) != 0 {
+			t.Fatalf("signals %v", in["signals"])
+		}
+		if _, extra := in["shown_ms"]; extra {
+			t.Fatalf("leaked stored key: %v", in)
+		}
+	})
+	t.Run("pass row has no block", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		id := e.seedReport(&svIP, "")
+		_, got := e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id)})
+		if _, has := got["interaction"]; has || got["success"] != true {
+			t.Fatalf("body %v", got)
+		}
+	})
+	t.Run("pow_failed row is not verifiable", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		id := e.seedReport(&svIP, "")
+		for i := range e.store.reports {
+			if e.store.reports[i].ID == id {
+				e.store.reports[i].Verdict = "pow_failed"
+				e.store.reports[i].TokenIssuedAt = nil
+			}
+		}
+		status, got := e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id)})
+		wantFailure(t, status, got, 200, "invalid-token")
+		if e.report(id).ReplayCount != 0 || e.report(id).VerifiedAt != nil {
+			t.Fatal("row touched")
+		}
+	})
+}
