@@ -89,8 +89,9 @@ func (s *Store) UpgradeWidgetReport(ctx context.Context, keyID, id, verdict stri
 
 // MarkWidgetVerified stamps the key's report as verified and returns it. A
 // report that was already verified counts a replay and returns
-// ErrAlreadyVerified; an unknown report, or one under another key, returns
-// ErrNotFound.
+// ErrAlreadyVerified. An unknown report, one under another key, or one whose
+// verdict never earned a token (anything but pass or interactive) returns
+// ErrNotFound and does not count a replay.
 func (s *Store) MarkWidgetVerified(ctx context.Context, keyID, id string) (WidgetReport, error) {
 	if !validUUID(keyID) {
 		return WidgetReport{}, ErrNotFound

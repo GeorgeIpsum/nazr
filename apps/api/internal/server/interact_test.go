@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"slices"
@@ -10,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"nazr/api/internal/auth"
 	"nazr/api/internal/config"
 	"nazr/api/internal/interaction"
 	"nazr/api/internal/store"
+	"nazr/api/internal/visitor"
 	"nazr/api/internal/widgettoken"
 )
 
@@ -258,6 +261,25 @@ func mintStagedChallengeID(e *env, id string, bits int, stage string) string {
 		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: bits, Kid: testSigningKey.Kid,
 		Origin: "https://shop.example", Stage: stage})
 	return ch
+}
+
+func TestInteractDisabledAfterOffer(t *testing.T) {
+	e := newEnv(t, interactConfig)
+	ch, id, bits := seedOffer(t, e)
+	// The operator turns the step off after the offer: same store, keys and clock.
+	e.cfg.WidgetInteractive = false
+	e.h = New(Deps{Cfg: e.cfg, Store: e.store, Intel: e.intel,
+		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow }},
+		Limiter:  auth.NewMemoryLimiter(time.Now), Signing: widgettoken.NewStaticKeyring(testSigningKey),
+		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now },
+		Rand: func() float64 { return e.rand }})
+	wantInteractInvalid(t, e, interactReqBody(t, ch, id, bits, cleanTrace()))
+	if e.store.upgradeCalls != 0 {
+		t.Fatalf("upgrade calls %d", e.store.upgradeCalls)
+	}
+	if rep := findReport(t, e, id); rep.Verdict != "inconclusive" || rep.Interaction != nil {
+		t.Fatalf("report %+v", rep)
+	}
 }
 
 func TestInteractStoreError(t *testing.T) {

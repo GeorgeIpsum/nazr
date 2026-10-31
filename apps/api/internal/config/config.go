@@ -169,7 +169,7 @@ func (c Config) Validate() error {
 	}
 	if c.WidgetInteractiveExtraBits < 0 {
 		errs = append(errs, fmt.Errorf("NAZR_WIDGET_INTERACTIVE_EXTRA_BITS: %d must be at least 0", c.WidgetInteractiveExtraBits))
-	} else if c.PowBits+c.WidgetInteractiveExtraBits > 32 {
+	} else if c.WidgetInteractive && c.PowBits+c.WidgetInteractiveExtraBits > 32 {
 		errs = append(errs, fmt.Errorf("NAZR_WIDGET_INTERACTIVE_EXTRA_BITS: NAZR_POW_BITS + extra bits (%d) exceeds 32", c.PowBits+c.WidgetInteractiveExtraBits))
 	}
 	return errors.Join(errs...)

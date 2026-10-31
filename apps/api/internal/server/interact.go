@@ -74,6 +74,10 @@ func (s *server) processInteract(r *http.Request) widgetOutcome {
 	if key == nil || err != nil || s.Signing == nil {
 		return invalid
 	}
+	// The kill switch also stops redemption of challenges offered while it was on.
+	if !s.Cfg.WidgetInteractive {
+		return invalid
+	}
 	body, ok := parseInteract(raw)
 	if !ok {
 		return invalid

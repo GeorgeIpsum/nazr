@@ -270,7 +270,9 @@ func TestWidgetInteractiveConfig(t *testing.T) {
 	}
 	for _, env := range []map[string]string{
 		{"NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "-1"},
+		{"NAZR_WIDGET_INTERACTIVE": "false", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "-1"},
 		{"NAZR_POW_BITS": "30", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "4"},
+		{"NAZR_POW_BITS": "30", "NAZR_WIDGET_INTERACTIVE": "true"},
 	} {
 		c, err := Load(lookupFrom(env))
 		if err != nil {
@@ -283,5 +285,10 @@ func TestWidgetInteractiveConfig(t *testing.T) {
 	c, _ = Load(lookupFrom(map[string]string{"NAZR_POW_BITS": "28", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "4"}))
 	if err := c.Validate(); err != nil {
 		t.Errorf("28+4 should validate: %v", err)
+	}
+	// The sum only matters when the step can be offered.
+	c, _ = Load(lookupFrom(map[string]string{"NAZR_POW_BITS": "30", "NAZR_WIDGET_INTERACTIVE": "false"}))
+	if err := c.Validate(); err != nil {
+		t.Errorf("30 bits with the step disabled should validate: %v", err)
 	}
 }
