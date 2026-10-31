@@ -28,7 +28,8 @@ Every response carries an `X-Request-Id` header (a ULID). On `/thumbmark` the sa
 | `GET /widget/v1/frame?k=` | key in `k` | 200 | Widget frame document with a fresh challenge; 403 for an unknown or revoked key, 503 `store_unavailable` when the key store is unreachable, 503 `signing_unavailable` when there is no signing key; only when the assets are present |
 | `GET /widget/v1/frame.<hash>.js` | none | 200 | Content-hashed frame bundle; only when the assets are present |
 | `GET /widget/v1/worker.<hash>.js` | none | 200 | Content-hashed proof-of-work worker bundle; only when the assets are present |
-| `POST /widget/report` | `x-api-key` | 200 | Verify the challenge and proof-of-work, store the frame's report, answer `{verdict, token?}` |
+| `POST /widget/report` | `x-api-key` | 200 | Verify the challenge and proof-of-work, store the frame's report, answer `{verdict, token?, interactive?}` |
+| `POST /widget/interact` | `x-api-key` | 200 | Verify the interactive-stage challenge and proof-of-work, score the interaction trace, answer `{verdict, token?}` |
 | `GET /widget/v1/jwks.json` | none | 200 | Public signing keys (JWKS) |
 | `POST /widget/v1/siteverify` | key secret in the body | 200 | Verify and spend a widget token |
 | `GET /admin/keys/{id}/widget` | admin token | 200 | Widget correlation summary for a key |
@@ -198,7 +199,7 @@ Because the route is unauthenticated, observations can still be seeded by a clie
 
 ## Widget
 
-The widget is a loader plus a hidden cross-origin frame that reports to nazr; the embedding guide is [widget.md](widget.md). The `GET /widget/v1/` asset routes (loader, frame, bundles) exist only when the widget assets are embedded or served from `NAZR_WIDGET_DIR`; otherwise they return the JSON 404. `POST /widget/report`, `GET /widget/v1/jwks.json` and `POST /widget/v1/siteverify` are always registered.
+The widget is a loader plus a hidden cross-origin frame that reports to nazr; the embedding guide is [widget.md](widget.md). The `GET /widget/v1/` asset routes (loader, frame, bundles) exist only when the widget assets are embedded or served from `NAZR_WIDGET_DIR`; otherwise they return the JSON 404. `POST /widget/report`, `POST /widget/interact`, `GET /widget/v1/jwks.json` and `POST /widget/v1/siteverify` are always registered.
 
 ### `POST /widget/report`
 
@@ -213,6 +214,7 @@ Sent by the frame, same-origin to nazr, with the key in `x-api-key`:
 ```
 
 - `verdict` is `pass`, `inconclusive`, `pow_failed` or `invalid`. `token` is present only on `pass`. The meaning of each verdict is in [widget.md](widget.md#token-lifecycle).
+- `interactive` is optional and appears only on an `inconclusive` verdict: `{"challenge": "<payload.mac>", "bits": 22}`. It is present when `NAZR_WIDGET_INTERACTIVE` is on and the classification is not a bot (a danger level above `NAZR_WIDGET_PASS_MAX_DANGER` alone qualifies). `challenge` is a second challenge for the same id with `stage: "interactive"`, at `NAZR_POW_BITS + NAZR_WIDGET_INTERACTIVE_EXTRA_BITS` bits. Hosts that do not use the step ignore it.
 - Authentication, revocation, the per-key rate limit and the key touch work as for `/thumbmark`, so errors from those (403, 429) are returned as usual. Reports share the key's `rate_limit_per_minute` with `/thumbmark`.
 - The key's `allowed_origins` check is skipped on this route: the browser sends nazr's own origin, which is never in a key's list. Origin scoping is enforced on the frame document by `frame-ancestors` instead. `allowed_origins` itself is unchanged.
 - After authentication the answer is always `200` JSON. A malformed body, a challenge that fails its MAC, key or expiry check, or an already reported challenge is `{"verdict":"invalid"}`, never a 400, so the widget cannot break the host page.
@@ -220,6 +222,32 @@ Sent by the frame, same-origin to nazr, with the key in `x-api-key`:
 - The server adds its own components (`tls`, `h2`, `header`, `ip`) and stores a row with a server-computed `thumbmark`, filtered with the frame client's default stabilization (`private`, `iframe`). It is an analysis value; no visitor is created or touched.
 - When the database rejects the insert for any other reason, a would-be `pass` is answered `inconclusive` with no token.
 - Rows are pruned under `NAZR_EVENT_RETENTION`. The raw IP and the merged components are stored under `NAZR_STORE_IP` and `NAZR_STORE_COMPONENTS`.
+
+### `POST /widget/interact`
+
+Sent by the frame after the click-to-verify step, same-origin to nazr, with the key in `x-api-key`:
+
+```json
+{
+  "challenge": "<interactive challenge, 1-512 chars>",
+  "pow": "<1-32 decimal digits>",
+  "trace": {
+    "shown_ms": 640, "click_ms": 2480, "input": "pointer", "trusted": true,
+    "moves": 14, "path_px": 212.5, "straightness": 0.71, "pointer_type": "mouse", "visible": true
+  }
+}
+```
+
+```json
+{ "verdict": "interactive", "token": "<compact ES256 JWS>" }
+```
+
+- `verdict` is `interactive` (with `token`), `interactive_failed` or `invalid`. Only `interactive` carries a token; its `verdict` claim is `interactive`.
+- Checks run in this order and the first failure answers `invalid`: authentication and rate limit as for the report; the body (challenge 1 to 512 characters, `pow` 1 to 32 digits, `trace` an object whose fields are inside the bounds below); the challenge's MAC, key and expiry, and `stage` equal to `interactive`; the proof-of-work at the challenge's `bits`. Then the trace is scored: any non-advisory rule that fired is `interactive_failed`, otherwise `interactive`.
+- Trace bounds: `shown_ms` and `click_ms` 0 to 2^31; `moves` 0 to 200; `path_px` finite, 0 to 1,000,000; `straightness` finite, 0 to 1; `input` is `pointer` or `keyboard`; `pointer_type` is `mouse`, `touch`, `pen` or empty; strings at most 16 characters. Unknown trace keys are ignored.
+- The upgrade is a conditional update of the stored report, which must still be `inconclusive` with no token issued, so a challenge is redeemed once. A second call, a challenge for a report that never existed, or one already upgraded is `invalid`. A failed attempt is final for that challenge.
+- The rules and thresholds are in [signals.md](signals.md#interaction-rules). The stored report keeps the trace fields, the rules that fired and `elapsed_ms`.
+- Like `/widget/report`, the answer after authentication is always `200` JSON.
 
 ### `GET /widget/v1/frame`
 
@@ -232,7 +260,7 @@ Cache-Control: no-store
 
 `frame-ancestors` lists the key's `allowed_origins` entry by entry (wildcard hosts such as `https://*.example.com` are valid syntax), or `*` when the key has no list or contains `*`. There is no `X-Frame-Options`, which has no allow-all value.
 
-The challenge is `<payload>.<mac>`, both base64url without padding. The payload is JSON `{"id","exp","bits","kid","origin"}`: a ULID, a Unix expiry 10 minutes out, the proof-of-work difficulty, the signing key id and the embedding origin from the `Referer`. The MAC is HMAC-SHA256 over the encoded payload under the signing key's secret.
+The challenge is `<payload>.<mac>`, both base64url without padding. The payload is JSON `{"id","exp","bits","kid","origin"}` plus an optional `stage`: a ULID, a Unix expiry 10 minutes out, the proof-of-work difficulty, the signing key id and the embedding origin from the `Referer`. `stage` is absent on the frame's first challenge and `interactive` on the second one, which keeps the same id, `exp`, `kid` and `origin`. The MAC is HMAC-SHA256 over the encoded payload under the signing key's secret.
 
 ### `GET /widget/v1/jwks.json`
 
@@ -247,6 +275,8 @@ Tokens are compact ES256 JWS with header `{"alg":"ES256","kid":"<kid>","typ":"JW
 ```json
 { "iss": "https://nazr.example.com", "aud": "<api key id>", "jti": "<challenge id>", "iat": 1790000000, "exp": 1790000300, "hostname": "https://example.com", "verdict": "pass" }
 ```
+
+`verdict` is `pass`, or `interactive` for a token earned through `POST /widget/interact`.
 
 ### `POST /widget/v1/siteverify`
 
@@ -272,6 +302,7 @@ Called by the host's backend. No `x-api-key` and no CORS; the key's verify secre
 ```
 
 - On success all fields are present, except `correlation`, which is absent when nazr could not compute it after spending the token. `hostname` is `""` when nazr did not observe the embedding origin, and `signals` is `{}` when empty. `challenge_ts` is the issue time in RFC 3339 UTC. `correlation.ip_match`, `ja4_match` and `ua_match` are `null` when `matched` is false or the comparison is unknown (for example no JA4 on either side).
+- `verdict` is `pass` or `interactive`. For a token earned through the interactive step the response also carries `interaction`, an object with `input`, `pointer_type`, `trusted`, `moves`, `path_px`, `straightness`, `elapsed_ms` and `signals` (every interaction rule and whether it fired). It is absent for a `pass` token and for failures, and present with `remoteip-mismatch`.
 - A failure is `{"success": false, "error_codes": ["<code>"]}` with no other field, except `remoteip-mismatch`, which keeps every field of the success response and sets `success` to false. The token is spent in that case too.
 
 | Status | `error_codes` | Meaning |
@@ -361,11 +392,13 @@ Requires `Authorization: Bearer <NAZR_ADMIN_TOKEN>`. When the token is unset the
   "inconclusive": 150,
   "pow_failed": 50,
   "verified": 700,
-  "replayed": 12
+  "replayed": 12,
+  "interactive": 30,
+  "interactive_failed": 8
 }
 ```
 
-Counts are over report rows, except `events_unmatched`. A report is matched when the key has a `/thumbmark` event with the same `nonce` within 10 minutes of it, in either direction (the most recent one is used). `unmatched` counts widget reports with no page call carrying the same nonce (stock client, cached call, or a forged report). `events_unmatched` counts the key's `/thumbmark` events in the window that carry a nonce but have no widget report with that nonce within 10 minutes (the iframe was blocked or never ran, or the caller never loaded the page). Among matched reports, `ip_mismatch` is a differing IP hash, `ja4_mismatch` a differing raw JA4 string, `ja4_unknown` a pair where either side has no JA4 (such as `plain` mode), and `ua_mismatch` a differing raw `User-Agent`. The correlation verdict is computed on read and does not feed the danger score. `pass`, `inconclusive` and `pow_failed` count report rows by the verdict stored at report time (`invalid` reports are never stored). `verified` counts tokens spent at siteverify and `replayed` counts reports whose token was presented again after being spent. `allowed_origins` is unchanged: it still scopes `/thumbmark` and the widget frame. What it does and does not detect is in [widget.md](widget.md#what-the-summary-shows).
+Counts are over report rows, except `events_unmatched`. A report is matched when the key has a `/thumbmark` event with the same `nonce` within 10 minutes of it, in either direction (the most recent one is used). `unmatched` counts widget reports with no page call carrying the same nonce (stock client, cached call, or a forged report). `events_unmatched` counts the key's `/thumbmark` events in the window that carry a nonce but have no widget report with that nonce within 10 minutes (the iframe was blocked or never ran, or the caller never loaded the page). Among matched reports, `ip_mismatch` is a differing IP hash, `ja4_mismatch` a differing raw JA4 string, `ja4_unknown` a pair where either side has no JA4 (such as `plain` mode), and `ua_mismatch` a differing raw `User-Agent`. The correlation verdict is computed on read and does not feed the danger score. `pass`, `inconclusive` and `pow_failed` count report rows by the verdict stored at report time (`invalid` reports are never stored). `interactive` and `interactive_failed` count reports upgraded by `POST /widget/interact` to that verdict; an upgraded report is no longer counted in `inconclusive`. `verified` counts tokens spent at siteverify and `replayed` counts reports whose token was presented again after being spent. `allowed_origins` is unchanged: it still scopes `/thumbmark` and the widget frame. What it does and does not detect is in [widget.md](widget.md#what-the-summary-shows).
 
 Revocation takes effect within the key-cache TTL (60 seconds), because the cache is keyed by key hash and is not invalidated on revoke. The same operations are available offline as `nazr keys create|list|revoke|secret-rotate`, and `nazr signing rotate|list` manages the widget signing keys.
 

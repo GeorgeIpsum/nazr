@@ -46,10 +46,9 @@ has at least `bits` leading zero bits (`"0"` when `bits <= 0`).
 
 Frame to parent (`postMessage`, targeted at `data-origin`, or `*` when absent):
 - `{ type: "nazr:challenge", id }`: sent first, once the challenge id is decoded.
-- `{ type: "nazr:token", token }`: the server verdict was `pass`.
-- `{ type: "nazr:error", reason }`: `inconclusive`, `pow_failed` or `invalid` relay the server verdict (`interactive_failed` only comes from the interactive step) (`invalid` is also sent without a request when the challenge cannot be decoded). `network` covers a non-OK response, a failed fetch, an unparsable body, an unknown verdict, and a failed worker (no proof-of-work, so `network` is the closest reason in the contract).
-
-- `{ type: "nazr:interactive" }`: the frame is showing its click-to-verify box (see below).
+- `{ type: "nazr:interactive" }`: the frame is showing its click-to-verify box (see below). It comes before the terminal messages.
+- `{ type: "nazr:token", token }`: the server verdict was `pass` (or `interactive`, from the interactive step).
+- `{ type: "nazr:error", reason }`: `inconclusive`, `pow_failed` or `invalid` relay the server verdict; `interactive_failed` only comes from the interactive step. `invalid` is also sent without a request when the challenge cannot be decoded. `network` covers a non-OK response, a failed fetch, an unparsable body, an unknown verdict, and a failed worker (no proof-of-work, so `network` is the closest reason in the contract).
 
 Interactive step: when the report answers `inconclusive` with an `interactive` offer and the
 frame URL carries `i=1` (the loader sets it when it has a visible container), the frame posts

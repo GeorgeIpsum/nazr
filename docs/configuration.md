@@ -6,7 +6,7 @@ nazr is configured entirely through `NAZR_*` environment variables. Inspect the 
 nazr serve --print-config
 ```
 
-Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, ACME domains combined with inline PEM, `NAZR_POW_BITS` outside 0-32, a `NAZR_WIDGET_TOKEN_TTL` not greater than 0 or above 1h, or `NAZR_WIDGET_PASS_MAX_DANGER` outside 0-5) stop startup with an error.
+Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, ACME domains combined with inline PEM, `NAZR_POW_BITS` outside 0-32, a `NAZR_WIDGET_TOKEN_TTL` not greater than 0 or above 1h, `NAZR_WIDGET_PASS_MAX_DANGER` outside 0-5, a negative `NAZR_WIDGET_INTERACTIVE_EXTRA_BITS`, or `NAZR_POW_BITS` plus `NAZR_WIDGET_INTERACTIVE_EXTRA_BITS` above 32) stop startup with an error.
 
 Secrets (redacted in `--print-config` and in the debug log): `NAZR_DATABASE_URL`, `NAZR_REDIS_URL`, `NAZR_TLS_KEY_PEM`, `NAZR_MAXMIND_LICENSE_KEY`, `NAZR_ADMIN_TOKEN`, `NAZR_IP_HASH_SALT`, `NAZR_JA4DB_TOKEN`.
 
@@ -80,7 +80,9 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_POW_BITS` | int 0-32 | `18` | Leading zero bits of `sha256(id + ":" + counter)` the frame must find before it can get a token. Each extra bit doubles the expected work; 18 is a fraction of a second on a laptop. `0` disables proof-of-work (any counter passes), which tests use |
 | `NAZR_WIDGET_TOKEN_TTL` | duration | `5m` | Lifetime of an issued token. Must be greater than 0 and at most `1h`: tokens must expire well inside the 24 h signing-key grace minus the 1 h JWKS cache. The loader also clamps its own expiry timer |
 | `NAZR_WIDGET_ISSUER` | string | empty (`https://<Host>` of the request) | The token's `iss` claim. Set it in production: the default derives from the request `Host`. It is required when the `Host` seen by nazr is not the public name |
-| `NAZR_WIDGET_PASS_MAX_DANGER` | int 0-5 | `2` | Highest classification danger level that still earns a token. Bots never pass, whatever their level |
+| `NAZR_WIDGET_PASS_MAX_DANGER` | int 0-5 | `2` | Highest classification danger level that still earns a token. Bots never pass, whatever their level. A visit above this level, but not a bot, is the one the interactive step can rescue |
+| `NAZR_WIDGET_INTERACTIVE` | bool | `true` | Offer the click-to-verify [interactive step](widget.md#interactive-step) to a visit whose report is `inconclusive` and not classified as a bot (its danger level is above `NAZR_WIDGET_PASS_MAX_DANGER`). It also needs the host's `data-container`. `false` stops the offer on this instance; tokens from any instance verify everywhere |
+| `NAZR_WIDGET_INTERACTIVE_EXTRA_BITS` | int 0-32 | `4` | Proof-of-work bits added to `NAZR_POW_BITS` for the interactive challenge. `NAZR_POW_BITS` plus this value must be at most 32, so a deployment with `NAZR_POW_BITS` above 28 must lower it. A negative value, or a sum above 32, stops startup |
 
 Trust boundary: the signing keys' private halves and their HMAC secrets are stored in plaintext in Postgres, so anyone who can read the database can mint tokens. The server creates the first signing key on its first `serve`; see [the trust boundary](widget.md#trust-boundary-and-deployment). `NAZR_WIDGET_DIR` (in Core) also applies. How the widget works is in [widget.md](widget.md).
 
@@ -134,6 +136,8 @@ NAZR_UA_JA4_MIN_OBSERVATIONS=20
 NAZR_VISITOR_MATCH_WINDOW=720h0m0s
 NAZR_VPN_URLS=
 NAZR_WIDGET_DIR=
+NAZR_WIDGET_INTERACTIVE=true
+NAZR_WIDGET_INTERACTIVE_EXTRA_BITS=4
 NAZR_WIDGET_ISSUER=
 NAZR_WIDGET_PASS_MAX_DANGER=2
 NAZR_WIDGET_TOKEN_TTL=5m0s

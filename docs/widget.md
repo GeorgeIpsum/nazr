@@ -22,6 +22,8 @@ Put the loader tag inside the form you want to protect:
 | `data-callback` | Name of a global function called with the token string when a token arrives |
 | `data-error-callback` | Name of a global function called with a reason string when no token can be issued |
 | `data-expired-callback` | Name of a global function called, without arguments, when the token expires |
+| `data-container` | CSS selector of an element on your page. When it resolves, the loader mounts the widget there and enables the [interactive step](#interactive-step). Without it, or when the selector matches nothing or is invalid, the widget stays hidden |
+| `data-interactive-callback` | Name of a global function called, without arguments, when the frame shows its click-to-verify box |
 | `data-nonce` | Ignored since Phase 2a. The loader logs a console warning. The nonce is now the server-issued challenge id |
 
 - Load it as a classic script (not `type="module"`): the loader reads its own script tag synchronously.
@@ -37,6 +39,7 @@ window.__nazrWidget = {
   ready: Promise<{ nonce: string }>,
   nonce?: string,
   token?: string,
+  state: "pending" | "pass" | "interactive" | "failed",
   reset(): void,
 };
 ```
@@ -46,7 +49,8 @@ window.__nazrWidget = {
 | `ready` | Resolves with `{ nonce }` when the frame has decoded its challenge. It does not wait for the proof-of-work or the report. It always settles within 10 seconds: if no challenge arrives by then it resolves with `{ nonce: "" }` and the error callback gets `network` |
 | `nonce` | The current challenge id. Set asynchronously, so it is `undefined` right after the loader runs: always `await ready` first. It changes on every `reset()` |
 | `token` | The current token, or `undefined` before the first pass, after expiry and after `reset()` |
-| `reset()` | Clears the token and the hidden input and reloads the frame, which fetches a fresh challenge and starts over |
+| `state` | Read-only. `pending` until the frame answers; `pass` after a `pass` token; `interactive` once the click-to-verify box is shown, and it stays `interactive` after the token that step earns; `failed` after an error |
+| `reset()` | Clears the token and the hidden input, collapses the frame back to hidden, sets `state` to `pending` and reloads the frame, which fetches a fresh challenge and starts over |
 
 When the loader did not run (blocked, failed to load, or no `data-api-key`), `window.__nazrWidget` is undefined.
 
@@ -56,8 +60,9 @@ When the loader script sits inside a `<form>`, the loader adds `<input type="hid
 
 | Callback attribute | Called with | When |
 |---|---|---|
-| `data-callback` | the token | The server answered `pass` |
-| `data-error-callback` | `inconclusive`, `pow_failed`, `invalid` or `network` | No token. The first three relay the server verdict; `network` covers a failed request, an unparsable response or a failed worker |
+| `data-callback` | the token | The server answered `pass`, or `interactive` after the click-to-verify step |
+| `data-error-callback` | `inconclusive`, `pow_failed`, `invalid`, `interactive_failed` or `network` | No token. The first four relay the server verdict (`interactive_failed` only comes from the interactive step); `network` covers a failed request, an unparsable response or a failed worker |
+| `data-interactive-callback` | nothing | The frame shows the click-to-verify box. Use it to scroll the box into view or show a hint |
 | `data-expired-callback` | nothing | The token reached its `exp` |
 
 When a token expires, the loader clears the hidden input, calls the expired callback and then calls `reset()` itself, so a long-lived page gets a fresh token without any host code. The refreshed token has a new `jti`.
@@ -71,7 +76,7 @@ If your page sends a CSP, it must allow the nazr origin in `script-src` (the loa
 1. **Challenge.** The frame document is served with a challenge minted by nazr: an HMAC-signed payload holding a ULID `id`, an expiry 10 minutes out, the required difficulty `bits` (`NAZR_POW_BITS`), the signing key id and the embedding origin read from the `Referer` header. The `id` is the nonce the loader exposes.
 2. **Proof-of-work.** A Web Worker finds the smallest decimal counter for which `sha256(id + ":" + counter)` has at least `bits` leading zero bits. With `NAZR_POW_BITS=0` any counter passes. The difficulty is the one in the signed challenge, so a client cannot lower it.
 3. **Report.** The frame posts `{challenge, pow, components, clientHash}` to `POST /widget/report`. nazr verifies the challenge, checks the proof-of-work, classifies the frame's own request, stores the report and answers with a verdict.
-4. **Token.** Only a `pass` carries a token.
+4. **Token.** Only a `pass` carries a token, and so does an `interactive` verdict from the [interactive step](#interactive-step).
 
 | Verdict | Meaning | Token |
 |---|---|---|
@@ -79,6 +84,8 @@ If your page sends a CSP, it must allow the nazr origin in `script-src` (the loa
 | `inconclusive` | Challenge and proof-of-work valid, but the classification is not clean (a bot, or a danger level above the limit). Automated browsers, where `navigator.webdriver` is true (Playwright, Selenium and the like), land here | no |
 | `pow_failed` | The counter does not meet the difficulty | no |
 | `invalid` | Malformed body, challenge with a bad MAC, unknown key or past its expiry, or a challenge id that was already reported | no |
+| `interactive` | From `POST /widget/interact`: the visitor passed the click-to-verify step. See [Interactive step](#interactive-step) | yes |
+| `interactive_failed` | From `POST /widget/interact`: a scoring rule fired on the interaction trace | no |
 
 A challenge can be reported once. A second report for the same challenge is `invalid` and the first token stays valid. If the database is unavailable at report time, a would-be `pass` is downgraded to `inconclusive`: an outage never mints credentials.
 
@@ -93,7 +100,7 @@ A bearer credential: anyone holding it can present it, once. It is an ES256 JWS 
 | `jti` | The challenge id. Single use at siteverify |
 | `iat`, `exp` | Issue time and expiry, `NAZR_WIDGET_TOKEN_TTL` apart (default 5 minutes) |
 | `hostname` | The embedding origin nazr observed from the frame's `Referer`, such as `https://example.com`. Empty when the host page sends `Referrer-Policy: no-referrer`, so such a host cannot use the `hostname` check |
-| `verdict` | Always `pass` |
+| `verdict` | `pass`, or `interactive` for a token earned through the interactive step |
 
 The token is bound to the key and to the observed origin, not to an IP or a session. Bind it yourself by verifying it in the same request that carries it, and by passing `remoteip` to siteverify.
 
@@ -124,7 +131,7 @@ curl -s https://nazr.example.com/widget/v1/siteverify \
 }
 ```
 
-`remoteip` is optional. Field details and statuses are in [protocol.md](protocol.md#post-widgetv1siteverify). Checks run in this order and the first failure wins:
+A token earned through the interactive step has `"verdict": "interactive"` and adds an `interaction` block; see [Interactive step](#interactive-step). `remoteip` is optional. Field details and statuses are in [protocol.md](protocol.md#post-widgetv1siteverify). Checks run in this order and the first failure wins:
 
 | Result | HTTP | `error_codes` |
 |---|---|---|
@@ -147,7 +154,7 @@ curl -s https://nazr.example.com/widget/v1/siteverify \
 
 The public keys are at `GET /widget/v1/jwks.json`. Verifying locally needs no secret and no round trip, but it cannot detect replay: the token stays valid until `exp`. Use siteverify when single use matters.
 
-Check the signature (ES256), `exp`, `aud` equal to your key's id, `hostname` equal to your site's origin, and `verdict == "pass"`. Cache the JWKS (the response is `Cache-Control: public, max-age=3600`) and refetch it once when a token carries an unknown `kid`: nazr publishes a new signing key right after `nazr signing rotate`, and the previous key stays published for 24 hours.
+Check the signature (ES256), `exp`, `aud` equal to your key's id, `hostname` equal to your site's origin, and that `verdict` is `pass` (or `interactive` if you accept the interactive step; see below). Cache the JWKS (the response is `Cache-Control: public, max-age=3600`) and refetch it once when a token carries an unknown `kid`: nazr publishes a new signing key right after `nazr signing rotate`, and the previous key stays published for 24 hours.
 
 Node, with `jose`:
 
@@ -163,7 +170,7 @@ export async function verifyNazrToken(token: string): Promise<boolean> {
       algorithms: ["ES256"],
       audience: "<your key id>", // exp is checked by jwtVerify
     });
-    return payload.verdict === "pass" && payload.hostname === "https://example.com";
+    return (payload.verdict === "pass" || payload.verdict === "interactive") && payload.hostname === "https://example.com";
   } catch {
     return false;
   }
@@ -187,9 +194,92 @@ func verifyNazrToken(tokenString string, keys map[string]*ecdsa.PublicKey) bool 
 		jwt.WithAudience("<your key id>"),
 		jwt.WithExpirationRequired(),
 	)
-	return err == nil && claims["verdict"] == "pass" && claims["hostname"] == "https://example.com"
+	verdict := claims["verdict"]
+	return err == nil && (verdict == "pass" || verdict == "interactive") && claims["hostname"] == "https://example.com"
 }
 ```
+
+## Interactive step
+
+Some visitors are not bots but still do not pass on reputation alone: a VPN or datacenter exit, or a danger level above `NAZR_WIDGET_PASS_MAX_DANGER`. For them the frame can show a small click-to-verify box. A visitor who clicks it earns a token with the verdict `interactive`.
+
+### When it runs
+
+All of these must hold:
+
+- The report was `inconclusive` and the classification is not a bot. Automated browsers (`navigator.webdriver`, headless user agents) are never offered the step.
+- `NAZR_WIDGET_INTERACTIVE` is on (the default).
+- The host opted in with `data-container`, so the loader asked the frame for the step (`i=1` in the frame URL).
+
+The server's offer is an `interactive` object in the report response: a second challenge for the same id at `NAZR_POW_BITS` plus `NAZR_WIDGET_INTERACTIVE_EXTRA_BITS` difficulty. Without `data-container` the offer is ignored and the widget behaves as in Phase 2a: the error callback gets `inconclusive`.
+
+### Opt in from the host
+
+```html
+<div id="nazr-box"></div>
+<form method="post" action="/signup">
+  <script
+    src="https://nazr.example.com/widget/v1/loader.js"
+    data-api-key="nzr_..."
+    data-container="#nazr-box"
+    data-callback="onToken"
+    data-interactive-callback="onBox"
+  ></script>
+</form>
+```
+
+The loader mounts the iframe inside `#nazr-box`. It stays 0x0 until the frame announces the step, then grows to 300x65 and `window.__nazrWidget.state` becomes `interactive`. The box holds one button, "Verify you are human". It reads "Verifying…" while the proof-of-work and the request finish, then "Verified ✓" or "Verification failed". The step needs no host styling, and the box keeps its size.
+
+A runnable page is [`apps/demo/widget-host.html`](../apps/demo/widget-host.html) with [`src/widget-host.ts`](../apps/demo/src/widget-host.ts).
+
+### What the frame sends
+
+While the visitor reaches the button, the frame records a small trace, never raw coordinates: when the button was shown and clicked, whether the event was trusted, the input kind (`pointer` or `keyboard`), the pointer type, the number of pointer moves over its own box, path length, straightness and document visibility. It solves the harder proof-of-work while the visitor reads the box, then posts `{challenge, pow, trace}` to `POST /widget/interact`. The server scores the trace against the [interaction rules](signals.md#interaction-rules).
+
+### What `interactive` proves
+
+A trace made of trusted events rejects canned scripts: a synthetic `click()`, a dispatched event, an instant click, a click in a hidden tab. It does not reject a driven browser. A real browser controlled through the browser's input channel (CDP or WebDriver input commands) produces trusted events, so a patient automation that moves the mouse over the box passes. The extra proof-of-work raises the cost per attempt, not the bar.
+
+Treat `interactive` as weaker than `pass`. Both are accepted for low-risk actions; for high-risk ones, require `pass` only or add your own checks. `straight_path` is advisory: the frame sees only moves over its own box, which is too short a window to fail someone on, so it is recorded in `interaction.signals` and never fails the attempt.
+
+An abandoned interactive challenge is not cancelled. The offer stays redeemable by whoever holds it until the challenge `exp` (10 minutes from the frame load), and a redeemed offer cannot be redeemed twice. `reset()` loads a fresh frame with a fresh challenge but does not revoke the old one.
+
+### Verify on the backend
+
+Accept `pass`, and `interactive` if you want the step to unlock the action. In siteverify, `verdict` carries the token's verdict, and an `interaction` block is present when the report was upgraded:
+
+```json
+{
+  "success": true,
+  "challenge_ts": "2026-10-31T12:00:00Z",
+  "hostname": "https://example.com",
+  "verdict": "interactive",
+  "classification": { "tor": false, "vpn": true, "bot": false, "datacenter": false, "private_relay": false, "danger_level": 3 },
+  "signals": {},
+  "interaction": {
+    "input": "pointer",
+    "pointer_type": "mouse",
+    "trusted": true,
+    "moves": 14,
+    "path_px": 212.5,
+    "straightness": 0.71,
+    "elapsed_ms": 1840,
+    "signals": { "untrusted_event": false, "straight_path": false }
+  },
+  "error_codes": []
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `input` | `pointer` or `keyboard` |
+| `pointer_type` | `mouse`, `touch`, `pen`, or `""` for keyboard |
+| `trusted` | The activating event had `isTrusted` set |
+| `moves`, `path_px`, `straightness` | Pointer moves over the box, path length in CSS pixels, and chord over path length (0 to 1) |
+| `elapsed_ms` | Milliseconds between the button being shown and activated |
+| `signals` | Every interaction rule and whether it fired; see [signals.md](signals.md#interaction-rules) |
+
+`interaction` is absent when the token came from a plain `pass`. The `jose` and `golang-jwt/jwt/v5` snippets above already accept both verdicts when verifying locally; local verification gives no `interaction` block.
 
 ## Correlate with the page call
 
@@ -220,7 +310,7 @@ Set `cache_api_call: false` when you pass a nonce. By default the client caches 
 
 ## What the summary shows
 
-`GET /admin/keys/{id}/widget` (admin token) summarises the key's reports and nonce-carrying `/thumbmark` events over the last 30 days; see [protocol.md](protocol.md#admin-api). A report matches the most recent `/thumbmark` event with the same key and nonce within 10 minutes, in either direction, so arrival order does not matter. The correlation verdict is computed when you read the summary and is advisory: it is not part of the danger score. The summary also counts the token outcomes: `pass`, `inconclusive`, `pow_failed`, `verified` (tokens spent at siteverify) and `replayed` (reports whose spent token was presented again).
+`GET /admin/keys/{id}/widget` (admin token) summarises the key's reports and nonce-carrying `/thumbmark` events over the last 30 days; see [protocol.md](protocol.md#admin-api). A report matches the most recent `/thumbmark` event with the same key and nonce within 10 minutes, in either direction, so arrival order does not matter. The correlation verdict is computed when you read the summary and is advisory: it is not part of the danger score. The summary also counts the token outcomes: `pass`, `inconclusive`, `pow_failed`, `verified` (tokens spent at siteverify) and `replayed` (reports whose spent token was presented again). `interactive` and `interactive_failed` count reports upgraded by the interactive step; an upgraded report leaves the `inconclusive` count.
 
 For a matched pair the summary compares the client IP hash, the raw JA4 string and the raw `User-Agent` string. `ja4_unknown` counts matched reports where either side has no JA4 (every request in `plain` mode). A nonce reused across many reports yields many rows, each matched independently.
 
@@ -257,6 +347,20 @@ The server computes a `thumbmark` for each widget report with the frame client's
 | A Phase 1 loader still in a browser cache (at most 300 s) | It gets the new frame, because the frame document is `no-store`. That frame earns a token the old loader ignores, and the page call carries the old loader's own nonce, so correlation is unmatched for at most 300 s |
 
 The `/thumbmark` `nonce` field, the correlation summary, retention and the admin counts are unchanged. Remove any synchronous read of `window.__nazrWidget.nonce` from host code.
+
+## Moving from Phase 2a to 2b
+
+Phase 2b is additive. A host that changes nothing behaves as before.
+
+| Phase 2a | Phase 2b |
+|---|---|
+| Token `verdict` is always `pass` | `pass` or `interactive`. A host that checks `verdict == "pass"` rejects interactive tokens, which is safe; add `interactive` to accept them |
+| No interactive step | Opt in with `data-container`; without it nothing changes |
+| `window.__nazrWidget` has `ready`, `nonce`, `token`, `reset` | Adds read-only `state` |
+| Error callback reasons `inconclusive`, `pow_failed`, `invalid`, `network` | Adds `interactive_failed` |
+| Siteverify has no `interaction` | Adds the optional `interaction` block |
+| Summary counts `pass`, `inconclusive`, `pow_failed` | Adds `interactive` and `interactive_failed` |
+| Challenge payload `{id, exp, bits, kid, origin}` | May carry `stage`, set to `interactive` on the second challenge |
 
 ## Origin scoping
 

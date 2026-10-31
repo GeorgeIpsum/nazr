@@ -109,6 +109,24 @@ The signal needs a corpus mapping JA4 fingerprints to application families. With
 
 Warning: `/beacon` is unauthenticated (it is sent with `sendBeacon`, which cannot set headers). As a mitigation, a beacon is recorded only when the same client IP produced a `/thumbmark` event with the beacon's `thumbmark` in the last 10 minutes, and `/beacon` is rate limited per IP. That stops blind posting of `{ua, ja4}` pairs, but a client that calls `/thumbmark` first (which needs an API key, and in terminate mode the JA4 then comes from its own connection) can still seed observations for its own JA4, so the local corpus reports whatever family it likes and the mismatch never fires for it. Until you have a trusted corpus, set `NAZR_UA_JA4_MIN_OBSERVATIONS` high (for example 1000) or rely only on the FoxIO database.
 
+## Interaction rules
+
+The widget's [interactive step](widget.md#interactive-step) scores a small trace the frame records while the visitor reaches and presses its button. The table mirrors `Rules()` in `apps/api/internal/interaction/score.go`, in the same order. Every rule is evaluated and recorded under `signals` in the stored report and in siteverify's `interaction` block, even on a malformed trace.
+
+| Signal | Fails the attempt | Fires when |
+|---|---|---|
+| `untrusted_event` | yes | `trusted` is false: the activating event was not a real user event |
+| `too_fast` | yes | `click_ms - shown_ms` is under 300 |
+| `too_slow` | yes | `click_ms - shown_ms` is over 600000 (ten minutes) |
+| `hidden_document` | yes | `visible` is false: the document was hidden at the click |
+| `no_pointer_path` | yes | a mouse or pen click with fewer than 3 pointer moves |
+| `straight_path` | no | a mouse or pen click with `straightness` of at least 0.98 |
+| `malformed_trace` | yes | a field is outside its bounds, or `input` or `pointer_type` is not a listed value |
+
+`straight_path` is advisory: it is recorded but never fails the attempt, because the frame observes only moves over its own box, a path too short to judge. Touch and keyboard activations skip `no_pointer_path` and `straight_path`: a tap has no path and a keyboard user has no pointer. The thresholds are constants in the package, not configuration.
+
+Trace bounds: `shown_ms` and `click_ms` are 0 to 2^31; `moves` is 0 to 200; `path_px` is finite and 0 to 1,000,000; `straightness` is finite and 0 to 1; `input` is `pointer` or `keyboard`; `pointer_type` is `mouse`, `touch`, `pen` or empty; strings are at most 16 characters. Any non-advisory rule that fires gives `interactive_failed`.
+
 ## Deviations from the design spec
 
 - FoxIO's JA4 database is opt-in (`NAZR_JA4DB_URL`, `NAZR_JA4DB_TOKEN`) instead of a default-on public download, because it now requires an account.

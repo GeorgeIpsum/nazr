@@ -173,7 +173,8 @@ row can never be downgraded or re-issued.
 A new pure package `internal/interaction` exposes
 `Score(t Trace) (ok bool, signals map[string]bool)` with a rule table
 mirrored in `docs/signals.md`. Every rule that fires is recorded; any firing
-rule fails the attempt.
+rule fails the attempt, except `straight_path`, which is advisory (see
+Amendments).
 
 | signal                 | fires when                                                               |
 |------------------------|--------------------------------------------------------------------------|
@@ -188,7 +189,8 @@ rule fails the attempt.
 Touch (`pointer_type == "touch"`) and keyboard activation skip
 `no_pointer_path` and `straight_path`: a tap has no path and a keyboard user
 has no pointer. The thresholds are constants in the package, not
-configuration.
+configuration. `straight_path` is advisory: it is recorded but does not fail
+the attempt, because the frame observes only moves over its own box.
 
 ## 5. Loader and host contract
 
@@ -354,9 +356,10 @@ configuration.
   carries the finished counter.
 - **Box shown but `data-container` removed from the DOM before the click**:
   no crash, the step times out at `exp`.
-- **`reset()` during the interactive step**: box collapses, a new passive
-  run starts, the old challenge can no longer be used (the row is already
-  inconclusive and the new frame has a new id).
+- **`reset()` during the interactive step**: box collapses and a new passive
+  run starts with a new id. The abandoned interactive challenge is not
+  revoked: its row is still inconclusive, so whoever holds it can redeem it
+  until `exp`.
 - **`NAZR_WIDGET_INTERACTIVE=false` on one instance of several**: that
   instance offers no step; others do; tokens from either verify everywhere.
 - **Interactive token at siteverify after the key rotated**: verifies
@@ -371,3 +374,14 @@ configuration.
 - Tokens with `verdict:"pass"` are unchanged; hosts that check
   `verdict == "pass"` reject interactive tokens, which is the safe default.
 - The migration is additive; existing rows have `interaction = NULL`.
+
+## Amendments
+
+Recorded 2026-10-31, after implementation.
+
+- **§4, `straight_path` is advisory.** It is evaluated and recorded in the
+  stored and reported `signals`, but it never fails the attempt, because the
+  frame observes only moves over its own box, too short a path to fail a
+  visitor on.
+- **§12, reset.** An abandoned interactive challenge stays redeemable by
+  whoever holds it until `exp`; `reset()` does not invalidate it.
