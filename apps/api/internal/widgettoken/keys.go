@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -166,8 +167,8 @@ func (k *Keyring) JWKS() JWKS {
 	return out
 }
 
-// Run refreshes every interval until ctx is done. Errors are ignored and the
-// last good set stays in place.
+// Run refreshes every interval until ctx is done. Errors are logged at Warn
+// and the last good set stays in place.
 func (k *Keyring) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -176,7 +177,9 @@ func (k *Keyring) Run(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			_ = k.Refresh(ctx)
+			if err := k.Refresh(ctx); err != nil {
+				slog.Warn("widgettoken: signing key refresh failed", "err", err)
+			}
 		}
 	}
 }

@@ -70,6 +70,7 @@ type fakeStore struct {
 	summaryWindow time.Duration
 
 	secrets        map[string]*store.APIKey // by secret hash
+	secretCalls    int
 	markCalls      int
 	markErr        error
 	correlation    store.WidgetCorrelation
@@ -547,6 +548,7 @@ func (f *fakeStore) WidgetSummary(_ context.Context, keyID string, since time.Ti
 func (f *fakeStore) FindKeyBySecretHash(_ context.Context, hash string) (*store.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.secretCalls++
 	if f.findErr != nil {
 		return nil, f.findErr
 	}

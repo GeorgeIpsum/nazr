@@ -297,12 +297,80 @@ func TestSiteverifyMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("correlation error after spending", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		e.store.correlationErr = errBoom
+		id := e.seedReport(&svIP, "")
+		status, got := e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id)})
+		if status != 200 || got["success"] != true || got["hostname"] != svHostname || got["verdict"] != "pass" ||
+			got["challenge_ts"] == nil || got["classification"] == nil || got["signals"] == nil ||
+			!reflect.DeepEqual(got["error_codes"], []any{}) {
+			t.Fatalf("status %d body %v", status, got)
+		}
+		if _, ok := got["correlation"]; ok {
+			t.Fatalf("correlation present: %v", got)
+		}
+		if e.report(id).VerifiedAt == nil {
+			t.Fatal("row not spent")
+		}
+
+		id = e.seedReport(&svIP, "")
+		status, got = e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id),
+			"remoteip": "198.51.100.7"})
+		if status != 200 || !reflect.DeepEqual(got["error_codes"], []any{"remoteip-mismatch"}) || got["verdict"] != "pass" {
+			t.Fatalf("mismatch: status %d body %v", status, got)
+		}
+		if _, ok := got["correlation"]; ok {
+			t.Fatalf("mismatch correlation present: %v", got)
+		}
+	})
+
+	t.Run("empty hostname and signals", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		id := e.seedReport(&svIP, "")
+		e.store.reports[len(e.store.reports)-1].Hostname = ""
+		e.store.reports[len(e.store.reports)-1].Signals = nil
+		w := e.do(svReq(string(marshal(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id)}))))
+		body := w.Body.String()
+		if w.Code != 200 || !strings.Contains(body, `"hostname":""`) || !strings.Contains(body, `"signals":{}`) {
+			t.Fatalf("status %d body %s", w.Code, body)
+		}
+
+		id = e.seedReport(&svIP, "")
+		e.store.reports[len(e.store.reports)-1].Hostname = ""
+		e.store.reports[len(e.store.reports)-1].Signals = nil
+		w = e.do(svReq(string(marshal(t, map[string]string{"secret": e.secret, "token": svToken(t, testSigningKey, keyID, id),
+			"remoteip": "198.51.100.7"}))))
+		body = w.Body.String()
+		if !strings.Contains(body, `"remoteip-mismatch"`) || !strings.Contains(body, `"hostname":""`) || !strings.Contains(body, `"signals":{}`) {
+			t.Fatalf("mismatch body %s", body)
+		}
+
+		w = e.do(svReq(string(marshal(t, map[string]string{"secret": e.secret, "token": "not.a.token"}))))
+		body = w.Body.String()
+		if !strings.Contains(body, `"invalid-token"`) || strings.Contains(body, "hostname") || strings.Contains(body, "signals") {
+			t.Fatalf("failure body %s", body)
+		}
+	})
+
+	t.Run("malformed secret skips the store", func(t *testing.T) {
+		e := newSiteverifyEnv(t, nil, nil)
+		id := e.seedReport(&svIP, "")
+		tok := svToken(t, testSigningKey, keyID, id)
+		for _, secret := range []string{"junk", "nzs_" + strings.Repeat("a", 51), "nzs_" + strings.Repeat("A", 52),
+			"nzr_" + strings.Repeat("a", 52), "nzs_" + strings.Repeat("a", 51) + "1"} {
+			status, got := e.verify(t, map[string]string{"secret": secret, "token": tok})
+			wantFailure(t, status, got, 401, "invalid-secret")
+		}
+		if e.store.secretCalls != 0 || e.store.markCalls != 0 {
+			t.Fatalf("store called: secret %d mark %d", e.store.secretCalls, e.store.markCalls)
+		}
+	})
+
 	t.Run("store errors", func(t *testing.T) {
 		e := newSiteverifyEnv(t, nil, nil)
 		id := e.seedReport(&svIP, "")
 		tok := svToken(t, testSigningKey, keyID, id)
-		e.store.correlationErr = errBoom
-		wantError(t, e.do(svReq(string(marshal(t, map[string]string{"secret": e.secret, "token": tok})))), 503, "store_unavailable")
 		e.store.markErr = errBoom
 		wantError(t, e.do(svReq(string(marshal(t, map[string]string{"secret": e.secret, "token": tok})))), 503, "store_unavailable")
 		e.store.findErr = errBoom

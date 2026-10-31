@@ -34,7 +34,7 @@ const insertSigningKeySQL = `INSERT INTO signing_keys (kid, private_key_pem, pub
 	VALUES ($1, $2, $3, $4, $5)`
 
 // signingKeyLock is the advisory lock key ("nazrsign") that serialises
-// EnsureSigningKey across processes.
+// EnsureSigningKey and RotateSigningKey across processes.
 const signingKeyLock int64 = 0x6e617a727369676e
 
 // EnsureSigningKey returns the active signing key, inserting the key made by
@@ -92,13 +92,16 @@ func (s *Store) ListSigningKeys(ctx context.Context, retiredAfter time.Time) ([]
 }
 
 // RotateSigningKey inserts next as the active key and retires every other
-// active key, in one transaction.
+// active key, in one transaction under the signing-key advisory lock.
 func (s *Store) RotateSigningKey(ctx context.Context, next SigningKey) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, signingKeyLock); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, insertSigningKeySQL,
 		next.Kid, next.PrivateKeyPEM, []byte(next.PublicJWK), next.HMACSecret, next.CreatedAt); err != nil {
 		return err

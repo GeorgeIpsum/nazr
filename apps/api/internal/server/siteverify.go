@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -34,17 +35,29 @@ type siteverifyRequest struct {
 	RemoteIP string `json:"remoteip"`
 }
 
-// siteverifyResponse is the verification result. Failures carry only
-// success and one error code, except remoteip-mismatch, which keeps the rest.
+// secretFormat is the shape of auth.GenerateSecret output. Anything else is
+// rejected before the database is asked.
+var secretFormat = regexp.MustCompile(`^nzs_[a-z2-7]{52}$`)
+
+// siteverifyResponse is the verification result for a spent token: success,
+// or remoteip-mismatch, which keeps the rest so the host can decide. hostname
+// and signals are always present; correlation is absent when it could not be
+// computed.
 type siteverifyResponse struct {
 	Success        bool                `json:"success"`
 	ChallengeTS    string              `json:"challenge_ts,omitempty"`
-	Hostname       string              `json:"hostname,omitempty"`
+	Hostname       string              `json:"hostname"`
 	Verdict        string              `json:"verdict,omitempty"`
 	Correlation    *correlationJSON    `json:"correlation,omitempty"`
 	Classification *classificationInfo `json:"classification,omitempty"`
-	Signals        map[string]bool     `json:"signals,omitempty"`
+	Signals        map[string]bool     `json:"signals"`
 	ErrorCodes     []string            `json:"error_codes"`
+}
+
+// siteverifyFailureResponse carries only success false and one error code.
+type siteverifyFailureResponse struct {
+	Success    bool     `json:"success"`
+	ErrorCodes []string `json:"error_codes"`
 }
 
 // correlationJSON is the report's Phase 1 correlation; a nil match is unknown.
@@ -55,8 +68,8 @@ type correlationJSON struct {
 	UAMatch  *bool `json:"ua_match"`
 }
 
-func siteverifyFailure(code string) siteverifyResponse {
-	return siteverifyResponse{ErrorCodes: []string{code}}
+func siteverifyFailure(code string) siteverifyFailureResponse {
+	return siteverifyFailureResponse{ErrorCodes: []string{code}}
 }
 
 // handleSiteverify verifies a widget token for the key owning the secret and
@@ -81,6 +94,10 @@ func (s *server) handleSiteverify(w http.ResponseWriter, r *http.Request) {
 	var req siteverifyRequest
 	if err := json.Unmarshal(data, &req); err != nil || req.Secret == "" || req.Token == "" {
 		writeError(w, http.StatusBadRequest, codeBadRequest, `body must be a JSON object with "secret" and "token"`)
+		return
+	}
+	if !secretFormat.MatchString(req.Secret) {
+		writeJSON(w, http.StatusUnauthorized, siteverifyFailure(svInvalidSecret))
 		return
 	}
 
@@ -130,15 +147,8 @@ func (s *server) handleSiteverify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	corr, err := s.Store.WidgetReportCorrelation(ctx, key.ID, claims.ID, widgetMatchWindow)
-	if err != nil {
-		s.Logger.Error("server: siteverify correlation failed", "err", err, "request_id", rid)
-		storeUnavailable(w, "could not verify token")
-		return
-	}
-
-	out := siteverifyResponse{Success: true, Hostname: row.Hostname, Verdict: row.Verdict, ErrorCodes: []string{},
-		Correlation: &correlationJSON{Matched: corr.Matched, IPMatch: corr.IPMatch, JA4Match: corr.JA4Match, UAMatch: corr.UAMatch}}
+	out := siteverifyResponse{Success: true, Hostname: row.Hostname, Verdict: row.Verdict,
+		Signals: map[string]bool{}, ErrorCodes: []string{}}
 	if row.TokenIssuedAt != nil {
 		out.ChallengeTS = row.TokenIssuedAt.UTC().Format(time.RFC3339)
 	}
@@ -150,10 +160,21 @@ func (s *server) handleSiteverify(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(row.Signals) > 0 {
 		_ = json.Unmarshal(row.Signals, &out.Signals)
+		if out.Signals == nil { // a JSON null
+			out.Signals = map[string]bool{}
+		}
 	}
 	if req.RemoteIP != "" && !s.remoteIPMatches(req.RemoteIP, row) {
 		out.Success = false
 		out.ErrorCodes = []string{svRemoteIPMismatch}
+	}
+	// The token is spent: a retry cannot succeed, so a correlation failure
+	// degrades to an absent block instead of a 503.
+	corr, err := s.Store.WidgetReportCorrelation(ctx, key.ID, claims.ID, widgetMatchWindow)
+	if err != nil {
+		s.Logger.Error("server: siteverify correlation failed", "err", err, "request_id", rid)
+	} else {
+		out.Correlation = &correlationJSON{Matched: corr.Matched, IPMatch: corr.IPMatch, JA4Match: corr.JA4Match, UAMatch: corr.UAMatch}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

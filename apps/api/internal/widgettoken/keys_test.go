@@ -1,6 +1,7 @@
 package widgettoken
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +95,34 @@ func TestGenerateAndKeyring(t *testing.T) {
 func TestFromStoredRejects(t *testing.T) {
 	if _, err := FromStored(store.SigningKey{PrivateKeyPEM: "junk"}); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestRunLogsRefreshFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	kr := NewKeyring(func(context.Context) ([]store.SigningKey, error) {
+		cancel()
+		return nil, errors.New("db down")
+	})
+	done := make(chan struct{})
+	go func() {
+		kr.Run(ctx, 20*time.Millisecond)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "level=WARN") ||
+		!strings.Contains(lines[0], "signing key refresh failed") || !strings.Contains(lines[0], "db down") {
+		t.Fatalf("log %q", buf.String())
 	}
 }

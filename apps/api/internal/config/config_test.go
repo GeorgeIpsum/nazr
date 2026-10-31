@@ -230,7 +230,8 @@ func TestWidgetChallengeConfig(t *testing.T) {
 	for _, tc := range []struct{ name, val string }{
 		{"NAZR_POW_BITS", "33"}, {"NAZR_POW_BITS", "-1"},
 		{"NAZR_WIDGET_PASS_MAX_DANGER", "6"}, {"NAZR_WIDGET_PASS_MAX_DANGER", "-1"},
-		{"NAZR_WIDGET_TOKEN_TTL", "0"}, {"NAZR_WIDGET_TOKEN_TTL", "-1m"},
+		{"NAZR_WIDGET_TOKEN_TTL", "0"}, {"NAZR_WIDGET_TOKEN_TTL", "-1m"}, {"NAZR_WIDGET_TOKEN_TTL", "2h"},
+		{"NAZR_WIDGET_TOKEN_TTL", "1h0m1s"},
 	} {
 		c, err := Load(lookupFrom(map[string]string{tc.name: tc.val}))
 		if err != nil {
@@ -240,7 +241,8 @@ func TestWidgetChallengeConfig(t *testing.T) {
 			t.Errorf("%s=%s: Validate = %v, want error naming the variable", tc.name, tc.val, err)
 		}
 	}
-	for _, ok := range []map[string]string{{"NAZR_POW_BITS": "0"}, {"NAZR_POW_BITS": "32"}, {"NAZR_WIDGET_PASS_MAX_DANGER": "5"}} {
+	for _, ok := range []map[string]string{{"NAZR_POW_BITS": "0"}, {"NAZR_POW_BITS": "32"}, {"NAZR_WIDGET_PASS_MAX_DANGER": "5"},
+		{"NAZR_WIDGET_TOKEN_TTL": "1h"}} {
 		c, _ := Load(lookupFrom(ok))
 		if err := c.Validate(); err != nil {
 			t.Errorf("%v should validate: %v", ok, err)

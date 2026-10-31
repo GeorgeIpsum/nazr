@@ -157,8 +157,9 @@ func (c Config) Validate() error {
 	if c.PowBits < 0 || c.PowBits > 32 {
 		errs = append(errs, fmt.Errorf("NAZR_POW_BITS: %d is outside [0,32]", c.PowBits))
 	}
-	if c.WidgetTokenTTL <= 0 {
-		errs = append(errs, fmt.Errorf("NAZR_WIDGET_TOKEN_TTL: %v must be greater than 0", c.WidgetTokenTTL))
+	// Tokens must expire well inside the signing-key grace minus the JWKS cache.
+	if c.WidgetTokenTTL <= 0 || c.WidgetTokenTTL > time.Hour {
+		errs = append(errs, fmt.Errorf("NAZR_WIDGET_TOKEN_TTL: %v must be greater than 0 and at most 1h", c.WidgetTokenTTL))
 	}
 	if c.WidgetPassMaxDanger < 0 || c.WidgetPassMaxDanger > 5 {
 		errs = append(errs, fmt.Errorf("NAZR_WIDGET_PASS_MAX_DANGER: %d is outside [0,5]", c.WidgetPassMaxDanger))
