@@ -1,7 +1,7 @@
 # Widget rollout: nazr on a VPS, verified from the blog
 
 Date: 2026-10-31
-Status: draft
+Status: parked (real-world test deferred on 2026-10-31; hosting to be decided when a server exists)
 Parent spec: [2026-10-21-nazr-design.md](2026-10-21-nazr-design.md)
 Builds on: [2026-10-31-widget-phase2b-design.md](2026-10-31-widget-phase2b-design.md)
 
