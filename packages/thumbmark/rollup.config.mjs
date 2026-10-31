@@ -50,7 +50,9 @@ const config = [
         plugins: [
             resolve(), // so Rollup can find `ms`
             commonjs(), // so Rollup can convert `ms` to an ES module
-            typescript(),
+            // plugin-typescript 12.3 requires declarationDir inside the Rollup output
+            // directory; the dts bundle below reads from dist/types.
+            typescript({ declarationDir: "dist/types" }),
             json(),
             terser(), // minify, but only in production
         ],
