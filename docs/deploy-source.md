@@ -2,7 +2,7 @@
 
 Build and run nazr without containers: for local development, or on a single VM.
 
-Prerequisites: Node 22 with pnpm 10, Go 1.26, and PostgreSQL. A throwaway Postgres for development:
+Prerequisites: Node 26 with pnpm 10, Go 1.26, and PostgreSQL. A throwaway Postgres for development:
 
 ```bash
 docker run -d --name nazr-pg -p 127.0.0.1:5432:5432 \

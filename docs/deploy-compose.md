@@ -6,7 +6,7 @@ The compose stack in `deploy/compose` runs nazr, PostgreSQL and a one-shot certi
 
 Prerequisites: Docker with Compose v2.24.4 or newer (for `env_file.required` and the `!override` tag), plus `curl` and `jq` for the smoke script.
 
-The image embeds the [widget](widget.md) only if its assets were synced into `apps/api` before the build. With Node 22 and pnpm, run this once first, and again after widget changes:
+The image embeds the [widget](widget.md) only if its assets were synced into `apps/api` before the build. With Node 26 and pnpm, run this once first, and again after widget changes:
 
 ```bash
 pnpm install && pnpm build --filter=@nazr/widget && pnpm --filter @nazr/api sync-widget
