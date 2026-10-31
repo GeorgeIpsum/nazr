@@ -48,7 +48,7 @@ Header order is captured per request (each request's own HTTP/2 header block or 
 | `datacenter_browser_ua` | 1 | 1 |
 | `canvas_probe_anomaly` | 1 | 1 |
 
-`info.signals` contains every signal as a boolean, fired or not. `info.classification` also exposes `tor`, `vpn`, `datacenter` and `private_relay` as plain booleans from the IP lists.
+`info.signals` contains every signal that was evaluated as a boolean, fired or not (`canvas_probe_anomaly` is absent when no determination is made, see below). `info.classification` also exposes `tor`, `vpn`, `datacenter` and `private_relay` as plain booleans from the IP lists.
 
 ### When each signal fires
 
