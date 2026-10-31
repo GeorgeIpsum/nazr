@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -151,9 +152,44 @@ func TestWidgetSummary(t *testing.T) {
 	// the window, "old-event" predates since, and k2's n4 is another key.
 	want := WidgetSummary{Reports: 12, Matched: 10, Unmatched: 2, IPMismatch: 2, JA4Mismatch: 1, JA4Unknown: 2,
 		UAMismatch: 1, EventsUnmatched: 2, Pass: 3, Inconclusive: 1, PowFailed: 1, Verified: 1, Replayed: 1,
-		Interactive: 1, InteractiveFailed: 1}
-	if got != want {
+		Interactive: 1, InteractiveFailed: 1, InteractionSignals: map[string]int64{}}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestWidgetSummaryInteractionSignals(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	k2, _ := s.CreateKey(ctx, NewKey{Hash: "b", Prefix: "bbbbbbbb"})
+	now := time.Now().UTC().Truncate(time.Second)
+	seed := func(keyID, verdict, interaction string, at time.Time) {
+		t.Helper()
+		reportV(t, s, WidgetReport{APIKeyID: keyID, Nonce: "n", Verdict: verdict, Interaction: []byte(interaction), CreatedAt: at})
+	}
+	seed(k.ID, "interactive_failed", `{"signals":{"untrusted_event":true}}`, now)
+	seed(k.ID, "interactive_failed", `{"signals":{"untrusted_event":true,"too_fast":true,"too_slow":false}}`, now)
+	// Not counted: a pass row, an interactive row, another key, and a row before since.
+	seed(k.ID, "pass", `{"signals":{"untrusted_event":true}}`, now)
+	seed(k.ID, "interactive", `{"signals":{"straight_path":true}}`, now)
+	seed(k2.ID, "interactive_failed", `{"signals":{"untrusted_event":true}}`, now)
+	seed(k.ID, "interactive_failed", `{"signals":{"untrusted_event":true}}`, now.Add(-3*time.Hour))
+
+	got, err := s.WidgetSummary(ctx, k.ID, now.Add(-time.Hour), 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"untrusted_event": 2, "too_fast": 1}
+	if !reflect.DeepEqual(got.InteractionSignals, want) {
+		t.Fatalf("got %v, want %v", got.InteractionSignals, want)
+	}
+	empty, err := s.WidgetSummary(ctx, k2.ID, now.Add(4*time.Hour), 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.InteractionSignals == nil || len(empty.InteractionSignals) != 0 {
+		t.Fatalf("empty: %#v", empty.InteractionSignals)
 	}
 }
 
@@ -341,5 +377,38 @@ func TestWidgetReportCorrelation(t *testing.T) {
 
 	if _, err := s.WidgetReportCorrelation(ctx, k.ID, newID(), window); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing report: %v", err)
+	}
+}
+
+func TestUpgradeWidgetReportRejectsInvalidUpgrade(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	now := time.Now().UTC().Truncate(time.Second)
+	trace := json.RawMessage(`{"input": "pointer"}`)
+	r := reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: "a", Verdict: "inconclusive", CreatedAt: now})
+	cases := []struct {
+		verdict  string
+		issuedAt *time.Time
+	}{
+		{"pass", &now},
+		{"pass", nil},
+		{"interactive", nil},
+		{"interactive_failed", &now},
+	}
+	for _, c := range cases {
+		if _, err := s.UpgradeWidgetReport(ctx, k.ID, r.ID, c.verdict, trace, c.issuedAt); !errors.Is(err, ErrInvalidUpgrade) {
+			t.Fatalf("%s issued=%v: %v", c.verdict, c.issuedAt != nil, err)
+		}
+	}
+	var verdict string
+	var interaction []byte
+	var issued *time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT verdict, interaction, token_issued_at FROM widget_reports WHERE id = $1`, r.ID).
+		Scan(&verdict, &interaction, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "inconclusive" || interaction != nil || issued != nil {
+		t.Fatalf("row touched: %s %s %v", verdict, interaction, issued)
 	}
 }

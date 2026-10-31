@@ -1229,12 +1229,17 @@ func mintTestInteractiveChallenge(t *testing.T, e *env, origin string, bits int)
 	return mintStagedChallenge(e, testSigningKey, origin, bits, widgettoken.StageInteractive)
 }
 
+// mintStagedChallenge mints a challenge bound to the test key id, as the
+// frame route and the interactive offer do.
 func mintStagedChallenge(e *env, k widgettoken.Key, origin string, bits int, stage string) (string, string) {
 	id := ulid.Make().String()
 	ch := widgettoken.MintChallenge(k.Secret, widgettoken.Challenge{ID: id,
-		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: bits, Kid: k.Kid, Origin: origin, Stage: stage})
+		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: bits, Kid: k.Kid, Origin: origin, Key: keyID, Stage: stage})
 	return ch, id
 }
+
+// otherKeyID is an API key id the test env does not authenticate as.
+const otherKeyID = "22222222-2222-4222-8222-222222222222"
 
 // widgetBody is a valid report body for challenge ch (id) with a solved
 // proof-of-work and the stock client's components.
@@ -1409,7 +1414,8 @@ func TestWidgetReportInteractiveOffer(t *testing.T) {
 	}
 	orig, _ := widgettoken.ParseChallenge(ch, func(string) ([]byte, bool) { return testSigningKey.Secret, true }, e.now)
 	if got.Stage != widgettoken.StageInteractive || got.ID != id || got.Expires != orig.Expires ||
-		got.Origin != "https://shop.example" || got.Kid != testSigningKey.Kid || got.Bits != e.cfg.PowBits+4 {
+		got.Origin != "https://shop.example" || got.Kid != testSigningKey.Kid || got.Bits != e.cfg.PowBits+4 ||
+		got.Key != keyID {
 		t.Fatalf("offer %+v", got)
 	}
 	if rep := e.store.reports[0]; rep.Verdict != "inconclusive" || rep.TokenIssuedAt != nil {
@@ -1457,6 +1463,34 @@ func TestWidgetReportRejectsStagedChallenge(t *testing.T) {
 		t.Fatalf("outcome %v", out)
 	}
 	if len(e.store.reports) != 0 {
+		t.Fatalf("stored %+v", e.store.reports)
+	}
+}
+
+func TestWidgetReportKeyBinding(t *testing.T) {
+	mint := func(e *env, key string) (string, string) {
+		id := ulid.Make().String()
+		return widgettoken.MintChallenge(testSigningKey.Secret, widgettoken.Challenge{ID: id,
+			Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: e.cfg.PowBits, Kid: testSigningKey.Kid,
+			Origin: "https://shop.example", Key: key}), id
+	}
+
+	// Minted for another key: invalid, nothing stored.
+	e := newEnv(t, nil)
+	ch, id := mint(e, otherKeyID)
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "invalid" || len(out) != 1 {
+		t.Fatalf("other key outcome %v", out)
+	}
+	if len(e.store.reports) != 0 {
+		t.Fatalf("stored %+v", e.store.reports)
+	}
+
+	// Minted before the binding (no key): accepted for its window.
+	ch, id = mint(e, "")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "pass" || out["token"] == nil {
+		t.Fatalf("keyless outcome %v", out)
+	}
+	if len(e.store.reports) != 1 || e.store.reports[0].ID != id {
 		t.Fatalf("stored %+v", e.store.reports)
 	}
 }
@@ -1665,7 +1699,8 @@ func TestAdminWidgetSummary(t *testing.T) {
 	wantError(t, e.do(req("")), 403, "unauthorized")
 
 	e.store.summary = store.WidgetSummary{Reports: 10, Matched: 7, Unmatched: 3, IPMismatch: 1, JA4Mismatch: 2, JA4Unknown: 4,
-		UAMismatch: 5, EventsUnmatched: 6, Pass: 7, Inconclusive: 2, PowFailed: 1, Verified: 3, Replayed: 1, Interactive: 4, InteractiveFailed: 2}
+		UAMismatch: 5, EventsUnmatched: 6, Pass: 7, Inconclusive: 2, PowFailed: 1, Verified: 3, Replayed: 1, Interactive: 4, InteractiveFailed: 2,
+		InteractionSignals: map[string]int64{"untrusted_event": 2, "too_fast": 1}}
 	w := e.do(req("s3cret"))
 	if w.Code != 200 {
 		t.Fatalf("summary %d: %s", w.Code, w.Body.String())
@@ -1677,10 +1712,18 @@ func TestAdminWidgetSummary(t *testing.T) {
 	want := map[string]any{"window_days": float64(30), "reports": float64(10), "matched": float64(7), "unmatched": float64(3),
 		"events_unmatched": float64(6), "ip_mismatch": float64(1), "ja4_mismatch": float64(2), "ja4_unknown": float64(4), "ua_mismatch": float64(5),
 		"pass": float64(7), "inconclusive": float64(2), "pow_failed": float64(1), "verified": float64(3), "replayed": float64(1),
-		"interactive": float64(4), "interactive_failed": float64(2)}
+		"interactive": float64(4), "interactive_failed": float64(2),
+		"interaction_signals": map[string]any{"untrusted_event": float64(2), "too_fast": float64(1)}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("body %v", got)
 	}
+	// A nil map from the store still serializes as an empty object.
+	e.store.summary = store.WidgetSummary{}
+	w = e.do(req("s3cret"))
+	if !strings.Contains(w.Body.String(), `"interaction_signals":{}`) {
+		t.Fatalf("empty signals: %s", w.Body.String())
+	}
+
 	if e.store.summaryKeyID != "key-1" || e.store.summaryWindow != 10*time.Minute ||
 		!e.store.summarySince.Equal(testNow.Add(-30*24*time.Hour)) {
 		t.Fatalf("args %q %v %v", e.store.summaryKeyID, e.store.summarySince, e.store.summaryWindow)
@@ -1720,7 +1763,7 @@ func TestWidgetFrameChallenge(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(c.ID) != 26 || c.Expires != testNow.Add(10*time.Minute).Unix() || c.Bits != e.cfg.PowBits ||
-		c.Kid != "test" || c.Origin != "https://shop.example" {
+		c.Kid != "test" || c.Origin != "https://shop.example" || c.Key != keyID {
 		t.Fatalf("challenge %+v", c)
 	}
 	if got := attr(t, body, "data-pow-bits"); got != strconv.Itoa(e.cfg.PowBits) {

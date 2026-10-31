@@ -8,8 +8,13 @@ import "math"
 const (
 	MinClickMS      = 300    // fastest plausible delay between button shown and click
 	MaxClickMS      = 600000 // slowest delay before the click is treated as stale
-	MinMoves        = 3      // fewest pointer moves a mouse or pen click should show
 	MaxStraightness = 0.98   // straightness at or above this is a synthetic path
+
+	// MinMoves is the fewest pointer moves over the frame a mouse or pen
+	// activation should show: one with none is a teleported click. The frame
+	// sees only moves over its own small box, so a real cursor can arrive in
+	// one or two.
+	MinMoves = 1
 
 	maxTimeMS   = 1 << 31 // validity bound for shown_ms and click_ms (spec 3.2)
 	maxMoves    = 200

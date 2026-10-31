@@ -166,7 +166,7 @@ func (s *server) handleWidgetFrame(wa *widgetAssets) http.HandlerFunc {
 		origin := widgettoken.EmbeddingOrigin(r.Header.Get("Referer"))
 		ch := widgettoken.MintChallenge(active.Secret, widgettoken.Challenge{
 			ID: ulid.Make().String(), Expires: s.Now().Add(widgetMatchWindow).Unix(), Bits: s.Cfg.PowBits,
-			Kid: active.Kid, Origin: origin,
+			Kid: active.Kid, Origin: origin, Key: k.ID,
 		})
 		var buf bytes.Buffer
 		data := frameData{Bundle: wa.bundleName, Worker: wa.workerName, Challenge: ch,
@@ -246,8 +246,8 @@ type interactiveOffer struct {
 }
 
 // interactiveOffer mints the interactive-stage challenge for ch with the
-// secret of the key that signed ch: same id, expiry, key and origin, at the
-// configured extra difficulty.
+// secret of the key that signed ch: same id, expiry, signing key, API key and
+// origin, at the configured extra difficulty.
 func (s *server) interactiveOffer(ch widgettoken.Challenge, secret []byte) *interactiveOffer {
 	next := ch
 	next.Bits = s.Cfg.PowBits + s.Cfg.WidgetInteractiveExtraBits
@@ -325,6 +325,11 @@ func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
 	}, now)
 	// A staged challenge is redeemed at the interactive endpoint only.
 	if err != nil || ch.Stage != "" {
+		return invalid
+	}
+	// A challenge is redeemed under the key it was minted for. Challenges
+	// minted before the binding carry no key and expire within the window.
+	if ch.Key != "" && ch.Key != key.ID {
 		return invalid
 	}
 	// The difficulty is the challenge's, which nazr minted and MACed.

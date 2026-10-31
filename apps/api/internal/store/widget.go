@@ -18,6 +18,10 @@ var ErrDuplicateReport = errors.New("store: duplicate widget report")
 // verified before; the replay is counted.
 var ErrAlreadyVerified = errors.New("store: widget report already verified")
 
+// ErrInvalidUpgrade is returned by UpgradeWidgetReport when the verdict and
+// issue time do not form a valid upgrade.
+var ErrInvalidUpgrade = errors.New("store: invalid widget report upgrade")
+
 // WidgetReport is one fingerprint report posted by the widget, correlated
 // with /thumbmark events by Nonce.
 type WidgetReport struct {
@@ -70,10 +74,15 @@ func scanWidgetReport(row pgx.Row) (WidgetReport, error) {
 
 // UpgradeWidgetReport moves an inconclusive report that has no token to
 // verdict (interactive or interactive_failed), storing the interaction
-// summary and the token issue time (nil when no token was issued). It
-// succeeds once per report; any other state, an unknown report or another
+// summary and the token issue time. Only two upgrades are valid:
+// interactive with a non-nil issuedAt, and interactive_failed with a nil
+// one; anything else returns ErrInvalidUpgrade before touching the database.
+// It succeeds once per report; any other state, an unknown report or another
 // key returns ErrNotFound.
 func (s *Store) UpgradeWidgetReport(ctx context.Context, keyID, id, verdict string, interaction json.RawMessage, issuedAt *time.Time) (WidgetReport, error) {
+	if !(verdict == "interactive" && issuedAt != nil) && !(verdict == "interactive_failed" && issuedAt == nil) {
+		return WidgetReport{}, ErrInvalidUpgrade
+	}
 	if !validUUID(keyID) {
 		return WidgetReport{}, ErrNotFound
 	}
@@ -172,6 +181,9 @@ type WidgetSummary struct {
 	// Verdict and verification counts over the same report rows.
 	Pass, Inconclusive, PowFailed, Verified, Replayed int64
 	Interactive, InteractiveFailed                    int64
+	// InteractionSignals counts, over the interactive_failed rows, each
+	// interaction signal that fired. Never nil.
+	InteractionSignals map[string]int64
 }
 
 // WidgetSummary correlates each report since `since` with the most recent
@@ -219,5 +231,33 @@ func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time
 		     WHERE r.api_key_id = e.api_key_id AND r.nonce = e.nonce
 		       AND r.created_at BETWEEN e.created_at - $3::interval AND e.created_at + $3::interval)`,
 		keyID, since, window).Scan(&out.EventsUnmatched)
+	if err != nil {
+		return out, err
+	}
+	out.InteractionSignals, err = s.interactionSignals(ctx, keyID, since)
 	return out, err
+}
+
+// interactionSignals counts, over the key's interactive_failed reports since
+// `since`, each signal in the interaction summary whose value is true.
+func (s *Store) interactionSignals(ctx context.Context, keyID string, since time.Time) (map[string]int64, error) {
+	out := map[string]int64{}
+	rows, err := s.pool.Query(ctx,
+		`SELECT s.key, count(*) FROM widget_reports r, jsonb_each(r.interaction->'signals') s
+		 WHERE r.api_key_id = $1::uuid AND r.created_at >= $2 AND r.verdict = 'interactive_failed'
+		   AND s.value = 'true'::jsonb
+		 GROUP BY s.key`, keyID, since)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var n int64
+		if err := rows.Scan(&k, &n); err != nil {
+			return out, err
+		}
+		out[k] = n
+	}
+	return out, rows.Err()
 }

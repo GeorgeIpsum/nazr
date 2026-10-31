@@ -21,7 +21,10 @@ func TestScoreRules(t *testing.T) {
 		{"too fast", func(x *Trace) { x.ClickMS = 1299 }, "too_fast"},
 		{"too slow", func(x *Trace) { x.ClickMS = 601001 }, "too_slow"},
 		{"hidden", func(x *Trace) { x.Visible = false }, "hidden_document"},
-		{"no path", func(x *Trace) { x.Moves = 2 }, "no_pointer_path"},
+		{"no path", func(x *Trace) { x.Moves = 0 }, "no_pointer_path"},
+		{"pen no path", func(x *Trace) { x.PointerType, x.Moves = "pen", 0 }, "no_pointer_path"},
+		{"one move ok", func(x *Trace) { x.Moves = 1 }, ""},
+		{"two moves ok", func(x *Trace) { x.Moves = 2 }, ""},
 		{"straight", func(x *Trace) { x.Straightness = 0.98 }, "straight_path"},
 		{"perfectly straight", func(x *Trace) { x.Straightness = 1 }, "straight_path"},
 		{"touch ok", func(x *Trace) { x.PointerType, x.Moves, x.Straightness = "touch", 0, 1 }, ""},
@@ -62,7 +65,7 @@ func TestScoreRules(t *testing.T) {
 
 func TestStraightPathWithNoPointerPathFails(t *testing.T) {
 	tr := base()
-	tr.Moves, tr.Straightness = 2, 1
+	tr.Moves, tr.Straightness = 0, 1
 	ok, sig := Score(tr)
 	if ok || !sig["straight_path"] || !sig["no_pointer_path"] {
 		t.Fatalf("ok = %v, signals %v", ok, sig)

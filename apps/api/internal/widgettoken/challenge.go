@@ -22,13 +22,16 @@ var (
 const maxChallengeLen = 512
 
 // Challenge is the server-minted payload a browser must solve before it can
-// ask for a token. Field order fixes the encoded form.
+// ask for a token. Field order fixes the encoded form. Key is the API key id
+// the challenge was minted for; challenges minted before the binding have
+// none.
 type Challenge struct {
 	ID      string `json:"id"`
 	Expires int64  `json:"exp"`
 	Bits    int    `json:"bits"`
 	Kid     string `json:"kid"`
 	Origin  string `json:"origin"`
+	Key     string `json:"key,omitempty"`
 	Stage   string `json:"stage,omitempty"`
 }
 

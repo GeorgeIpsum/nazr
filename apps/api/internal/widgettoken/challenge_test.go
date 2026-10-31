@@ -103,21 +103,24 @@ func TestChallengeStage(t *testing.T) {
 	secret := bytes.Repeat([]byte{1}, 32)
 	lookup := func(string) ([]byte, bool) { return secret, true }
 
-	c := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: now.Unix() + 600, Bits: 22, Kid: "k1", Origin: "https://shop.example", Stage: StageInteractive}
+	c := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: now.Unix() + 600, Bits: 22, Kid: "k1", Origin: "https://shop.example",
+		Key: "6f1c2a3b-0000-4000-8000-000000000001", Stage: StageInteractive}
 	got, err := ParseChallenge(MintChallenge(secret, c), lookup, now)
-	if err != nil || got != c || got.Stage != "interactive" {
+	if err != nil || got != c || got.Stage != "interactive" || got.Key != "6f1c2a3b-0000-4000-8000-000000000001" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 
-	// A stage-less challenge keeps the 2a wire format byte for byte.
-	plain := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: 1_700_000_600, Bits: 18, Kid: "k1", Origin: "https://shop.example"}
+	// A stage-less challenge keeps the 2a wire format, with the key bound
+	// after the origin.
+	plain := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: 1_700_000_600, Bits: 18, Kid: "k1", Origin: "https://shop.example",
+		Key: "6f1c2a3b-0000-4000-8000-000000000001"}
 	s := MintChallenge(secret, plain)
 	payload, _, _ := strings.Cut(s, ".")
 	pb, err := enc.DecodeString(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantJSON = `{"id":"01HXABCDEFGHJKMNPQRSTVWXYZ","exp":1700000600,"bits":18,"kid":"k1","origin":"https://shop.example"}`
+	const wantJSON = `{"id":"01HXABCDEFGHJKMNPQRSTVWXYZ","exp":1700000600,"bits":18,"kid":"k1","origin":"https://shop.example","key":"6f1c2a3b-0000-4000-8000-000000000001"}`
 	if string(pb) != wantJSON {
 		t.Fatalf("payload = %s, want %s", pb, wantJSON)
 	}
@@ -128,9 +131,19 @@ func TestChallengeStage(t *testing.T) {
 	if _, has := m["stage"]; has {
 		t.Fatalf("stage-less payload has a stage key: %s", pb)
 	}
-	// Generated once with a throwaway print of MintChallenge, then pinned.
-	const wantMinted = "eyJpZCI6IjAxSFhBQkNERUZHSEpLTU5QUVJTVFZXWFlaIiwiZXhwIjoxNzAwMDAwNjAwLCJiaXRzIjoxOCwia2lkIjoiazEiLCJvcmlnaW4iOiJodHRwczovL3Nob3AuZXhhbXBsZSJ9.YMDbtcznQCCKIx1otSlxH8tmWnE9IdR9E6FYLxV8piA"
+	// Generated once with a throwaway print of MintChallenge, then pinned
+	// (regenerated 2026-10-31 when the key binding was added).
+	const wantMinted = "eyJpZCI6IjAxSFhBQkNERUZHSEpLTU5QUVJTVFZXWFlaIiwiZXhwIjoxNzAwMDAwNjAwLCJiaXRzIjoxOCwia2lkIjoiazEiLCJvcmlnaW4iOiJodHRwczovL3Nob3AuZXhhbXBsZSIsImtleSI6IjZmMWMyYTNiLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJ9.e7wuVtasHmAmufPwzWWRQ9GMT2aPf-13m7JiU7W7DRo"
 	if s != wantMinted {
 		t.Fatalf("minted = %s", s)
+	}
+
+	// A challenge without a key (minted before the binding) omits the field.
+	legacy := plain
+	legacy.Key = ""
+	lp, _, _ := strings.Cut(MintChallenge(secret, legacy), ".")
+	lb, _ := enc.DecodeString(lp)
+	if string(lb) != `{"id":"01HXABCDEFGHJKMNPQRSTVWXYZ","exp":1700000600,"bits":18,"kid":"k1","origin":"https://shop.example"}` {
+		t.Fatalf("legacy payload = %s", lb)
 	}
 }

@@ -202,6 +202,11 @@ func TestInteractInvalid(t *testing.T) {
 		"empty challenge": func(_ *testing.T, _ *env, b map[string]any, _ string) { b["challenge"] = "" },
 		"long pow":        func(_ *testing.T, _ *env, b map[string]any, _ string) { b["pow"] = strings.Repeat("1", 33) },
 		"numeric pow":     func(_ *testing.T, _ *env, b map[string]any, _ string) { b["pow"] = 12 },
+		"wrong key": func(_ *testing.T, e *env, b map[string]any, id string) {
+			b["challenge"] = widgettoken.MintChallenge(testSigningKey.Secret, widgettoken.Challenge{ID: id,
+				Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: interactBits, Kid: testSigningKey.Kid,
+				Origin: "https://shop.example", Key: otherKeyID, Stage: widgettoken.StageInteractive})
+		},
 		"unknown id": func(t *testing.T, e *env, b map[string]any, _ string) {
 			ch, other := mintTestInteractiveChallenge(t, e, "https://shop.example", interactBits)
 			b["challenge"], b["pow"] = ch, widgettoken.SolvePoW(other, interactBits)

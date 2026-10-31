@@ -90,6 +90,9 @@ func (s *server) processInteract(r *http.Request) widgetOutcome {
 	if err != nil || ch.Stage != widgettoken.StageInteractive {
 		return invalid
 	}
+	if ch.Key != "" && ch.Key != key.ID {
+		return invalid
+	}
 	if !widgettoken.VerifyPoW(ch.ID, body.pow, ch.Bits) {
 		return invalid
 	}

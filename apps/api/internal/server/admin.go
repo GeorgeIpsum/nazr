@@ -209,6 +209,9 @@ type widgetSummaryJSON struct {
 
 	Interactive       int64 `json:"interactive"`
 	InteractiveFailed int64 `json:"interactive_failed"`
+	// InteractionSignals counts the signals that fired on interactive_failed
+	// reports; always present, {} when none.
+	InteractionSignals map[string]int64 `json:"interaction_signals"`
 }
 
 // handleWidgetSummary reports how a key's widget reports correlate with its
@@ -221,9 +224,13 @@ func (s *server) handleWidgetSummary(w http.ResponseWriter, r *http.Request) {
 		storeUnavailable(w, "could not compute widget summary")
 		return
 	}
+	signals := sum.InteractionSignals
+	if signals == nil {
+		signals = map[string]int64{}
+	}
 	writeJSON(w, http.StatusOK, widgetSummaryJSON{WindowDays: store.ProbeWindowDays, Reports: sum.Reports,
 		Matched: sum.Matched, Unmatched: sum.Unmatched, EventsUnmatched: sum.EventsUnmatched,
 		IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch, JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch,
 		Pass: sum.Pass, Inconclusive: sum.Inconclusive, PowFailed: sum.PowFailed, Verified: sum.Verified, Replayed: sum.Replayed,
-		Interactive: sum.Interactive, InteractiveFailed: sum.InteractiveFailed})
+		Interactive: sum.Interactive, InteractiveFailed: sum.InteractiveFailed, InteractionSignals: signals})
 }
