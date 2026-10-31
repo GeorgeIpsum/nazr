@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"testing"
@@ -129,6 +130,8 @@ func TestWidgetSummary(t *testing.T) {
 	setVerdict("n3", "pass", false, 0)
 	setVerdict("n4", "inconclusive", false, 0)
 	setVerdict("n5", "pow_failed", false, 0)
+	setVerdict("n6", "interactive", false, 0)
+	setVerdict("n7", "interactive_failed", false, 0)
 	// Excluded: older than since, and under another key. k2's n4 event must
 	// not match k's n4 report, nor count as k's unmatched event.
 	report(k.ID, "old", "j", now.Add(-3*time.Hour))
@@ -147,7 +150,8 @@ func TestWidgetSummary(t *testing.T) {
 	// n10 (no report) = 2; both n9 events and the n11 event have a report in
 	// the window, "old-event" predates since, and k2's n4 is another key.
 	want := WidgetSummary{Reports: 12, Matched: 10, Unmatched: 2, IPMismatch: 2, JA4Mismatch: 1, JA4Unknown: 2,
-		UAMismatch: 1, EventsUnmatched: 2, Pass: 3, Inconclusive: 1, PowFailed: 1, Verified: 1, Replayed: 1}
+		UAMismatch: 1, EventsUnmatched: 2, Pass: 3, Inconclusive: 1, PowFailed: 1, Verified: 1, Replayed: 1,
+		Interactive: 1, InteractiveFailed: 1}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -184,7 +188,7 @@ func TestWidgetReportVerdictRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	issued := now.Add(-time.Minute)
 	r := reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: "n", PowOK: true, Verdict: "pass", Hostname: "host.example",
-		Classification: []byte(`{"a": 1}`), Signals: []byte(`{"b": [2]}`), TokenIssuedAt: &issued, CreatedAt: now})
+		Classification: []byte(`{"a": 1}`), Signals: []byte(`{"b": [2]}`), Interaction: []byte(`{"c": 3}`), TokenIssuedAt: &issued, CreatedAt: now})
 	verified, err := s.MarkWidgetVerified(ctx, k.ID, r.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +198,7 @@ func TestWidgetReportVerdictRoundTrip(t *testing.T) {
 	}
 	if verified.ID != r.ID || verified.APIKeyID != k.ID || verified.Nonce != "n" || !verified.PowOK ||
 		verified.Verdict != "pass" || verified.Hostname != "host.example" ||
-		string(verified.Classification) != `{"a": 1}` || string(verified.Signals) != `{"b": [2]}` ||
+		string(verified.Classification) != `{"a": 1}` || string(verified.Signals) != `{"b": [2]}` || string(verified.Interaction) != `{"c": 3}` ||
 		verified.TokenIssuedAt == nil || !verified.TokenIssuedAt.Equal(issued) ||
 		!verified.CreatedAt.Equal(now) || verified.ReplayCount != 0 || verified.JA4 != "" {
 		t.Fatalf("round trip: %+v", verified)
@@ -227,6 +231,71 @@ func TestMarkWidgetVerified(t *testing.T) {
 	}
 	if _, err := s.MarkWidgetVerified(ctx, k2.ID, r.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other key: %v", err)
+	}
+}
+
+func TestMarkWidgetVerifiedRequiresToken(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	now := time.Now().UTC()
+	bad := reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: "a", Verdict: "pow_failed", CreatedAt: now})
+	if _, err := s.MarkWidgetVerified(ctx, k.ID, bad.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("pow_failed: %v", err)
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT replay_count FROM widget_reports WHERE id = $1`, bad.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("replay_count %d %v", n, err)
+	}
+	ok := reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: "b", Verdict: "interactive", CreatedAt: now})
+	if got, err := s.MarkWidgetVerified(ctx, k.ID, ok.ID); err != nil || got.VerifiedAt == nil {
+		t.Fatalf("interactive: %+v %v", got, err)
+	}
+}
+
+func TestUpgradeWidgetReport(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "a", Prefix: "aaaaaaaa"})
+	k2, _ := s.CreateKey(ctx, NewKey{Hash: "b", Prefix: "bbbbbbbb"})
+	now := time.Now().UTC().Truncate(time.Second)
+	mk := func(nonce, verdict string) WidgetReport {
+		return reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: nonce, Verdict: verdict, CreatedAt: now})
+	}
+	trace := json.RawMessage(`{"input": "pointer"}`)
+
+	r := mk("a", "inconclusive")
+	if _, err := s.UpgradeWidgetReport(ctx, k2.ID, r.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong key: %v", err)
+	}
+	if _, err := s.UpgradeWidgetReport(ctx, "not-a-uuid", r.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bad key: %v", err)
+	}
+	got, err := s.UpgradeWidgetReport(ctx, k.ID, r.ID, "interactive", trace, &now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Verdict != "interactive" || got.TokenIssuedAt == nil || !got.TokenIssuedAt.Equal(now) ||
+		string(got.Interaction) != `{"input": "pointer"}` {
+		t.Fatalf("upgraded: %+v", got)
+	}
+	if _, err := s.UpgradeWidgetReport(ctx, k.ID, r.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second upgrade: %v", err)
+	}
+
+	f := mk("b", "inconclusive")
+	got, err = s.UpgradeWidgetReport(ctx, k.ID, f.ID, "interactive_failed", trace, nil)
+	if err != nil || got.Verdict != "interactive_failed" || got.TokenIssuedAt != nil {
+		t.Fatalf("failed upgrade: %+v %v", got, err)
+	}
+	if _, err := s.UpgradeWidgetReport(ctx, k.ID, f.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("upgrade after failed: %v", err)
+	}
+	for i, v := range []string{"pass", "pow_failed"} {
+		o := mk("c"+v, v)
+		if _, err := s.UpgradeWidgetReport(ctx, k.ID, o.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%d %s: %v", i, v, err)
+		}
 	}
 }
 

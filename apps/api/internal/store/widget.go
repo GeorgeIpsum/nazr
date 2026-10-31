@@ -32,10 +32,11 @@ type WidgetReport struct {
 	Classification, Signals                    json.RawMessage
 	TokenIssuedAt, VerifiedAt                  *time.Time
 	ReplayCount                                int
+	Interaction                                json.RawMessage
 }
 
 const widgetReportCols = `id, api_key_id::text, nonce, thumbmark, client_hash, ip, ip_hash, ja4, h2fp, user_agent,
-	components, created_at, hostname, pow_ok, verdict, classification, signals, token_issued_at, verified_at, replay_count`
+	components, created_at, hostname, pow_ok, verdict, classification, signals, token_issued_at, verified_at, replay_count, interaction`
 
 // InsertWidgetReport stores a widget report.
 func (s *Store) InsertWidgetReport(ctx context.Context, r WidgetReport) error {
@@ -46,12 +47,12 @@ func (s *Store) InsertWidgetReport(ctx context.Context, r WidgetReport) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO widget_reports (id, api_key_id, nonce, thumbmark, client_hash, ip, ip_hash,
 		   ja4, h2fp, user_agent, components, created_at, hostname, pow_ok, verdict, classification,
-		   signals, token_issued_at, verified_at, replay_count)
-		 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+		   signals, token_issued_at, verified_at, replay_count, interaction)
+		 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		r.ID, r.APIKeyID, r.Nonce, r.Thumbmark, r.ClientHash, ip, r.IPHash,
 		r.JA4, r.H2FP, r.UserAgent, nullJSON(r.Components), r.CreatedAt,
 		r.Hostname, r.PowOK, r.Verdict, nullJSON(r.Classification), nullJSON(r.Signals),
-		r.TokenIssuedAt, r.VerifiedAt, r.ReplayCount)
+		r.TokenIssuedAt, r.VerifiedAt, r.ReplayCount, nullJSON(r.Interaction))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return ErrDuplicateReport
@@ -63,7 +64,26 @@ func scanWidgetReport(row pgx.Row) (WidgetReport, error) {
 	var r WidgetReport
 	err := row.Scan(&r.ID, &r.APIKeyID, &r.Nonce, &r.Thumbmark, &r.ClientHash, &r.IP, &r.IPHash, &r.JA4, &r.H2FP,
 		&r.UserAgent, &r.Components, &r.CreatedAt, &r.Hostname, &r.PowOK, &r.Verdict, &r.Classification,
-		&r.Signals, &r.TokenIssuedAt, &r.VerifiedAt, &r.ReplayCount)
+		&r.Signals, &r.TokenIssuedAt, &r.VerifiedAt, &r.ReplayCount, &r.Interaction)
+	return r, err
+}
+
+// UpgradeWidgetReport moves an inconclusive report that has no token to
+// verdict (interactive or interactive_failed), storing the interaction
+// summary and the token issue time (nil when no token was issued). It
+// succeeds once per report; any other state, an unknown report or another
+// key returns ErrNotFound.
+func (s *Store) UpgradeWidgetReport(ctx context.Context, keyID, id, verdict string, interaction json.RawMessage, issuedAt *time.Time) (WidgetReport, error) {
+	if !validUUID(keyID) {
+		return WidgetReport{}, ErrNotFound
+	}
+	r, err := scanWidgetReport(s.pool.QueryRow(ctx,
+		`UPDATE widget_reports SET verdict = $3, interaction = $4, token_issued_at = $5
+		 WHERE id = $1 AND api_key_id = $2::uuid AND verdict = 'inconclusive' AND token_issued_at IS NULL
+		 RETURNING `+widgetReportCols, id, keyID, verdict, nullJSON(interaction), issuedAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WidgetReport{}, ErrNotFound
+	}
 	return r, err
 }
 
@@ -77,7 +97,8 @@ func (s *Store) MarkWidgetVerified(ctx context.Context, keyID, id string) (Widge
 	}
 	r, err := scanWidgetReport(s.pool.QueryRow(ctx,
 		`UPDATE widget_reports SET verified_at = now()
-		 WHERE id = $1 AND api_key_id = $2::uuid AND verified_at IS NULL RETURNING `+widgetReportCols, id, keyID))
+		 WHERE id = $1 AND api_key_id = $2::uuid AND verified_at IS NULL
+		   AND verdict IN ('pass','interactive') RETURNING `+widgetReportCols, id, keyID))
 	if err == nil {
 		return r, nil
 	}
@@ -85,7 +106,8 @@ func (s *Store) MarkWidgetVerified(ctx context.Context, keyID, id string) (Widge
 		return WidgetReport{}, err
 	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE widget_reports SET replay_count = replay_count + 1 WHERE id = $1 AND api_key_id = $2::uuid`, id, keyID)
+		`UPDATE widget_reports SET replay_count = replay_count + 1 WHERE id = $1 AND api_key_id = $2::uuid
+		   AND verdict IN ('pass','interactive')`, id, keyID)
 	if err != nil {
 		return WidgetReport{}, err
 	}
@@ -148,6 +170,7 @@ type WidgetSummary struct {
 	EventsUnmatched                                                              int64
 	// Verdict and verification counts over the same report rows.
 	Pass, Inconclusive, PowFailed, Verified, Replayed int64
+	Interactive, InteractiveFailed                    int64
 }
 
 // WidgetSummary correlates each report since `since` with the most recent
@@ -168,7 +191,9 @@ func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time
 		   count(*) FILTER (WHERE r.verdict = 'inconclusive'),
 		   count(*) FILTER (WHERE r.verdict = 'pow_failed'),
 		   count(*) FILTER (WHERE r.verified_at IS NOT NULL),
-		   count(*) FILTER (WHERE r.replay_count > 0)
+		   count(*) FILTER (WHERE r.replay_count > 0),
+		   count(*) FILTER (WHERE r.verdict = 'interactive'),
+		   count(*) FILTER (WHERE r.verdict = 'interactive_failed')
 		 FROM widget_reports r
 		 LEFT JOIN LATERAL (
 		   SELECT id, ip_hash, ja4, user_agent FROM events e
@@ -179,7 +204,8 @@ func (s *Store) WidgetSummary(ctx context.Context, keyID string, since time.Time
 		 WHERE r.api_key_id = $1::uuid AND r.created_at >= $2`,
 		keyID, since, window).
 		Scan(&out.Reports, &out.Matched, &out.IPMismatch, &out.JA4Mismatch, &out.JA4Unknown, &out.UAMismatch,
-			&out.Pass, &out.Inconclusive, &out.PowFailed, &out.Verified, &out.Replayed)
+			&out.Pass, &out.Inconclusive, &out.PowFailed, &out.Verified, &out.Replayed,
+			&out.Interactive, &out.InteractiveFailed)
 	if err != nil {
 		return out, err
 	}

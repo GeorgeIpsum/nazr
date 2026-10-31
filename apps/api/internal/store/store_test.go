@@ -108,8 +108,8 @@ func newUnmigrated(t *testing.T) *Store {
 func newID() string { return ulid.Make().String() }
 
 // latestMigration is the highest migration in migrations/ (initial schema plus
-// the widget and widget-challenge migrations).
-const latestMigration = 3
+// the widget, widget-challenge and widget-interaction migrations).
+const latestMigration = 4
 
 func TestVisitorCountIncrement(t *testing.T) {
 	s := newStore(t)
@@ -164,7 +164,7 @@ func TestMigrateSchema(t *testing.T) {
 		{"widget_reports", "user_agent"}, {"widget_reports", "components"}, {"widget_reports", "created_at"},
 		{"widget_reports", "pow_ok"}, {"widget_reports", "verdict"}, {"widget_reports", "hostname"},
 		{"widget_reports", "classification"}, {"widget_reports", "signals"}, {"widget_reports", "token_issued_at"},
-		{"widget_reports", "verified_at"}, {"widget_reports", "replay_count"},
+		{"widget_reports", "verified_at"}, {"widget_reports", "replay_count"}, {"widget_reports", "interaction"},
 		{"api_keys", "secret_hash"}, {"api_keys", "secret_prefix"},
 		{"signing_keys", "kid"}, {"signing_keys", "private_key_pem"}, {"signing_keys", "public_jwk"},
 		{"signing_keys", "hmac_secret"}, {"signing_keys", "created_at"}, {"signing_keys", "retired_at"},
