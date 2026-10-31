@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nazr/thumbmark": "workspace:*"
+    "@nazr/thumbmark": "workspace:*",
+    "@noble/hashes": "^2.4.0"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
