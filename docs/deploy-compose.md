@@ -87,7 +87,7 @@ Logs are JSON by default (`NAZR_LOG_FORMAT=text` for readable output). The `nazr
 
 ## Running the published image
 
-`deploy/compose/compose.ghcr.yml` is an override that runs the released image (`ghcr.io/georgeipsum/nazr:${NAZR_VERSION:-latest}`) instead of building from source, and uses nazr's built-in ACME (Let's Encrypt) instead of the self-signed certificate. Set `NAZR_ACME_DOMAINS` and `NAZR_ACME_EMAIL` in `deploy/compose/.env`, point the domain's DNS at the host, then:
+`deploy/compose/compose.ghcr.yml` is an override that runs the released image (`ghcr.io/georgeipsum/nazr:${NAZR_VERSION:-latest}`) instead of building from source, and uses nazr's built-in ACME (Let's Encrypt) instead of the self-signed certificate. In `deploy/compose/.env` (mode 0600, never committed) set `NAZR_VERSION` (pin the release tag; the override defaults to `latest`), `NAZR_ACME_DOMAINS`, `NAZR_ACME_EMAIL`, `NAZR_ADMIN_TOKEN` and `NAZR_IP_HASH_SALT`, point the domain's DNS at the host, then:
 
 ```bash
 cd deploy/compose

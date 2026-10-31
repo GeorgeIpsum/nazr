@@ -96,15 +96,25 @@ cleared in an override, not in `.env`.
 services:
   api:
     build: !reset null
-    image: ghcr.io/georgeipsum/nazr:${NAZR_VERSION:?set NAZR_VERSION in .env}
+    image: ghcr.io/georgeipsum/nazr:${NAZR_VERSION:-latest}
     environment:
       NAZR_TLS_CERT_FILE: "" # files win over ACME; clear them
       NAZR_TLS_KEY_FILE: ""
+      NAZR_ACME_DOMAINS: ${NAZR_ACME_DOMAINS:?set NAZR_ACME_DOMAINS in .env}
+      NAZR_ACME_EMAIL: ${NAZR_ACME_EMAIL:?set NAZR_ACME_EMAIL in .env}
       NAZR_ACME_DIR: /data/acme # on the nazrdata volume, survives restarts
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        required: false
 ```
 
 `NAZR_HTTP_ADDR` keeps its compose default `:80` (HTTP-01 and the 308
-redirect). The `certgen` service still runs once; its certificate is unused.
+redirect). The override drops the `certgen` dependency, so no self-signed
+certificate is generated. The image tag defaults to `latest`; pin
+`NAZR_VERSION` in `.env` on a real box so upgrades are deliberate.
 
 ### 4.4 `.env` on the box
 
