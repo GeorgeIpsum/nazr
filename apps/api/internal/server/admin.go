@@ -29,6 +29,8 @@ type keyJSON struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	RevokedAt          *time.Time `json:"revoked_at"`
 	LastUsedAt         *time.Time `json:"last_used_at"`
+	SecretPrefix       string     `json:"secret_prefix"`
+	Secret             string     `json:"secret,omitempty"` // plaintext verify secret, only on create
 }
 
 func toKeyJSON(k store.APIKey) keyJSON {
@@ -37,10 +39,12 @@ func toKeyJSON(k store.APIKey) keyJSON {
 		origins = []string{}
 	}
 	return keyJSON{ID: k.ID, Prefix: k.Prefix, Label: k.Label, AllowedOrigins: origins,
-		RateLimitPerMinute: k.RateLimitPerMinute, CreatedAt: k.CreatedAt, RevokedAt: k.RevokedAt, LastUsedAt: k.LastUsedAt}
+		RateLimitPerMinute: k.RateLimitPerMinute, CreatedAt: k.CreatedAt, RevokedAt: k.RevokedAt, LastUsedAt: k.LastUsedAt,
+		SecretPrefix: k.SecretPrefix}
 }
 
-// handleCreateKey creates a key and returns its plaintext exactly once.
+// handleCreateKey creates a key with a verify secret and returns both
+// plaintexts exactly once.
 func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(s.Cfg.BodyLimit)))
 	if err != nil {
@@ -76,8 +80,9 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	plain, hash, prefix := auth.GenerateKey()
+	secret, secretHash, secretPrefix := auth.GenerateSecret()
 	k, err := s.Store.CreateKey(r.Context(), store.NewKey{Hash: hash, Prefix: prefix, Label: req.Label,
-		AllowedOrigins: origins, RateLimitPerMinute: req.RateLimitPerMinute})
+		AllowedOrigins: origins, RateLimitPerMinute: req.RateLimitPerMinute, SecretHash: secretHash, SecretPrefix: secretPrefix})
 	if err != nil {
 		s.Logger.Error("server: create key failed", "err", err)
 		storeUnavailable(w, "could not create key")
@@ -85,7 +90,31 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	out := toKeyJSON(k)
 	out.Key = plain
+	out.Secret = secret
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// rotatedSecretJSON is the response to a secret rotation.
+type rotatedSecretJSON struct {
+	ID     string `json:"id"`
+	Secret string `json:"secret"`
+}
+
+// handleRotateSecret replaces a key's verify secret and returns the new
+// plaintext exactly once. The old secret stops working immediately.
+func (s *server) handleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	secret, hash, prefix := auth.GenerateSecret()
+	err := s.Store.SetKeySecret(r.Context(), id, hash, prefix)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "no such key")
+	case err != nil:
+		s.Logger.Error("server: set key secret failed", "err", err)
+		storeUnavailable(w, "could not set key secret")
+	default:
+		writeJSON(w, http.StatusOK, rotatedSecretJSON{ID: id, Secret: secret})
+	}
 }
 
 // handleListKeys lists keys (never their secrets).
@@ -172,6 +201,11 @@ type widgetSummaryJSON struct {
 	JA4Mismatch     int64 `json:"ja4_mismatch"`
 	JA4Unknown      int64 `json:"ja4_unknown"`
 	UAMismatch      int64 `json:"ua_mismatch"`
+	Pass            int64 `json:"pass"`
+	Inconclusive    int64 `json:"inconclusive"`
+	PowFailed       int64 `json:"pow_failed"`
+	Verified        int64 `json:"verified"`
+	Replayed        int64 `json:"replayed"`
 }
 
 // handleWidgetSummary reports how a key's widget reports correlate with its
@@ -186,5 +220,6 @@ func (s *server) handleWidgetSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, widgetSummaryJSON{WindowDays: store.ProbeWindowDays, Reports: sum.Reports,
 		Matched: sum.Matched, Unmatched: sum.Unmatched, EventsUnmatched: sum.EventsUnmatched,
-		IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch, JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch})
+		IPMismatch: sum.IPMismatch, JA4Mismatch: sum.JA4Mismatch, JA4Unknown: sum.JA4Unknown, UAMismatch: sum.UAMismatch,
+		Pass: sum.Pass, Inconclusive: sum.Inconclusive, PowFailed: sum.PowFailed, Verified: sum.Verified, Replayed: sum.Replayed})
 }

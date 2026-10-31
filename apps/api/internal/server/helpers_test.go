@@ -68,10 +68,17 @@ type fakeStore struct {
 	summaryKeyID  string
 	summarySince  time.Time
 	summaryWindow time.Duration
+
+	secrets        map[string]*store.APIKey // by secret hash
+	markCalls      int
+	markErr        error
+	correlation    store.WidgetCorrelation
+	correlationErr error
+	corrArgs       [3]string // keyID, id, window
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{keys: map[string]*store.APIKey{}, byID: map[string]*store.APIKey{}}
+	return &fakeStore{keys: map[string]*store.APIKey{}, byID: map[string]*store.APIKey{}, secrets: map[string]*store.APIKey{}}
 }
 
 func (f *fakeStore) addKey(hash string, k *store.APIKey) {
@@ -153,10 +160,13 @@ func (f *fakeStore) CreateKey(_ context.Context, n store.NewKey) (store.APIKey, 
 	k := &store.APIKey{
 		ID: "00000000-0000-4000-8000-00000000000" + string(rune('0'+f.seq)), Prefix: n.Prefix, Label: n.Label,
 		AllowedOrigins: n.AllowedOrigins, RateLimitPerMinute: n.RateLimitPerMinute,
-		CreatedAt: time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC), SecretPrefix: n.SecretPrefix,
 	}
 	f.keys[n.Hash] = k
 	f.byID[k.ID] = k
+	if n.SecretHash != "" {
+		f.secrets[n.SecretHash] = k
+	}
 	return *k, nil
 }
 
@@ -532,4 +542,73 @@ func (f *fakeStore) WidgetSummary(_ context.Context, keyID string, since time.Ti
 	defer f.mu.Unlock()
 	f.summaryKeyID, f.summarySince, f.summaryWindow = keyID, since, window
 	return f.summary, f.summaryErr
+}
+
+func (f *fakeStore) FindKeyBySecretHash(_ context.Context, hash string) (*store.APIKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.secrets[hash], nil
+}
+
+// SetKeySecret replaces the key's secret hash in the secrets index.
+func (f *fakeStore) SetKeySecret(_ context.Context, id, hash, prefix string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.byID[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	for h, have := range f.secrets {
+		if have == k {
+			delete(f.secrets, h)
+		}
+	}
+	f.secrets[hash] = k
+	k.SecretPrefix = prefix
+	return nil
+}
+
+// secretHashOf returns the secret hash stored for key id, or "".
+func (f *fakeStore) secretHashOf(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for h, k := range f.secrets {
+		if k.ID == id {
+			return h
+		}
+	}
+	return ""
+}
+
+func (f *fakeStore) MarkWidgetVerified(_ context.Context, keyID, id string) (store.WidgetReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markCalls++
+	if f.markErr != nil {
+		return store.WidgetReport{}, f.markErr
+	}
+	for i := range f.reports {
+		r := &f.reports[i]
+		if r.ID != id || r.APIKeyID != keyID {
+			continue
+		}
+		if r.VerifiedAt != nil {
+			r.ReplayCount++
+			return store.WidgetReport{}, store.ErrAlreadyVerified
+		}
+		now := time.Now()
+		r.VerifiedAt = &now
+		return *r, nil
+	}
+	return store.WidgetReport{}, store.ErrNotFound
+}
+
+func (f *fakeStore) WidgetReportCorrelation(_ context.Context, keyID, id string, window time.Duration) (store.WidgetCorrelation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.corrArgs = [3]string{keyID, id, window.String()}
+	return f.correlation, f.correlationErr
 }
