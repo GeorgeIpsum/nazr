@@ -21,6 +21,7 @@ import (
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgettoken"
 )
 
 // StoreAPI is the subset of *store.Store the server uses.
@@ -69,6 +70,9 @@ type Deps struct {
 	Rand     func() float64
 
 	WidgetAssets fs.FS
+
+	// Signing holds the widget token signing keys.
+	Signing *widgettoken.Keyring
 }
 
 type server struct {
