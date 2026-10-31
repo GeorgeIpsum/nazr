@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -27,6 +28,7 @@ import (
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/tlsfp"
+	"nazr/api/internal/widgettoken"
 )
 
 func TestStockBodyClientHash(t *testing.T) {
@@ -1077,10 +1079,11 @@ func TestThumbmarkNonce(t *testing.T) {
 
 func widgetFS() fstest.MapFS {
 	return fstest.MapFS{
-		"loader.js":         {Data: []byte("/* loader */")},
-		"frame.abcd1234.js": {Data: []byte("/* frame */")},
-		"frame.html":        {Data: []byte(`<script src="/widget/v1/{{.Bundle}}"></script>`)},
-		"manifest.json":     {Data: []byte(`{"frame":"frame.abcd1234.js"}`)},
+		"loader.js":          {Data: []byte("/* loader */")},
+		"frame.abcd1234.js":  {Data: []byte("/* frame */")},
+		"frame.html":         {Data: []byte(`<script src="/widget/v1/{{.Bundle}}"></script>`)},
+		"worker.ef012345.js": {Data: []byte("/* worker */")},
+		"manifest.json":      {Data: []byte(`{"frame":"frame.abcd1234.js","worker":"worker.ef012345.js"}`)},
 	}
 }
 
@@ -1129,7 +1132,7 @@ func TestWidgetLoaderAndBundle(t *testing.T) {
 }
 
 func TestWidgetFrame(t *testing.T) {
-	const csp = "; default-src 'none'; script-src 'self'; connect-src 'self'"
+	const csp = "; default-src 'none'; script-src 'self'; connect-src 'self'; worker-src 'self'"
 	e := newEnvWidget(t, nil, widgetFS())
 	w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `src="/widget/v1/frame.abcd1234.js"`) {
@@ -1369,4 +1372,101 @@ func TestAdminWidgetSummary(t *testing.T) {
 
 	e.store.summaryErr = errBoom
 	wantError(t, e.do(req("s3cret")), 503, "store_unavailable")
+}
+
+func challengeFS() fstest.MapFS {
+	fsys := widgetFS()
+	fsys["frame.html"] = &fstest.MapFile{Data: []byte(`<script src="/widget/v1/{{.Bundle}}" data-worker="/widget/v1/{{.Worker}}" data-challenge="{{.Challenge}}" data-pow-bits="{{.PowBits}}" data-origin="{{.Origin}}"></script>`)}
+	return fsys
+}
+
+func attr(t *testing.T, html, name string) string {
+	t.Helper()
+	m := regexp.MustCompile(name + `="([^"]*)"`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatalf("no %s attribute in %s", name, html)
+	}
+	return m[1]
+}
+
+func TestWidgetFrameChallenge(t *testing.T) {
+	e := newEnvWidget(t, nil, challengeFS())
+	r := httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)
+	r.Header.Set("Referer", "https://shop.example/cart")
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	c, err := widgettoken.ParseChallenge(attr(t, body, "data-challenge"),
+		func(kid string) ([]byte, bool) { return testSigningKey.Secret, kid == "test" }, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ID) != 26 || c.Expires != testNow.Add(10*time.Minute).Unix() || c.Bits != e.cfg.PowBits ||
+		c.Kid != "test" || c.Origin != "https://shop.example" {
+		t.Fatalf("challenge %+v", c)
+	}
+	if got := attr(t, body, "data-pow-bits"); got != strconv.Itoa(e.cfg.PowBits) {
+		t.Fatalf("pow bits %q", got)
+	}
+	if got := attr(t, body, "data-worker"); got != "/widget/v1/worker.ef012345.js" {
+		t.Fatalf("worker %q", got)
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.HasSuffix(csp, "; worker-src 'self'") {
+		t.Fatalf("csp %q", csp)
+	}
+
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if w.Code != 200 || attr(t, w.Body.String(), "data-origin") != "" {
+		t.Fatalf("no referer: %d %s", w.Code, w.Body.String())
+	}
+
+	e = newEnvWidgetSigning(t, nil, challengeFS(), nil)
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "signing_unavailable")
+}
+
+func TestWidgetBundleServesWorker(t *testing.T) {
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/worker.ef012345.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* worker */" {
+		t.Fatalf("worker %d %q", w.Code, w.Body.String())
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control %q", cc)
+	}
+	for name, mf := range map[string]string{
+		"missing":      `{"frame":"frame.abcd1234.js"}`,
+		"empty":        `{"frame":"frame.abcd1234.js","worker":""}`,
+		"missing file": `{"frame":"frame.abcd1234.js","worker":"nope.js"}`,
+	} {
+		fsys := widgetFS()
+		fsys["manifest.json"] = &fstest.MapFile{Data: []byte(mf)}
+		e := newEnvWidget(t, nil, fsys)
+		for _, p := range []string{"/widget/v1/loader.js", "/widget/v1/frame?k=" + e.key, "/widget/v1/frame.abcd1234.js"} {
+			if w := e.do(httptest.NewRequest("GET", p, nil)); w.Code != 404 {
+				t.Fatalf("%s %s: %d", name, p, w.Code)
+			}
+		}
+	}
+}
+
+func TestJWKS(t *testing.T) {
+	e := newEnv(t, nil)
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/jwks.json", nil))
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "public, max-age=3600" ||
+		w.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("jwks %d %v", w.Code, w.Header())
+	}
+	var got struct {
+		Keys []struct{ Kid, Kty, Crv string }
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Keys) != 1 || got.Keys[0].Kid != "test" || got.Keys[0].Kty != "EC" || got.Keys[0].Crv != "P-256" {
+		t.Fatalf("keys %+v", got.Keys)
+	}
+	e = newEnvWidgetSigning(t, nil, nil, nil)
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/jwks.json", nil)), 404, "not_found")
 }

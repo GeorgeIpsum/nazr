@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -18,6 +19,9 @@ import (
 	"nazr/api/internal/h2fp"
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
+	"nazr/api/internal/widgettoken"
+
+	"github.com/oklog/ulid/v2"
 )
 
 // widgetMatchWindow is how far apart a widget report and a /thumbmark event
@@ -26,7 +30,7 @@ const widgetMatchWindow = 10 * time.Minute
 
 const (
 	widgetJSType     = "text/javascript; charset=utf-8"
-	widgetFrameRules = "; default-src 'none'; script-src 'self'; connect-src 'self'"
+	widgetFrameRules = "; default-src 'none'; script-src 'self'; connect-src 'self'; worker-src 'self'"
 )
 
 // widgetAssets is the built widget, loaded into memory once at startup.
@@ -35,11 +39,13 @@ type widgetAssets struct {
 	loaderETag string
 	bundleName string
 	bundle     []byte
+	workerName string
+	worker     []byte
 	frame      *template.Template
 }
 
 // newWidgetAssets loads loader.js, the frame bundle named by manifest.json
-// and the frame.html template from fsys.
+// the proof-of-work worker and the frame.html template from fsys.
 func newWidgetAssets(fsys fs.FS) (*widgetAssets, error) {
 	loader, err := fs.ReadFile(fsys, "loader.js")
 	if err != nil {
@@ -50,12 +56,20 @@ func newWidgetAssets(fsys fs.FS) (*widgetAssets, error) {
 		return nil, err
 	}
 	var manifest struct {
-		Frame string `json:"frame"`
+		Frame  string `json:"frame"`
+		Worker string `json:"worker"`
 	}
 	if err := json.Unmarshal(mb, &manifest); err != nil {
 		return nil, fmt.Errorf("manifest.json: %w", err)
 	}
 	bundle, err := fs.ReadFile(fsys, manifest.Frame)
+	if err != nil {
+		return nil, err
+	}
+	if manifest.Worker == "" {
+		return nil, errors.New("manifest.json: no worker entry")
+	}
+	worker, err := fs.ReadFile(fsys, manifest.Worker)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +87,8 @@ func newWidgetAssets(fsys fs.FS) (*widgetAssets, error) {
 		loaderETag: `"` + hex.EncodeToString(sum[:])[:16] + `"`,
 		bundleName: manifest.Frame,
 		bundle:     bundle,
+		workerName: manifest.Worker,
+		worker:     worker,
 		frame:      tmpl,
 	}, nil
 }
@@ -89,19 +105,36 @@ func (s *server) handleWidgetLoader(wa *widgetAssets) http.HandlerFunc {
 	}
 }
 
-// handleWidgetBundle serves the content-hashed frame bundle named by the
-// manifest; any other name is 404.
+// handleWidgetBundle serves the content-hashed frame bundle or worker named
+// by the manifest; any other name is 404.
 func (s *server) handleWidgetBundle(wa *widgetAssets) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("bundle") != wa.bundleName {
+		name, body := r.PathValue("bundle"), wa.bundle
+		switch name {
+		case wa.bundleName:
+		case wa.workerName:
+			body = wa.worker
+		default:
 			notFound(w, r)
 			return
 		}
 		h := w.Header()
 		h.Set("Content-Type", widgetJSType)
 		h.Set("Cache-Control", "public, max-age=31536000, immutable")
-		http.ServeContent(w, r, wa.bundleName, time.Time{}, bytes.NewReader(wa.bundle))
+		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
 	}
+}
+
+// frameData is what frame.html is rendered with.
+type frameData struct {
+	Bundle, Worker, Challenge, Origin string
+	PowBits                           int
+}
+
+// handleWidgetJWKS publishes the public signing keys.
+func (s *server) handleWidgetJWKS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	writeJSON(w, http.StatusOK, s.Signing.JWKS())
 }
 
 // handleWidgetFrame renders the frame for the key in ?k=, allowing it to be
@@ -119,8 +152,26 @@ func (s *server) handleWidgetFrame(wa *widgetAssets) http.HandlerFunc {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		var active widgettoken.Key
+		ok := false
+		if s.Signing != nil {
+			active, ok = s.Signing.Active()
+		}
+		if !ok {
+			s.Logger.Error("server: no active widget signing key", "request_id", requestIDFrom(r.Context()))
+			w.Header().Set("Retry-After", "2")
+			writeError(w, http.StatusServiceUnavailable, codeSigningUnavailable, "widget signing unavailable")
+			return
+		}
+		origin := widgettoken.EmbeddingOrigin(r.Header.Get("Referer"))
+		ch := widgettoken.MintChallenge(active.Secret, widgettoken.Challenge{
+			ID: ulid.Make().String(), Expires: s.Now().Add(widgetMatchWindow).Unix(), Bits: s.Cfg.PowBits,
+			Kid: active.Kid, Origin: origin,
+		})
 		var buf bytes.Buffer
-		if err := wa.frame.Execute(&buf, struct{ Bundle string }{wa.bundleName}); err != nil {
+		data := frameData{Bundle: wa.bundleName, Worker: wa.workerName, Challenge: ch,
+			Origin: origin, PowBits: s.Cfg.PowBits}
+		if err := wa.frame.Execute(&buf, data); err != nil {
 			s.Logger.Error("server: widget frame template failed", "err", err, "request_id", requestIDFrom(r.Context()))
 			writeError(w, http.StatusInternalServerError, codeInternal, "internal server error")
 			return

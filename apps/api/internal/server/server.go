@@ -119,6 +119,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
 	mux.Handle("GET /admin/keys/{id}/widget", s.route("admin", admin(http.HandlerFunc(s.handleWidgetSummary))))
 
+	if d.Signing != nil {
+		mux.Handle("GET /widget/v1/jwks.json", s.route("widget_jwks", s.globalCORS(http.HandlerFunc(s.handleWidgetJWKS))))
+	}
 	if d.WidgetAssets != nil {
 		if wa, err := newWidgetAssets(d.WidgetAssets); err != nil {
 			d.Logger.Error("server: widget assets unusable; widget routes disabled", "err", err)

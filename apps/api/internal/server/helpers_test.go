@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -26,6 +29,7 @@ import (
 	"nazr/api/internal/store"
 	"nazr/api/internal/tlsfp"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgettoken"
 )
 
 // ---- fake store ----
@@ -300,7 +304,29 @@ func newEnvWidget(t *testing.T, mut func(c *config.Config, s *fakeStore), fsys f
 	return newEnvWith(t, mut, nil, fsys)
 }
 
+// testSigningKey is the widget signing key every test env uses, kid "test".
+var testSigningKey = func() widgettoken.Key {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return widgettoken.Key{Kid: "test", Private: priv, Secret: []byte("0123456789abcdef0123456789abcdef"),
+		CreatedAt: testNow.Add(-time.Hour)}
+}()
+
+// newEnvWidgetSigning is newEnvWidget with an explicit signing keyring (nil
+// for none).
+func newEnvWidgetSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), fsys fs.FS, ring *widgettoken.Keyring) *env {
+	t.Helper()
+	return newEnvWithSigning(t, mut, nil, fsys, ring)
+}
+
 func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS) *env {
+	t.Helper()
+	return newEnvWithSigning(t, mut, cache, widget, widgettoken.NewStaticKeyring(testSigningKey))
+}
+
+func newEnvWithSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS, ring *widgettoken.Keyring) *env {
 	t.Helper()
 	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
 		intel: &fakeIntel{
@@ -320,7 +346,7 @@ func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *a
 		Cfg: e.cfg, Store: e.store, Intel: e.intel,
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
-		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget,
+		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget, Signing: ring,
 		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
 	})
 	return e
