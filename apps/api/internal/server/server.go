@@ -43,6 +43,7 @@ type StoreAPI interface {
 	FindKeyBySecretHash(ctx context.Context, hash string) (*store.APIKey, error)
 	SetKeySecret(ctx context.Context, id, hash, prefix string) error
 	MarkWidgetVerified(ctx context.Context, keyID, id string) (store.WidgetReport, error)
+	UpgradeWidgetReport(ctx context.Context, keyID, id, verdict string, interaction json.RawMessage, issuedAt *time.Time) (store.WidgetReport, error)
 	WidgetReportCorrelation(ctx context.Context, keyID, id string, window time.Duration) (store.WidgetCorrelation, error)
 }
 
@@ -107,6 +108,7 @@ func New(d Deps) http.Handler {
 	// The widget frame runs on nazr's own origin, so origin scoping is skipped.
 	reportMW := auth.MiddlewareOpts(d.Store, d.Limiter, d.Cfg.DefaultRateLimit, d.KeyCache, auth.MiddlewareOptions{SkipOrigin: true})
 	mux.Handle("POST /widget/report", s.route("widget_report", s.bodyLimit(reportMW(http.HandlerFunc(s.handleWidgetReport)))))
+	mux.Handle("POST /widget/interact", s.route("widget_interact", s.bodyLimit(reportMW(http.HandlerFunc(s.handleInteract)))))
 	mux.Handle("POST /beacon", s.route("beacon", s.globalCORS(http.HandlerFunc(s.handleBeacon))))
 	mux.Handle("OPTIONS /beacon", s.route("preflight", http.HandlerFunc(s.preflight)))
 	mux.Handle("POST /log", s.route("log", s.globalCORS(http.HandlerFunc(s.handleLog))))

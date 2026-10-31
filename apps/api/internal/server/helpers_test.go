@@ -76,6 +76,8 @@ type fakeStore struct {
 	correlation    store.WidgetCorrelation
 	correlationErr error
 	corrArgs       [3]string // keyID, id, window
+	upgradeErr     error
+	upgradeCalls   int
 }
 
 func newFakeStore() *fakeStore {
@@ -287,6 +289,25 @@ type env struct {
 	rand  float64
 	now   time.Time // the server's clock; testNow unless a test advances it
 	h     http.Handler
+	logs  *syncBuffer // the server's log output; nil unless newEnvLogging
+}
+
+// syncBuffer is a bytes.Buffer safe for the logger's concurrent writes.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func defaultConfig(t *testing.T) config.Config {
@@ -339,9 +360,24 @@ func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *a
 	return newEnvWithSigning(t, mut, cache, widget, widgettoken.NewStaticKeyring(testSigningKey))
 }
 
+// newEnvLogging is newEnv with the server's JSON log captured in e.logs.
+func newEnvLogging(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
+	t.Helper()
+	return newEnvFull(t, mut, nil, nil, widgettoken.NewStaticKeyring(testSigningKey), &syncBuffer{})
+}
+
 func newEnvWithSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS, ring *widgettoken.Keyring) *env {
 	t.Helper()
-	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
+	return newEnvFull(t, mut, cache, widget, ring, nil)
+}
+
+func newEnvFull(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS, ring *widgettoken.Keyring, logs *syncBuffer) *env {
+	t.Helper()
+	logger := slog.New(slog.DiscardHandler)
+	if logs != nil {
+		logger = slog.New(slog.NewJSONHandler(logs, nil))
+	}
+	e := &env{logs: logs, t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
 		intel: &fakeIntel{
 			lookup: ipintel.Lookup{ASN: 64496, ASOrg: "Example Networks", Country: "US", CountryName: "United States",
 				ContinentCode: "NA", ContinentName: "North America", Region: "US-NY", City: "New York"},
@@ -360,7 +396,7 @@ func newEnvWithSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), c
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
 		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget, Signing: ring,
-		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
+		Logger: logger, Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
 	})
 	return e
 }
@@ -613,4 +649,24 @@ func (f *fakeStore) WidgetReportCorrelation(_ context.Context, keyID, id string,
 	defer f.mu.Unlock()
 	f.corrArgs = [3]string{keyID, id, window.String()}
 	return f.correlation, f.correlationErr
+}
+
+// UpgradeWidgetReport mirrors the store: it moves the key's inconclusive,
+// token-less report to verdict once; any other state is ErrNotFound.
+func (f *fakeStore) UpgradeWidgetReport(_ context.Context, keyID, id, verdict string, interaction json.RawMessage, issuedAt *time.Time) (store.WidgetReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upgradeCalls++
+	if f.upgradeErr != nil {
+		return store.WidgetReport{}, f.upgradeErr
+	}
+	for i := range f.reports {
+		r := &f.reports[i]
+		if r.ID != id || r.APIKeyID != keyID || r.Verdict != "inconclusive" || r.TokenIssuedAt != nil {
+			continue
+		}
+		r.Verdict, r.Interaction, r.TokenIssuedAt = verdict, interaction, issuedAt
+		return *r, nil
+	}
+	return store.WidgetReport{}, store.ErrNotFound
 }
