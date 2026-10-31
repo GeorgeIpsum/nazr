@@ -10,6 +10,8 @@ void reportFromFrame({
   fetch: fetch.bind(globalThis),
   getThumbmark,
   post: (m) => window.parent.postMessage(m, dataOrigin || "*"),
+  doc: document,
+  now: () => performance.now(),
   solve: (id, bits) =>
     new Promise<string>((resolve, reject) => {
       // biome-ignore lint/style/noNonNullAssertion: the server always renders data-worker

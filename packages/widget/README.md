@@ -41,7 +41,17 @@ has at least `bits` leading zero bits (`"0"` when `bits <= 0`).
 Frame to parent (`postMessage`, targeted at `data-origin`, or `*` when absent):
 - `{ type: "nazr:challenge", id }`: sent first, once the challenge id is decoded.
 - `{ type: "nazr:token", token }`: the server verdict was `pass`.
-- `{ type: "nazr:error", reason }`: `inconclusive`, `pow_failed` or `invalid` relay the server verdict (`invalid` is also sent without a request when the challenge cannot be decoded). `network` covers a non-OK response, a failed fetch, an unparsable body, an unknown verdict, and a failed worker (no proof-of-work, so `network` is the closest reason in the contract).
+- `{ type: "nazr:error", reason }`: `inconclusive`, `pow_failed` or `invalid` relay the server verdict (`interactive_failed` only comes from the interactive step) (`invalid` is also sent without a request when the challenge cannot be decoded). `network` covers a non-OK response, a failed fetch, an unparsable body, an unknown verdict, and a failed worker (no proof-of-work, so `network` is the closest reason in the contract).
+
+- `{ type: "nazr:interactive" }`: the frame is showing its click-to-verify box (see below).
+
+Interactive step: when the report answers `inconclusive` with an `interactive` offer and the
+frame URL carries `i=1` (the loader sets it when it has a visible container), the frame posts
+`nazr:interactive`, renders a 300×65 box with one "Verify you are human" button, solves the
+offer's harder proof-of-work while recording a trace summary of how the button was reached,
+then POSTs `{ challenge, pow, trace }` to `/widget/interact`. It relays `interactive` as
+`nazr:token` and `interactive_failed` or `invalid` as `nazr:error` with that reason; anything
+else is `network`. Without `i=1` the offer is ignored and the frame sends `inconclusive`.
 
 The frame stays silent when the `k` query parameter or `data-challenge` is missing.
 

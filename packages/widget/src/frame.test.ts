@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type FrameMessage, reportFromFrame } from "./frame";
 
 type Deps = Parameters<typeof reportFromFrame>[0];
@@ -24,7 +24,7 @@ interface Opts {
   search?: string;
   challenge?: string | null;
   fetchImpl?: () => Promise<Response>;
-  solveImpl?: () => Promise<string>;
+  solveImpl?: (id: string, bits: number) => Promise<string>;
 }
 
 function makeDeps(o: Opts = {}) {
@@ -45,6 +45,8 @@ function makeDeps(o: Opts = {}) {
     getThumbmark: getThumbmark as unknown as Deps["getThumbmark"],
     solve,
     post: (m) => messages.push(m),
+    doc: document,
+    now: () => performance.now(),
   };
   return { deps, fetch, getThumbmark, solve, messages };
 }
@@ -135,5 +137,194 @@ describe("reportFromFrame", () => {
       expect(fetch).not.toHaveBeenCalled();
       expect(messages).toEqual([]);
     }
+  });
+});
+
+const STAGED = "c3RhZ2Vk.mac";
+const OFFER = { verdict: "inconclusive", interactive: { challenge: STAGED, bits: 12 } };
+
+/** Answers each fetch with the next body in turn. */
+function sequence(...bodies: unknown[]): () => Promise<Response> {
+  let i = 0;
+  return async () => json(bodies[Math.min(i++, bodies.length - 1)]);
+}
+
+async function button(): Promise<HTMLButtonElement> {
+  return vi.waitFor(() => {
+    const b = document.querySelector("button");
+    if (!b) throw new Error("no button yet");
+    return b;
+  });
+}
+
+function press(b: HTMLButtonElement): void {
+  b.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+}
+
+describe("reportFromFrame interactive step", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("renders, records, solves the harder challenge and relays the token", async () => {
+    const { deps, fetch, solve, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence(OFFER, { verdict: "interactive", token: "t.o.k" }),
+      solveImpl: async (_id, bits) => (bits === 12 ? "4242" : "42"),
+    });
+    const done = reportFromFrame(deps);
+    const b = await button();
+    expect(b.textContent).toBe("Verify you are human");
+    press(b);
+    await done;
+    expect(messages).toEqual([
+      { type: "nazr:challenge", id: ID },
+      { type: "nazr:interactive" },
+      { type: "nazr:token", token: "t.o.k" },
+    ]);
+    expect(solve.mock.calls).toEqual([
+      [ID, 8],
+      [ID, 12],
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [url, init] = fetch.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toBe("/widget/interact");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "x-api-key": "nzr_x", "Content-Type": "application/json" });
+    const body = JSON.parse(init.body as string);
+    expect(Object.keys(body).sort()).toEqual(["challenge", "pow", "trace"]);
+    expect(body.challenge).toBe(STAGED);
+    expect(body.pow).toBe("4242");
+    expect(body.trace.input).toBe("keyboard");
+    expect(Object.keys(body.trace).sort()).toEqual([
+      "click_ms",
+      "input",
+      "moves",
+      "path_px",
+      "pointer_type",
+      "shown_ms",
+      "straightness",
+      "trusted",
+      "visible",
+    ]);
+    expect(b.textContent).toContain("Verified");
+  });
+
+  it("waits for the solution when the click comes first", async () => {
+    let resolveSecond: (c: string) => void = () => {};
+    const { deps, fetch, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence(OFFER, { verdict: "interactive", token: "t.o.k" }),
+      solveImpl: (_id, bits) =>
+        bits === 12
+          ? new Promise<string>((r) => {
+              resolveSecond = r;
+            })
+          : Promise.resolve("42"),
+    });
+    const done = reportFromFrame(deps);
+    const b = await button();
+    press(b);
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(b.textContent).toBe("Verifying…");
+    expect(b.disabled).toBe(true);
+    resolveSecond("777");
+    await done;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [, init] = fetch.mock.calls[1] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).pow).toBe("777");
+    expect(messages[2]).toEqual({ type: "nazr:token", token: "t.o.k" });
+  });
+
+  it.each(["interactive_failed", "invalid"])("relays interact verdict %s", async (verdict) => {
+    const { deps, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence(OFFER, { verdict }),
+    });
+    const done = reportFromFrame(deps);
+    const b = await button();
+    press(b);
+    await done;
+    expect(messages[2]).toEqual({ type: "nazr:error", reason: verdict });
+    expect(b.textContent).toBe("Verification failed");
+  });
+
+  it.each([
+    ["an unknown verdict", () => sequence(OFFER, { verdict: "pass", token: "t" })],
+    ["interactive without a token", () => sequence(OFFER, { verdict: "interactive" })],
+    [
+      "a 500",
+      () => {
+        let i = 0;
+        return async () => (i++ === 0 ? json(OFFER) : json({}, 500));
+      },
+    ],
+    [
+      "a rejected fetch",
+      () => {
+        let i = 0;
+        return async () => {
+          if (i++ === 0) return json(OFFER);
+          throw new TypeError("x");
+        };
+      },
+    ],
+  ])("maps %s to network", async (_name, make) => {
+    const { deps, messages } = makeDeps({ search: "?k=nzr_x&i=1", fetchImpl: make() });
+    const done = reportFromFrame(deps);
+    const b = await button();
+    press(b);
+    await expect(done).resolves.toBeUndefined();
+    expect(messages[2]).toEqual({ type: "nazr:error", reason: "network" });
+    expect(b.textContent).toBe("Verification failed");
+  });
+
+  it("maps a failed interactive proof-of-work to network without posting", async () => {
+    const { deps, fetch, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence(OFFER),
+      solveImpl: (_id, bits) =>
+        bits === 12 ? Promise.reject(new Error("w")) : Promise.resolve("42"),
+    });
+    const done = reportFromFrame(deps);
+    press(await button());
+    await done;
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(messages[2]).toEqual({ type: "nazr:error", reason: "network" });
+  });
+
+  it("answers inconclusive without i=1 and never renders", async () => {
+    const { deps, fetch, solve, messages } = makeDeps({ fetchImpl: sequence(OFFER) });
+    await reportFromFrame(deps);
+    expect(messages).toEqual([
+      { type: "nazr:challenge", id: ID },
+      { type: "nazr:error", reason: "inconclusive" },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(solve).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("button")).toBeNull();
+  });
+
+  it("answers inconclusive with i=1 but no offer", async () => {
+    const { deps, fetch, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence({ verdict: "inconclusive" }),
+    });
+    await reportFromFrame(deps);
+    expect(messages[1]).toEqual({ type: "nazr:error", reason: "inconclusive" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("button")).toBeNull();
+  });
+
+  it("answers inconclusive with i=1 but no document", async () => {
+    const { deps, fetch, messages } = makeDeps({
+      search: "?k=nzr_x&i=1",
+      fetchImpl: sequence(OFFER),
+    });
+    deps.doc = null;
+    await reportFromFrame(deps);
+    expect(messages[1]).toEqual({ type: "nazr:error", reason: "inconclusive" });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
