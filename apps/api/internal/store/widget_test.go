@@ -327,10 +327,10 @@ func TestUpgradeWidgetReport(t *testing.T) {
 	if _, err := s.UpgradeWidgetReport(ctx, k.ID, f.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("upgrade after failed: %v", err)
 	}
-	for i, v := range []string{"pass", "pow_failed"} {
+	for _, v := range []string{"pass", "pow_failed"} {
 		o := mk("c"+v, v)
 		if _, err := s.UpgradeWidgetReport(ctx, k.ID, o.ID, "interactive", trace, &now); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("%d %s: %v", i, v, err)
+			t.Fatalf("%s: %v", v, err)
 		}
 	}
 }
@@ -373,6 +373,17 @@ func TestWidgetReportCorrelation(t *testing.T) {
 	got, err = s.WidgetReportCorrelation(ctx, k.ID, r3.ID, window)
 	if err != nil || got.Matched || got.IPMatch != nil || got.JA4Match != nil || got.UAMatch != nil {
 		t.Fatalf("no event: %+v %v", got, err)
+	}
+
+	// Differing ip_hash/ja4/user_agent must report false (not nil), which
+	// pins the comparison direction.
+	r4 := reportV(t, s, WidgetReport{APIKeyID: k.ID, Nonce: "n4", JA4: "other", IPHash: "other-iph", UserAgent: "other-ua", CreatedAt: now})
+	event("n4", "j", now.Add(-time.Minute))
+	got, err = s.WidgetReportCorrelation(ctx, k.ID, r4.ID, window)
+	fl := false
+	if err != nil || !got.Matched || got.IPMatch == nil || got.JA4Match == nil || got.UAMatch == nil ||
+		*got.IPMatch != fl || *got.JA4Match != fl || *got.UAMatch != fl {
+		t.Fatalf("all differ: %+v %v", got, err)
 	}
 
 	if _, err := s.WidgetReportCorrelation(ctx, k.ID, newID(), window); !errors.Is(err, ErrNotFound) {

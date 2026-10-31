@@ -496,6 +496,9 @@ func TestSiteverifyInteractive(t *testing.T) {
 		if status != 200 || got["success"] != true {
 			t.Fatalf("status %d body %v", status, got)
 		}
+		if got["verdict"] != "interactive" {
+			t.Fatalf("verdict %v", got["verdict"])
+		}
 		in, ok := got["interaction"].(map[string]any)
 		if !ok {
 			t.Fatalf("no interaction in %v", got)

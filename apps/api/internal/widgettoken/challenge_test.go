@@ -33,15 +33,13 @@ func TestChallengeRoundTrip(t *testing.T) {
 		t.Fatalf("secretFor called %d times, want 1", calls)
 	}
 
-	// Tampered payload.
+	// Tampered payload: nudge one base64 character inside the id value by one
+	// step (a 4 bit change in a letter of the id), so the JSON still parses
+	// and the kid is intact; only the MAC can catch it.
 	b := []byte(s)
-	if b[2] == 'A' {
-		b[2] = 'B'
-	} else {
-		b[2] = 'A'
-	}
+	b[12]++
 	calls = 0
-	if _, err := ParseChallenge(string(b), lookup, now); !errors.Is(err, ErrChallengeBadMAC) && !errors.Is(err, ErrChallengeMalformed) && !errors.Is(err, ErrChallengeUnknownKid) {
+	if _, err := ParseChallenge(string(b), lookup, now); !errors.Is(err, ErrChallengeBadMAC) {
 		t.Fatalf("tampered: %v", err)
 	}
 	// Tampered MAC half is always a bad MAC.

@@ -16,10 +16,10 @@ const (
 	// one or two.
 	MinMoves = 1
 
-	maxTimeMS   = 1 << 31 // validity bound for shown_ms and click_ms (spec 3.2)
-	maxMoves    = 200
-	maxPathPX   = 1e6
-	maxStringLn = 16
+	maxTimeMS    = 1 << 31 // validity bound for shown_ms and click_ms (spec 3.2)
+	maxMoves     = 200
+	maxPathPX    = 1e6
+	maxStringLen = 16
 )
 
 // Trace is the small interaction summary the frame sends with a solve.
@@ -53,7 +53,7 @@ func (t Trace) Valid() bool {
 	if !finite(t.Straightness) || t.Straightness < 0 || t.Straightness > 1 {
 		return false
 	}
-	if len(t.Input) > maxStringLn || len(t.PointerType) > maxStringLn {
+	if len(t.Input) > maxStringLen || len(t.PointerType) > maxStringLen {
 		return false
 	}
 	if t.Input != "pointer" && t.Input != "keyboard" {

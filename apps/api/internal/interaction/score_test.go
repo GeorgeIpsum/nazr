@@ -1,6 +1,7 @@
 package interaction
 
 import (
+	"math"
 	"slices"
 	"testing"
 )
@@ -12,28 +13,32 @@ func base() Trace {
 
 func TestScoreRules(t *testing.T) {
 	cases := []struct {
-		name  string
-		mut   func(*Trace)
-		fired string // "" means ok
+		name     string
+		mut      func(*Trace)
+		fired    string // "" means ok
+		advisory bool   // fires without failing the attempt
 	}{
-		{"base", func(*Trace) {}, ""},
-		{"untrusted", func(x *Trace) { x.Trusted = false }, "untrusted_event"},
-		{"too fast", func(x *Trace) { x.ClickMS = 1299 }, "too_fast"},
-		{"too slow", func(x *Trace) { x.ClickMS = 601001 }, "too_slow"},
-		{"hidden", func(x *Trace) { x.Visible = false }, "hidden_document"},
-		{"no path", func(x *Trace) { x.Moves = 0 }, "no_pointer_path"},
-		{"pen no path", func(x *Trace) { x.PointerType, x.Moves = "pen", 0 }, "no_pointer_path"},
-		{"one move ok", func(x *Trace) { x.Moves = 1 }, ""},
-		{"two moves ok", func(x *Trace) { x.Moves = 2 }, ""},
-		{"straight", func(x *Trace) { x.Straightness = 0.98 }, "straight_path"},
-		{"perfectly straight", func(x *Trace) { x.Straightness = 1 }, "straight_path"},
-		{"touch ok", func(x *Trace) { x.PointerType, x.Moves, x.Straightness = "touch", 0, 1 }, ""},
-		{"keyboard ok", func(x *Trace) { x.Input, x.PointerType, x.Moves, x.Straightness = "keyboard", "", 0, 1 }, ""},
-		{"moves 201", func(x *Trace) { x.Moves = 201 }, "malformed_trace"},
-		{"bad input", func(x *Trace) { x.Input = "tap" }, "malformed_trace"},
-		{"bad pointer type", func(x *Trace) { x.PointerType = "stylus" }, "malformed_trace"},
-		{"straightness 1.5", func(x *Trace) { x.Straightness = 1.5 }, "malformed_trace"},
-		{"negative path", func(x *Trace) { x.PathPX = -1 }, "malformed_trace"},
+		{"base", func(*Trace) {}, "", false},
+		{"untrusted", func(x *Trace) { x.Trusted = false }, "untrusted_event", false},
+		{"too fast", func(x *Trace) { x.ClickMS = 1299 }, "too_fast", false},
+		{"too slow", func(x *Trace) { x.ClickMS = 601001 }, "too_slow", false},
+		{"hidden", func(x *Trace) { x.Visible = false }, "hidden_document", false},
+		{"no path", func(x *Trace) { x.Moves = 0 }, "no_pointer_path", false},
+		{"pen no path", func(x *Trace) { x.PointerType, x.Moves = "pen", 0 }, "no_pointer_path", false},
+		{"one move ok", func(x *Trace) { x.Moves = 1 }, "", false},
+		{"two moves ok", func(x *Trace) { x.Moves = 2 }, "", false},
+		{"straight", func(x *Trace) { x.Straightness = 0.98 }, "straight_path", true},
+		{"perfectly straight", func(x *Trace) { x.Straightness = 1 }, "straight_path", true},
+		{"touch ok", func(x *Trace) { x.PointerType, x.Moves, x.Straightness = "touch", 0, 1 }, "", false},
+		{"keyboard ok", func(x *Trace) { x.Input, x.PointerType, x.Moves, x.Straightness = "keyboard", "", 0, 1 }, "", false},
+		{"moves 201", func(x *Trace) { x.Moves = 201 }, "malformed_trace", false},
+		{"bad input", func(x *Trace) { x.Input = "tap" }, "malformed_trace", false},
+		{"bad pointer type", func(x *Trace) { x.PointerType = "stylus" }, "malformed_trace", false},
+		{"straightness 1.5", func(x *Trace) { x.Straightness = 1.5 }, "malformed_trace", false},
+		{"negative path", func(x *Trace) { x.PathPX = -1 }, "malformed_trace", false},
+		{"shown_ms over bound", func(x *Trace) { x.ShownMS = 1<<31 + 1 }, "malformed_trace", false},
+		{"click_ms over bound", func(x *Trace) { x.ClickMS = 1<<31 + 1 }, "malformed_trace", false},
+		{"infinite path", func(x *Trace) { x.PathPX = math.Inf(1) }, "malformed_trace", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -44,7 +49,7 @@ func TestScoreRules(t *testing.T) {
 				t.Fatalf("signals has %d keys, want %d", len(sig), len(Rules()))
 			}
 			// straight_path is advisory: it fires but does not fail the attempt.
-			if wantOK := c.fired == "" || c.fired == "straight_path"; ok != wantOK {
+			if wantOK := c.fired == "" || c.advisory; ok != wantOK {
 				t.Fatalf("ok = %v, signals %v", ok, sig)
 			}
 			if c.fired == "malformed_trace" {
@@ -88,8 +93,7 @@ func TestRulesOrder(t *testing.T) {
 
 func TestValidRejectsNonFiniteAndLongStrings(t *testing.T) {
 	nan := base()
-	nan.PathPX = nan.PathPX - nan.PathPX
-	nan.PathPX = nan.PathPX / nan.PathPX
+	nan.PathPX = math.NaN()
 	if nan.Valid() {
 		t.Error("NaN accepted")
 	}
