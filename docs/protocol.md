@@ -302,7 +302,7 @@ Called by the host's backend. No `x-api-key` and no CORS; the key's verify secre
 ```
 
 - On success all fields are present, except `correlation`, which is absent when nazr could not compute it after spending the token. `hostname` is `""` when nazr did not observe the embedding origin, and `signals` is `{}` when empty. `challenge_ts` is the issue time in RFC 3339 UTC. `correlation.ip_match`, `ja4_match` and `ua_match` are `null` when `matched` is false or the comparison is unknown (for example no JA4 on either side).
-- `verdict` is `pass` or `interactive`. For a token earned through the interactive step the response also carries `interaction`, an object with `input`, `pointer_type`, `trusted`, `moves`, `path_px`, `straightness`, `elapsed_ms` and `signals` (every interaction rule and whether it fired). It is absent for a `pass` token and for failures, and present with `remoteip-mismatch`.
+- `verdict` is `pass` or `interactive`. For a token earned through the interactive step the response also carries `interaction`, an object with `input`, `pointer_type`, `trusted`, `moves`, `path_px`, `straightness`, `elapsed_ms` and `signals` (only the interaction rules that fired, `{}` when none did; a passing token can carry `{"straight_path": true}`, which is advisory). It is absent for a `pass` token and for failures, and present with `remoteip-mismatch`.
 - A failure is `{"success": false, "error_codes": ["<code>"]}` with no other field, except `remoteip-mismatch`, which keeps every field of the success response and sets `success` to false. The token is spent in that case too.
 
 | Status | `error_codes` | Meaning |

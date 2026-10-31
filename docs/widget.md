@@ -49,7 +49,7 @@ window.__nazrWidget = {
 | `ready` | Resolves with `{ nonce }` when the frame has decoded its challenge. It does not wait for the proof-of-work or the report. It always settles within 10 seconds: if no challenge arrives by then it resolves with `{ nonce: "" }` and the error callback gets `network` |
 | `nonce` | The current challenge id. Set asynchronously, so it is `undefined` right after the loader runs: always `await ready` first. It changes on every `reset()` |
 | `token` | The current token, or `undefined` before the first pass, after expiry and after `reset()` |
-| `state` | Read-only. `pending` until the frame answers; `pass` after a `pass` token; `interactive` once the click-to-verify box is shown, and it stays `interactive` after the token that step earns; `failed` after an error |
+| `state` | Read-only. `pending` until the frame answers; `pass` after a `pass` token; `interactive` once the click-to-verify box is shown, and it stays `interactive` after the token that step earns; `failed` after an error, including the 10-second `ready` timeout. `interactive` alone means either "box shown, awaiting the click" or "token earned", so check `token` too |
 | `reset()` | Clears the token and the hidden input, collapses the frame back to hidden, sets `state` to `pending` and reloads the frame, which fetches a fresh challenge and starts over |
 
 When the loader did not run (blocked, failed to load, or no `data-api-key`), `window.__nazrWidget` is undefined.
@@ -238,11 +238,21 @@ While the visitor reaches the button, the frame records a small trace, never raw
 
 ### What `interactive` proves
 
-A trace made of trusted events rejects canned scripts: a synthetic `click()`, a dispatched event, an instant click, a click in a hidden tab. It does not reject a driven browser. A real browser controlled through the browser's input channel (CDP or WebDriver input commands) produces trusted events, so a patient automation that moves the mouse over the box passes. The extra proof-of-work raises the cost per attempt, not the bar.
+The trace is self-reported: the frame produces it, and any client that speaks the protocol can post whatever trace it likes, against rules that are published. For such a client the real barriers are the passive classification (only a visitor not classified as a bot is offered the step) and the proof-of-work. What the trace does reject is a canned script that runs the frame's own code: a synthetic `click()`, a dispatched event, an instant click, a click in a hidden tab. It does not reject a driven browser. A real browser controlled through the browser's input channel (CDP or WebDriver input commands) produces trusted events, so a patient automation that moves the mouse over the box passes. The extra proof-of-work raises the cost per attempt, not the bar. With `NAZR_WIDGET_INTERACTIVE_EXTRA_BITS=0` it costs nothing beyond the passive proof-of-work (the challenge has the same id, so the passive counter satisfies it); use at least `1` in production.
 
 Treat `interactive` as weaker than `pass`. Both are accepted for low-risk actions; for high-risk ones, require `pass` only or add your own checks. `straight_path` is advisory: the frame sees only moves over its own box, which is too short a window to fail someone on, so it is recorded in `interaction.signals` and never fails the attempt.
 
 An abandoned interactive challenge is not cancelled. The offer stays redeemable by whoever holds it until the challenge `exp` (10 minutes from the frame load), and a redeemed offer cannot be redeemed twice. `reset()` loads a fresh frame with a fresh challenge but does not revoke the old one.
+
+### After a failure
+
+`interactive_failed` and `invalid` leave the box in its failed state ("Verification failed"); the frame also answers `invalid` on its own once the interactive challenge expires before the click. Nothing retries by itself. Call `window.__nazrWidget.reset()` from `data-error-callback` (here `data-error-callback="onNazrError"`) to start a fresh passive run with a new challenge:
+
+```js
+function onNazrError(reason) {
+  if (reason === "interactive_failed" || reason === "invalid") window.__nazrWidget.reset();
+}
+```
 
 ### Verify on the backend
 
@@ -264,7 +274,7 @@ Accept `pass`, and `interactive` if you want the step to unlock the action. In s
     "path_px": 212.5,
     "straightness": 0.71,
     "elapsed_ms": 1840,
-    "signals": { "untrusted_event": false, "straight_path": false }
+    "signals": {}
   },
   "error_codes": []
 }
@@ -274,10 +284,10 @@ Accept `pass`, and `interactive` if you want the step to unlock the action. In s
 |---|---|
 | `input` | `pointer` or `keyboard` |
 | `pointer_type` | `mouse`, `touch`, `pen`, or `""` for keyboard |
-| `trusted` | The activating event had `isTrusted` set |
+| `trusted` | Every recorded event, the pointer moves and the activation, had `isTrusted` set |
 | `moves`, `path_px`, `straightness` | Pointer moves over the box, path length in CSS pixels, and chord over path length (0 to 1) |
 | `elapsed_ms` | Milliseconds between the button being shown and activated |
-| `signals` | Every interaction rule and whether it fired; see [signals.md](signals.md#interaction-rules) |
+| `signals` | Only the interaction rules that fired, `{}` when none did. A passing token can carry `{"straight_path": true}`, which is advisory; see [signals.md](signals.md#interaction-rules) |
 
 `interaction` is absent when the token came from a plain `pass`. The `jose` and `golang-jwt/jwt/v5` snippets above already accept both verdicts when verifying locally; local verification gives no `interaction` block.
 

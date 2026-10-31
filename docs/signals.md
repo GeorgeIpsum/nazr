@@ -111,7 +111,7 @@ Warning: `/beacon` is unauthenticated (it is sent with `sendBeacon`, which canno
 
 ## Interaction rules
 
-The widget's [interactive step](widget.md#interactive-step) scores a small trace the frame records while the visitor reaches and presses its button. The table mirrors `Rules()` in `apps/api/internal/interaction/score.go`, in the same order. Every rule is evaluated and recorded under `signals` in the stored report and in siteverify's `interaction` block, even on a malformed trace.
+The widget's [interactive step](widget.md#interactive-step) scores a small trace the frame records while the visitor reaches and presses its button. The table mirrors `Rules()` in `apps/api/internal/interaction/score.go`, in the same order. Every rule is evaluated; the ones that fired are recorded under `signals` in the stored report and in siteverify's `interaction` block (`{}` when none fired, `{"straight_path": true}` for the advisory case). A malformed trace is answered `invalid` and never stored.
 
 | Signal | Fails the attempt | Fires when |
 |---|---|---|

@@ -374,6 +374,9 @@ the attempt, because the frame observes only moves over its own box.
 - Tokens with `verdict:"pass"` are unchanged; hosts that check
   `verdict == "pass"` reject interactive tokens, which is the safe default.
 - The migration is additive; existing rows have `interaction = NULL`.
+- The `NAZR_POW_BITS + NAZR_WIDGET_INTERACTIVE_EXTRA_BITS <= 32` check applies
+  only while `NAZR_WIDGET_INTERACTIVE` is on. A deployment above 28 bits must
+  lower the extra bits or disable the step before upgrading.
 
 ## Amendments
 
