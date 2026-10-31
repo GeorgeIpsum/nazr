@@ -33,6 +33,16 @@ describe("logThumbmarkData", () => {
         expect(JSON.stringify(fetchMock.mock.calls[0][1])).not.toContain("secret-key");
     });
 
+    test("does not echo canvas_probe in the logged options", async () => {
+        await logThumbmarkData("abc123", {}, {
+            ...defaultOptions,
+            canvas_probe: { draw: () => {}, width: 12, height: 9 },
+        } as typeof defaultOptions);
+
+        expect(loggedPayload().options).not.toHaveProperty("canvas_probe");
+        expect(fetchMock.mock.calls[0][1].body).not.toContain("canvas_probe");
+    });
+
     test("sends experimental as null and never contacts the experimental host", async () => {
         await logThumbmarkData("abc123", { screen: { width: 100 } }, defaultOptions);
 
