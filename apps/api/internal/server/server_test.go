@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -1208,32 +1210,90 @@ func widgetHolder(t *testing.T) *conn.Holder {
 	return fullHolderOrder(t, append(slices.Clone(testHeaderOrder), "Origin"))
 }
 
-func widgetBody(t *testing.T) map[string]any {
-	return map[string]any{"nonce": "n-1", "components": stockBody(t)["components"], "clientHash": "abc123"}
+// mintTestChallenge mints a challenge for origin under testSigningKey, as the
+// frame route would at e.now, and returns it with its id.
+func mintTestChallenge(t *testing.T, e *env, origin string) (string, string) {
+	t.Helper()
+	return mintChallengeWith(t, e, testSigningKey, origin)
 }
 
-func TestWidgetReportStores(t *testing.T) {
-	post := func(t *testing.T, mut func(c *config.Config, s *fakeStore)) *env {
-		t.Helper()
-		e := newEnv(t, mut)
-		r := widgetReportReq(t, e.key, marshal(t, widgetBody(t)))
-		w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
-		if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
-			t.Fatalf("status %d: %q", w.Code, w.Body.String())
-		}
-		if len(e.store.reports) != 1 {
-			t.Fatalf("reports %d", len(e.store.reports))
-		}
-		if len(e.repo.visitors) != 0 || len(e.store.events) != 0 {
-			t.Fatalf("visitors %v events %d", e.repo.visitors, len(e.store.events))
-		}
-		return e
-	}
+func mintChallengeWith(t *testing.T, e *env, k widgettoken.Key, origin string) (string, string) {
+	t.Helper()
+	id := ulid.Make().String()
+	ch := widgettoken.MintChallenge(k.Secret, widgettoken.Challenge{ID: id,
+		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: e.cfg.PowBits, Kid: k.Kid, Origin: origin})
+	return ch, id
+}
 
-	e := post(t, nil)
+// widgetBody is a valid report body for challenge ch (id) with a solved
+// proof-of-work and the stock client's components.
+func widgetBody(t *testing.T, e *env, ch, id string) map[string]any {
+	t.Helper()
+	return map[string]any{"challenge": ch, "pow": widgettoken.SolvePoW(id, e.cfg.PowBits),
+		"components": stockBody(t)["components"], "clientHash": "abc123"}
+}
+
+// postReport sends body as a widget report through a full TLS + h2 holder
+// and returns the 200 JSON outcome.
+func postReport(t *testing.T, e *env, body map[string]any, mod ...func(r *http.Request)) map[string]any {
+	t.Helper()
+	r := widgetReportReq(t, e.key, marshal(t, body))
+	for _, m := range mod {
+		m(r)
+	}
+	w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("status %d type %q: %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	return decodeResp(t, w)
+}
+
+func parseTestToken(t *testing.T, tok any) widgettoken.Claims {
+	t.Helper()
+	s, _ := tok.(string)
+	c, err := widgettoken.Parse(s, func(kid string) (*ecdsa.PublicKey, bool) {
+		if kid != testSigningKey.Kid {
+			return nil, false
+		}
+		return &testSigningKey.Private.PublicKey, true
+	})
+	if err != nil {
+		t.Fatalf("token %q: %v", s, err)
+	}
+	return c
+}
+
+func TestWidgetReportPass(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	out := postReport(t, e, widgetBody(t, e, ch, id))
+	if out["verdict"] != "pass" || len(out) != 2 {
+		t.Fatalf("outcome %v", out)
+	}
+	c := parseTestToken(t, out["token"])
+	want := widgettoken.Claims{Issuer: "https://example.com", Audience: keyID, ID: id, IssuedAt: testNow.Unix(),
+		Expires: testNow.Add(5 * time.Minute).Unix(), Hostname: "https://shop.example", Verdict: "pass"}
+	if c != want {
+		t.Fatalf("claims %+v want %+v", c, want)
+	}
+	if len(e.store.reports) != 1 || len(e.repo.visitors) != 0 || len(e.store.events) != 0 {
+		t.Fatalf("reports %d visitors %v events %d", len(e.store.reports), e.repo.visitors, len(e.store.events))
+	}
 	rep := e.store.reports[0]
-	if rep.Nonce != "n-1" || rep.ClientHash != "abc123" || rep.APIKeyID != keyID || rep.ID == "" {
+	if rep.ID != id || rep.Nonce != id || !rep.PowOK || rep.Verdict != "pass" || rep.Hostname != "https://shop.example" ||
+		rep.TokenIssuedAt == nil || !rep.TokenIssuedAt.Equal(testNow) || rep.ClientHash != "abc123" || rep.APIKeyID != keyID {
 		t.Fatalf("report %+v", rep)
+	}
+	var cls map[string]any
+	if err := json.Unmarshal(rep.Classification, &cls); err != nil || cls["bot"] != false || cls["danger_level"] != float64(0) {
+		t.Fatalf("classification %s: %v", rep.Classification, err)
+	}
+	var sig map[string]bool
+	if err := json.Unmarshal(rep.Signals, &sig); err != nil || len(sig) == 0 {
+		t.Fatalf("signals %s: %v", rep.Signals, err)
+	}
+	if _, ok := sig["canvas_probe_anomaly"]; ok {
+		t.Fatalf("signals carry canvas_probe_anomaly: %s", rep.Signals)
 	}
 	if rep.IPHash != ipintel.Identifier(netip.MustParseAddr("203.0.113.42"), "salt") {
 		t.Fatalf("ip hash %q", rep.IPHash)
@@ -1241,17 +1301,14 @@ func TestWidgetReportStores(t *testing.T) {
 	if rep.JA4 == "" || rep.H2FP == "" || rep.UserAgent != chromeUA {
 		t.Fatalf("ja4 %q h2fp %q ua %q", rep.JA4, rep.H2FP, rep.UserAgent)
 	}
-	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(rep.Thumbmark) {
-		t.Fatalf("thumbmark %q", rep.Thumbmark)
-	}
 	if rep.IP == nil || rep.IP.String() != "203.0.113.42" || rep.Components != nil || !rep.CreatedAt.Equal(testNow) {
 		t.Fatalf("ip %v components %s created %v", rep.IP, rep.Components, rep.CreatedAt)
 	}
 
-	// The same components and connection through /thumbmark, with no
-	// options (the report carries none), hash the same.
+	// The same components and connection through /thumbmark, stabilizing
+	// "private" and "iframe" like the frame client, hash the same.
 	tb := stockBody(t)
-	delete(tb, "options")
+	tb["options"] = map[string]any{"stabilize": []any{"private", "iframe"}}
 	r := thumbmarkReq(t, e.key, marshal(t, tb))
 	r.Header.Set("Origin", "https://nazr.example")
 	w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
@@ -1262,22 +1319,190 @@ func TestWidgetReportStores(t *testing.T) {
 		t.Fatalf("report thumbmark %q, /thumbmark %q", rep.Thumbmark, tm)
 	}
 
-	e = post(t, func(c *config.Config, _ *fakeStore) { c.StoreComponents = true })
+	e = newEnv(t, func(c *config.Config, _ *fakeStore) {
+		c.WidgetIssuer, c.StoreComponents, c.StoreIP = "https://nazr.example", true, "hash"
+	})
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	if c := parseTestToken(t, postReport(t, e, widgetBody(t, e, ch, id))["token"]); c.Issuer != "https://nazr.example" {
+		t.Fatalf("issuer %q", c.Issuer)
+	}
+	rep = e.store.reports[0]
 	var comps map[string]any
-	if err := json.Unmarshal(e.store.reports[0].Components, &comps); err != nil || comps["tls"] == nil || comps["system"] == nil {
-		t.Fatalf("components %s: %v", e.store.reports[0].Components, err)
+	if err := json.Unmarshal(rep.Components, &comps); err != nil || comps["tls"] == nil || comps["system"] == nil {
+		t.Fatalf("components %s: %v", rep.Components, err)
+	}
+	if rep.IP != nil || rep.IPHash == "" {
+		t.Fatalf("hash mode ip %v hash %q", rep.IP, rep.IPHash)
+	}
+}
+
+func TestWidgetReportInconclusive(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	body := widgetBody(t, e, ch, id)
+	comps := body["components"].(map[string]any)
+	priv := maps.Clone(comps["privacy"].(map[string]any))
+	priv["webdriver"] = true
+	comps["privacy"] = priv
+	if out := postReport(t, e, body); out["verdict"] != "inconclusive" || len(out) != 1 {
+		t.Fatalf("webdriver outcome %v", out)
+	}
+	if rep := e.store.reports[0]; rep.Verdict != "inconclusive" || rep.TokenIssuedAt != nil || !rep.PowOK {
+		t.Fatalf("report %+v", rep)
 	}
 
-	e = post(t, func(c *config.Config, _ *fakeStore) { c.StoreIP = "hash" })
-	if rep := e.store.reports[0]; rep.IP != nil || rep.IPHash == "" {
-		t.Fatalf("hash mode ip %v hash %q", rep.IP, rep.IPHash)
+	noLang := func(r *http.Request) { r.Header.Del("Accept-Language") }
+	for maxDanger, want := range map[int]string{0: "inconclusive", 2: "pass"} {
+		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.WidgetPassMaxDanger = maxDanger })
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		out := postReport(t, e, widgetBody(t, e, ch, id), noLang)
+		if out["verdict"] != want {
+			t.Fatalf("max danger %d: outcome %v, want %s", maxDanger, out, want)
+		}
+		if (out["token"] != nil) != (want == "pass") {
+			t.Fatalf("max danger %d: token %v", maxDanger, out["token"])
+		}
+		var cls map[string]any
+		_ = json.Unmarshal(e.store.reports[0].Classification, &cls)
+		if cls["danger_level"] != float64(1) || cls["bot"] != false {
+			t.Fatalf("classification %v", cls)
+		}
+	}
+}
+
+func TestWidgetReportPowFailed(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	bad := ""
+	for i := 0; ; i++ {
+		if c := strconv.Itoa(i); !widgettoken.VerifyPoW(id, c, e.cfg.PowBits) {
+			bad = c
+			break
+		}
+	}
+	body := widgetBody(t, e, ch, id)
+	body["pow"] = bad
+	if out := postReport(t, e, body); out["verdict"] != "pow_failed" || len(out) != 1 {
+		t.Fatalf("outcome %v", out)
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+	if rep := e.store.reports[0]; rep.PowOK || rep.Verdict != "pow_failed" || rep.TokenIssuedAt != nil || rep.ID != id {
+		t.Fatalf("report %+v", rep)
+	}
+}
+
+func TestWidgetReportInvalid(t *testing.T) {
+	invalid := func(t *testing.T, e *env, body map[string]any) {
+		t.Helper()
+		if out := postReport(t, e, body); out["verdict"] != "invalid" || len(out) != 1 {
+			t.Fatalf("outcome %v", out)
+		}
+		if len(e.store.reports) != 0 {
+			t.Fatalf("stored %+v", e.store.reports)
+		}
+	}
+	for name, mut := range map[string]func(e *env, b map[string]any){
+		"tampered mac": func(_ *env, b map[string]any) {
+			// Flip the MAC's first character: its last one carries
+			// padding bits a decoder may ignore.
+			payload, mac, _ := strings.Cut(b["challenge"].(string), ".")
+			first := "A"
+			if mac[0] == 'A' {
+				first = "B"
+			}
+			b["challenge"] = payload + "." + first + mac[1:]
+		},
+		"expired":           func(e *env, _ map[string]any) { e.now = testNow.Add(11 * time.Minute) },
+		"long challenge":    func(_ *env, b map[string]any) { b["challenge"] = strings.Repeat("a", 513) },
+		"empty challenge":   func(_ *env, b map[string]any) { b["challenge"] = "" },
+		"non-digit pow":     func(_ *env, b map[string]any) { b["pow"] = "12a" },
+		"long pow":          func(_ *env, b map[string]any) { b["pow"] = strings.Repeat("1", 33) },
+		"numeric pow":       func(_ *env, b map[string]any) { b["pow"] = 12 },
+		"missing comps":     func(_ *env, b map[string]any) { delete(b, "components") },
+		"string comps":      func(_ *env, b map[string]any) { b["components"] = "x" },
+		"numeric hash":      func(_ *env, b map[string]any) { b["clientHash"] = 5 },
+		"bad hash":          func(_ *env, b map[string]any) { b["clientHash"] = "zz" },
+		"empty hash":        func(_ *env, b map[string]any) { b["clientHash"] = "" },
+		"phase 1 body":      func(_ *env, b map[string]any) { delete(b, "challenge"); delete(b, "pow"); b["nonce"] = "n-1" },
+		"missing challenge": func(_ *env, b map[string]any) { delete(b, "challenge") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, nil)
+			ch, id := mintTestChallenge(t, e, "https://shop.example")
+			body := widgetBody(t, e, ch, id)
+			mut(e, body)
+			invalid(t, e, body)
+		})
+	}
+
+	t.Run("unknown kid", func(t *testing.T) {
+		e := newEnv(t, nil)
+		other := testSigningKey
+		other.Kid = "nope"
+		ch, id := mintChallengeWith(t, e, other, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+
+	t.Run("no signing", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, nil)
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+
+	t.Run("reused challenge", func(t *testing.T) {
+		e := newEnv(t, nil)
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		body := widgetBody(t, e, ch, id)
+		first := postReport(t, e, body)
+		if first["verdict"] != "pass" {
+			t.Fatalf("first %v", first)
+		}
+		if out := postReport(t, e, body); out["verdict"] != "invalid" || len(out) != 1 {
+			t.Fatalf("second %v", out)
+		}
+		if len(e.store.reports) != 1 {
+			t.Fatalf("reports %d", len(e.store.reports))
+		}
+		parseTestToken(t, first["token"])
+	})
+
+	retired := testNow.Add(-time.Hour)
+	old := testSigningKey
+	old.Kid, old.Secret, old.CreatedAt, old.RetiredAt = "old", []byte("fedcba9876543210fedcba9876543210"), testNow.Add(-48*time.Hour), &retired
+	t.Run("retired key in grace", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, widgettoken.NewStaticKeyring(testSigningKey, old))
+		ch, id := mintChallengeWith(t, e, old, "https://shop.example")
+		out := postReport(t, e, widgetBody(t, e, ch, id))
+		if out["verdict"] != "pass" {
+			t.Fatalf("outcome %v", out)
+		}
+		if c := parseTestToken(t, out["token"]); c.ID != id {
+			t.Fatalf("claims %+v", c)
+		}
+	})
+	t.Run("retired key past grace", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, widgettoken.NewStaticKeyring(testSigningKey))
+		ch, id := mintChallengeWith(t, e, old, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+}
+
+func TestWidgetReportStoreError(t *testing.T) {
+	e := newEnv(t, nil)
+	e.store.reportErr = errBoom
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "inconclusive" || len(out) != 1 {
+		t.Fatalf("outcome %v", out)
 	}
 }
 
 func TestWidgetReportScopedKey(t *testing.T) {
 	e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.byID[keyID].AllowedOrigins = []string{"https://a.com"} })
-	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusNoContent {
-		t.Fatalf("widget report %d: %s", w.Code, w.Body.String())
+	ch, id := mintTestChallenge(t, e, "https://a.com")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "pass" {
+		t.Fatalf("widget report %v", out)
 	}
 	if len(e.store.reports) != 1 {
 		t.Fatalf("reports %d", len(e.store.reports))
@@ -1288,28 +1513,19 @@ func TestWidgetReportScopedKey(t *testing.T) {
 }
 
 func TestWidgetReportRejectsBody(t *testing.T) {
-	// Every body but "over the limit" fits in BodyLimit, so it is rejected by
-	// validation, not size; "control" proves a valid small body is stored.
-	const limit = 256
-	small := `"components":{"a":1}`
+	// Each body is rejected by validation or size: 200 "invalid", nothing
+	// stored; "control" proves a valid body under the same limit is stored.
+	const limit = 1024
 	for name, body := range map[string]string{
 		"array":          `[]`,
 		"empty":          `{}`,
-		"string comps":   `{"nonce":"n","components":"x"}`,
-		"long nonce":     `{"nonce":"` + strings.Repeat("a", 65) + `",` + small + `}`,
-		"bad hash":       `{"nonce":"n",` + small + `,"clientHash":"zz"}`,
-		"numeric hash":   `{"nonce":"n",` + small + `,"clientHash":5}`,
-		"empty hash":     `{"nonce":"n",` + small + `,"clientHash":""}`,
-		"over the limit": `{"nonce":"n","components":{"x":"` + strings.Repeat("a", 1000) + `"}}`,
+		"not json":       `{`,
+		"over the limit": `{"challenge":"c","pow":"1","components":{"x":"` + strings.Repeat("a", 2*limit) + `"}}`,
 	} {
-		if name != "over the limit" && len(body) > limit {
-			t.Fatalf("%s: body %d bytes exceeds the limit", name, len(body))
-		}
-		body := []byte(body)
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
-			w := e.do(widgetReportReq(t, e.key, body))
-			if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
+			w := e.do(widgetReportReq(t, e.key, []byte(body)))
+			if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"verdict":"invalid"}` {
 				t.Fatalf("status %d: %q", w.Code, w.Body.String())
 			}
 			if len(e.store.reports) != 0 {
@@ -1320,18 +1536,25 @@ func TestWidgetReportRejectsBody(t *testing.T) {
 
 	t.Run("control", func(t *testing.T) {
 		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
-		w := e.do(widgetReportReq(t, e.key, []byte(`{"nonce":"n",`+small+`,"clientHash":"abc123"}`)))
-		if w.Code != http.StatusNoContent || len(e.store.reports) != 1 {
-			t.Fatalf("status %d reports %d", w.Code, len(e.store.reports))
+		ch, id := mintTestChallenge(t, e, "")
+		body := map[string]any{"challenge": ch, "pow": widgettoken.SolvePoW(id, e.cfg.PowBits), "components": map[string]any{"a": 1}}
+		if b := marshal(t, body); len(b) > limit {
+			t.Fatalf("control body %d bytes exceeds the limit", len(b))
+		}
+		w := e.do(widgetReportReq(t, e.key, marshal(t, body)))
+		if w.Code != http.StatusOK || len(e.store.reports) != 1 {
+			t.Fatalf("status %d reports %d: %s", w.Code, len(e.store.reports), w.Body.String())
 		}
 	})
 
 	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
-	wantError(t, e.do(widgetReportReq(t, "", marshal(t, widgetBody(t)))), 403, "unauthorized")
-	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusNoContent {
+	ch, id := mintTestChallenge(t, e, "")
+	wantError(t, e.do(widgetReportReq(t, "", marshal(t, widgetBody(t, e, ch, id)))), 403, "unauthorized")
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t, e, ch, id)))); w.Code != http.StatusOK {
 		t.Fatalf("first %d", w.Code)
 	}
-	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t)))); w.Code != http.StatusTooManyRequests {
+	ch, id = mintTestChallenge(t, e, "")
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t, e, ch, id)))); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("second %d, want 429", w.Code)
 	}
 	if len(e.store.reports) != 1 {

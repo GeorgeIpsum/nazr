@@ -62,6 +62,7 @@ type fakeStore struct {
 	entSince                 time.Time
 
 	reports       []store.WidgetReport
+	reportErr     error
 	summary       store.WidgetSummary
 	summaryErr    error
 	summaryKeyID  string
@@ -284,6 +285,7 @@ func defaultConfig(t *testing.T) config.Config {
 		t.Fatal(err)
 	}
 	cfg.IPHashSalt = "salt"
+	cfg.PowBits = 8 // keeps SolvePoW fast in tests
 	return cfg
 }
 
@@ -513,6 +515,14 @@ func (f *fakeStore) CanvasProbeEntropy(_ context.Context, keyID string, since ti
 func (f *fakeStore) InsertWidgetReport(_ context.Context, r store.WidgetReport) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.reportErr != nil {
+		return f.reportErr
+	}
+	for _, have := range f.reports {
+		if have.ID == r.ID {
+			return store.ErrDuplicateReport
+		}
+	}
 	f.reports = append(f.reports, r)
 	return nil
 }

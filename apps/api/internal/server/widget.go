@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"nazr/api/internal/auth"
+	"nazr/api/internal/classify"
 	"nazr/api/internal/fingerprint"
-	"nazr/api/internal/h2fp"
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/widgettoken"
@@ -217,37 +217,97 @@ func validNonce(s string) bool {
 	return true
 }
 
-// handleWidgetReport stores the frame's report: its nonce, client components
-// and client hash, with the thumbmark recomputed from this connection. The
-// key's origin scoping is skipped (the frame runs on nazr's origin), and the
-// response is always 204: a malformed body is dropped, never answered.
-func (s *server) handleWidgetReport(w http.ResponseWriter, r *http.Request) {
-	s.storeWidgetReport(r)
-	w.WriteHeader(http.StatusNoContent)
+// Widget report verdicts (spec section 3.3).
+const (
+	verdictPass         = "pass"
+	verdictInconclusive = "inconclusive"
+	verdictPowFailed    = "pow_failed"
+	verdictInvalid      = "invalid"
+)
+
+// widgetReportOptions is the frame client's stabilization: it runs in an
+// iframe and may be in a private window.
+var widgetReportOptions = fingerprint.Options{Stabilize: []string{"private", "iframe"}}
+
+// widgetOutcome is the /widget/report response.
+type widgetOutcome struct {
+	Verdict string `json:"verdict"`
+	Token   string `json:"token,omitempty"`
 }
 
-// storeWidgetReport validates and stores one report, dropping it silently
-// when the body is malformed.
-func (s *server) storeWidgetReport(r *http.Request) {
+// widgetReportBody is a decoded, bounds-checked report.
+type widgetReportBody struct {
+	challenge, pow, clientHash string
+	components                 map[string]any
+}
+
+// parseWidgetReport applies the report bounds: challenge 1..512 bytes, pow
+// 1..32 ASCII digits, components an object, clientHash absent or 1..64 hex.
+func parseWidgetReport(raw map[string]any) (widgetReportBody, bool) {
+	var b widgetReportBody
+	var ok bool
+	if b.challenge, ok = raw["challenge"].(string); !ok || len(b.challenge) < 1 || len(b.challenge) > 512 {
+		return b, false
+	}
+	if b.pow, ok = raw["pow"].(string); !ok || !validPow(b.pow) {
+		return b, false
+	}
+	if b.components, ok = raw["components"].(map[string]any); !ok {
+		return b, false
+	}
+	if v, present := raw["clientHash"]; present {
+		if b.clientHash, ok = v.(string); !ok || !validCanvasProbe(b.clientHash) {
+			return b, false
+		}
+	}
+	return b, true
+}
+
+// validPow reports whether s is 1..32 ASCII digits.
+func validPow(s string) bool {
+	if len(s) < 1 || len(s) > 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// handleWidgetReport answers the frame's report with a verdict and, on pass,
+// a token. The key's origin scoping is skipped (the frame runs on nazr's
+// origin); after the middleware the response is always 200 JSON.
+func (s *server) handleWidgetReport(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.processWidgetReport(r))
+}
+
+// processWidgetReport verifies the challenge and proof-of-work, classifies
+// the frame's request, stores the report keyed by the challenge id and signs
+// a token on pass. Only a stored, first-use pass yields a token.
+func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
+	invalid := widgetOutcome{Verdict: verdictInvalid}
 	ctx := r.Context()
 	key := auth.KeyFromContext(ctx)
 	raw, err := fingerprint.Decode(r.Body, int64(s.Cfg.BodyLimit))
-	if key == nil || err != nil {
-		return
+	if key == nil || err != nil || s.Signing == nil {
+		return invalid
 	}
-	nonce, _ := raw["nonce"].(string)
-	comps, ok := raw["components"].(map[string]any)
-	if !validNonce(nonce) || !ok {
-		return
+	body, ok := parseWidgetReport(raw)
+	if !ok {
+		return invalid
 	}
-	// clientHash is absent or 1..64 hex; any other value drops the report.
-	clientHash := ""
-	if v, present := raw["clientHash"]; present {
-		clientHash, _ = v.(string)
-		if !validCanvasProbe(clientHash) {
-			return
-		}
+	now := s.Now().UTC()
+	ch, err := widgettoken.ParseChallenge(body.challenge, func(kid string) ([]byte, bool) {
+		k, ok := s.Signing.Lookup(kid)
+		return k.Secret, ok
+	}, now)
+	if err != nil {
+		return invalid
 	}
+	// The difficulty is the challenge's, which nazr minted and MACed.
+	powOK := widgettoken.VerifyPoW(ch.ID, body.pow, ch.Bits)
 
 	addr, view := s.clientIP(r)
 	s.countParseErrors(ctx, view)
@@ -256,22 +316,74 @@ func (s *server) storeWidgetReport(r *http.Request) {
 		lookup = s.Intel.Lookup(addr)
 	}
 	sc, ja4 := serverComponents(r, view, requestOrder(r), s.Cfg, addr, lookup)
-	merged := fingerprint.Merge(comps, filterServer(sc, comps, fingerprint.OptionsFromRequest(nil)))
+	merged := fingerprint.Merge(body.components, filterServer(sc, body.components, widgetReportOptions))
+	in, h2fpStr := s.classifyInput(r, view, body.components, lookup, ja4)
+	cls := classify.Classify(in)
+	delete(cls.Signals, "canvas_probe_anomaly") // never scored here
+
+	verdict := verdictInconclusive
+	switch {
+	case !powOK:
+		verdict = verdictPowFailed
+	case !cls.Bot && cls.DangerLevel <= s.Cfg.WidgetPassMaxDanger:
+		verdict = verdictPass
+	}
 
 	rep := store.WidgetReport{
-		ID: requestIDFrom(ctx), APIKeyID: key.ID, Nonce: nonce, Thumbmark: fingerprint.Hash(merged),
-		ClientHash: clientHash, IP: s.storedIP(addr), JA4: ja4, UserAgent: r.Header.Get("User-Agent"),
-		Components: s.storedComponents(comps, sc), CreatedAt: s.Now().UTC(),
+		ID: ch.ID, APIKeyID: key.ID, Nonce: ch.ID, Thumbmark: fingerprint.Hash(merged),
+		ClientHash: body.clientHash, IP: s.storedIP(addr), JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent,
+		Components: s.storedComponents(body.components, sc), CreatedAt: now,
+		Hostname: ch.Origin, PowOK: powOK, Verdict: verdict,
 	}
+	rep.Classification, _ = marshalJSON(classificationInfo{Tor: cls.Tor, VPN: cls.VPN, Bot: cls.Bot,
+		Datacenter: cls.Datacenter, PrivateRelay: cls.PrivateRelay, DangerLevel: cls.DangerLevel})
+	rep.Signals, _ = marshalJSON(cls.Signals)
 	if addr.IsValid() {
 		rep.IPHash = ipintel.Identifier(addr, s.Cfg.IPHashSalt)
 	}
-	if view.H2 != nil {
-		rep.H2FP = h2fp.Akamai(view.H2)
+	if verdict == verdictPass {
+		rep.TokenIssuedAt = &now
 	}
+	// The insert is the single-use check, so it precedes issuance.
 	ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 	defer cancel()
 	if err := s.Store.InsertWidgetReport(ictx, rep); err != nil {
-		s.Logger.Error("server: insert widget report failed", "err", err, "request_id", rep.ID)
+		if errors.Is(err, store.ErrDuplicateReport) {
+			return invalid
+		}
+		s.Logger.Error("server: insert widget report failed", "err", err, "request_id", requestIDFrom(ctx))
+		if verdict == verdictPass {
+			// A store outage must not mint credentials.
+			verdict = verdictInconclusive
+		}
+		return widgetOutcome{Verdict: verdict}
 	}
+	if verdict != verdictPass {
+		return widgetOutcome{Verdict: verdict}
+	}
+	return widgetOutcome{Verdict: verdict, Token: s.signWidgetToken(r, key.ID, ch, now)}
+}
+
+// signWidgetToken signs a pass token for ch with the active key, or returns
+// "" (logged) when there is no active key or signing fails.
+func (s *server) signWidgetToken(r *http.Request, keyID string, ch widgettoken.Challenge, now time.Time) string {
+	rid := requestIDFrom(r.Context())
+	active, ok := s.Signing.Active()
+	if !ok {
+		s.Logger.Error("server: no active widget signing key", "request_id", rid)
+		return ""
+	}
+	iss := s.Cfg.WidgetIssuer
+	if iss == "" {
+		iss = "https://" + r.Host
+	}
+	tok, err := widgettoken.Sign(active.Private, active.Kid, widgettoken.Claims{
+		Issuer: iss, Audience: keyID, ID: ch.ID, IssuedAt: now.Unix(),
+		Expires: now.Add(s.Cfg.WidgetTokenTTL).Unix(), Hostname: ch.Origin, Verdict: verdictPass,
+	})
+	if err != nil {
+		s.Logger.Error("server: sign widget token failed", "err", err, "request_id", rid)
+		return ""
+	}
+	return tok
 }
