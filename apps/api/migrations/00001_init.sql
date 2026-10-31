@@ -8,7 +8,11 @@ CREATE TABLE api_keys (
     rate_limit_per_minute integer NULL,
     created_at            timestamptz NOT NULL DEFAULT now(),
     revoked_at            timestamptz NULL,
-    last_used_at          timestamptz NULL
+    last_used_at          timestamptz NULL,
+    -- RecordVisit reads the per-key visitor total from this counter instead of
+    -- count(*) over visitors, which grows with the table. CreateVisitor keeps
+    -- it current in the same statement as the insert.
+    visitor_count         bigint NOT NULL DEFAULT 0
 );
 
 CREATE TABLE visitors (
@@ -55,11 +59,21 @@ CREATE TABLE events (
     signals        jsonb NULL,
     components     jsonb NULL,
     metadata       jsonb NULL,
+    -- The JA3 hash hashes the wire order of the TLS extensions, which Chromium
+    -- permutes on every connection, so it is not part of the tls component
+    -- (and so not of the thumbmark). It is kept on the event for analysis;
+    -- NULL when no ClientHello was captured.
+    ja3_hash       char(32) NULL,
+    canvas_probe   text NULL,
+    cohort         text NULL,
     created_at     timestamptz NOT NULL
 );
 CREATE INDEX events_key_created_idx ON events (api_key_id, created_at);
 CREATE INDEX events_visitor_idx ON events (visitor_id);
 CREATE INDEX events_created_idx ON events (created_at);
+-- Serves store.HasRecentEvent (the /beacon poisoning check).
+CREATE INDEX events_thumbmark_created_idx ON events (thumbmark, created_at);
+CREATE INDEX events_probe_cohort_idx ON events (api_key_id, cohort, created_at);
 
 CREATE TABLE ua_ja4_observations (
     ja4        text NOT NULL,

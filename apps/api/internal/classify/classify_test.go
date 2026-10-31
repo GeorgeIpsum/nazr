@@ -207,7 +207,27 @@ func TestTimezoneCountries(t *testing.T) {
 
 func TestRules(t *testing.T) {
 	r := Rules()
-	if len(r) != 11 {
+	if len(r) != 12 {
 		t.Fatalf("len = %d", len(r))
+	}
+}
+
+func TestCanvasProbeAnomalySignal(t *testing.T) {
+	base := Input{UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		AcceptLanguagePresent: true, HasTLS: true}
+	off := Classify(base)
+	base.CanvasProbeAnomaly = true
+	on := Classify(base)
+	if v, ok := off.Signals["canvas_probe_anomaly"]; !ok || v {
+		t.Fatalf("off: present=%v value=%v", ok, v)
+	}
+	if !on.Signals["canvas_probe_anomaly"] {
+		t.Fatal("signal not set")
+	}
+	if on.DangerLevel != off.DangerLevel+1 {
+		t.Fatalf("danger %d vs %d", on.DangerLevel, off.DangerLevel)
+	}
+	if on.Bot {
+		t.Fatal("flag alone set Bot")
 	}
 }

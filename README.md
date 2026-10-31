@@ -33,6 +33,8 @@ const tm = new Thumbmark({
 
 See the [client README](packages/thumbmark/README.md) and [protocol.md](docs/protocol.md).
 
+An optional embeddable widget collects a second, isolated fingerprint in a cross-origin iframe and correlates it with the page's call by nonce. It also issues a short-lived signed token that your backend verifies with `siteverify` or the JWKS: see [docs/widget.md](docs/widget.md).
+
 ## Quick start (60 seconds, Docker Compose)
 
 ```bash
@@ -41,7 +43,7 @@ for i in $(seq 30); do curl -skf https://localhost/readyz && break; sleep 1; don
 docker compose -f deploy/compose/docker-compose.yml exec -T api /nazr keys create --label first
 ```
 
-The API is at `https://localhost` with a self-signed certificate (use `curl -k`); the loop waits up to 30 seconds for `/readyz` (Compose already starts the API only after PostgreSQL is healthy). Key creation prints the key once. To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack, one freshly brought up for the test: by default (`KEEP=0`) it tears the stack and its data down on exit (including any key you created), so use `KEEP=1 pnpm smoke:compose` to keep it.
+The API is at `https://localhost` with a self-signed certificate (use `curl -k`); the loop waits up to 30 seconds for `/readyz` (Compose already starts the API only after PostgreSQL is healthy). Key creation prints the API key, then the siteverify secret, then an `id  prefix  label` line; only the first line is the API key, and both secrets are shown once. To verify the stack end to end, run `pnpm smoke:compose` on a throwaway stack, one freshly brought up for the test: by default (`KEEP=0`) it tears the stack and its data down on exit (including any key you created), so use `KEEP=1 pnpm smoke:compose` to keep it.
 
 ## Deploy
 
@@ -52,6 +54,7 @@ The API is at `https://localhost` with a self-signed certificate (use `curl -k`)
 ## Reference
 
 - [docs/protocol.md](docs/protocol.md): routes, request and response, errors, CORS, connection modes
+- [docs/widget.md](docs/widget.md): embeddable widget, signed tokens, siteverify and what its summary detects
 - [docs/signals.md](docs/signals.md): components, classification table, IP list sources
 - [docs/configuration.md](docs/configuration.md): every `NAZR_*` variable
 
@@ -86,6 +89,7 @@ The repository is GPL-3.0 ([LICENSE](LICENSE)). `packages/thumbmark` is a fork o
 apps/api/            Go API (cmd/nazr: serve, migrate, keys, lists)
 apps/demo/           Vite demo page; Playwright e2e in e2e/
 packages/thumbmark/  @nazr/thumbmark, the ThumbmarkJS fork
+packages/widget/     @nazr/widget, the embeddable loader and frame
 deploy/compose/      Docker Compose stack and smoke script
 deploy/terraform/aws Terraform module (NLB, ECS Fargate, RDS)
 docs/                protocol, signals, configuration, deploy guides

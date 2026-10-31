@@ -37,6 +37,38 @@ log URL is `<api_endpoint>/log` and the beacon URL is `<api_endpoint>/beacon`. A
 trailing slash on `api_endpoint` is ignored. A path in `api_endpoint` is used
 verbatim as the thumbmark URL, with `/log` and `/beacon` appended to it.
 
+## Canvas probe
+
+`canvas_probe` lets you supply your own canvas drawing routine as an extra consistency check. When set, the client runs `draw` three times, applies common-pixels noise reduction, hashes the result and sends the hash.
+
+```ts
+const tm = new Thumbmark({
+    api_endpoint: "https://nazr.example.com",
+    api_key: "your-api-key",
+    canvas_probe: {
+        draw: (ctx, canvas) => {
+            ctx.font = "16px serif";
+            ctx.fillStyle = "#f60";
+            ctx.fillRect(10, 10, 80, 30);
+            ctx.fillStyle = "#069";
+            ctx.fillText("my-site probe", 12, 32);
+        },
+        width: 200, // optional
+        height: 50, // optional
+    },
+});
+```
+
+The hash is sent as a top-level `canvas_probe` field on `POST /thumbmark`, never inside `components`. The server stores it and, only if the operator enables `NAZR_CANVAS_PROBE_SCORING`, compares it with the visitor's cohort to raise `canvas_probe_anomaly`. See [signals.md](../../docs/signals.md#consumer-canvas-probe-and-the-entropy-report).
+
+**Builder beware.**
+- The probe contributes nothing to the thumbmark or visitor identity.
+- It is only as private as the bundle. Anyone who loads the page can read the routine and replay its output; the UMD obfuscation only slows that down.
+- A low-entropy routine (`too_low`) barely distinguishes visitors. A randomized one (`too_unique`) is useless as a consistency check and will produce noise.
+- Keep `NAZR_CANVAS_PROBE_SCORING` off until the entropy report (`GET /admin/keys/{id}/canvas-probe`) reads `ok`.
+
+Caching caveat: when `cache_api_call` is on and a cached or in-flight API response short-circuits the request, a probe passed on that call is not sent.
+
 ## Builds
 
 | File                    | Format                    | Readable       | Source map |

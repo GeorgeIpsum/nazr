@@ -46,6 +46,7 @@ Header order is captured per request (each request's own HTTP/2 header block or 
 | `missing_accept_language` | 1 | 1 |
 | `timezone_country_mismatch` | 1 | 0 |
 | `datacenter_browser_ua` | 1 | 1 |
+| `canvas_probe_anomaly` | 1 | 1 |
 
 `info.signals` contains every signal as a boolean, fired or not. `info.classification` also exposes `tor`, `vpn`, `datacenter` and `private_relay` as plain booleans from the IP lists.
 
@@ -62,8 +63,30 @@ Header order is captured per request (each request's own HTTP/2 header block or 
 - `missing_accept_language`: no `Accept-Language` header and the UA family is a browser.
 - `timezone_country_mismatch`: the IP country is known, `locales.timezone` maps to one or more countries (from the IANA `zone1970.tab`), and the IP country is not one of them.
 - `datacenter_browser_ua`: the IP is a datacenter and the UA family is a browser.
+- `canvas_probe_anomaly`: opt-in via `NAZR_CANVAS_PROBE_SCORING`. It fires only when scoring is on, the visitor's cohort (user-agent family plus JA4 family) has at least 50 probed events in the last 30 days, and this visit's probe differs from the cohort's dominant probe. When no determination is made (scoring off, no probe sent, or the cohort is too small) the signal is absent from `info.signals` entirely, rather than present as `false`.
 
 Browser families are `chrome`, `edge`, `firefox`, `safari`, `opera`, `samsung`, `brave`. Brave cannot be told apart from Chrome by UA alone.
+
+### Consumer canvas probe and the entropy report
+
+A consumer can supply its own canvas drawing routine through the client's `canvas_probe` option (see the [client README](../packages/thumbmark/README.md#canvas-probe)). Its hash travels as the top-level `canvas_probe` request field, is stored on the event, and never affects the thumbmark. Scoring it is off by default (`NAZR_CANVAS_PROBE_SCORING=false`).
+
+`GET /admin/keys/{id}/canvas-probe` (admin token) reports how well the routine separates visitors over a 30-day window:
+
+| Field | Meaning |
+|---|---|
+| `window_days` | Length of the window (30) |
+| `visitors` | Probed visitors in the window |
+| `distinct_probes` | Distinct probe values seen |
+| `ratio` | `distinct_probes / visitors`. It can exceed 1 when a single visitor emits several probe values |
+| `verdict` | `insufficient_data` (fewer than 50 probed visitors), `too_low` (ratio at most 0.05), `too_unique` (ratio at least 0.95), otherwise `ok` |
+
+**Builder beware.**
+
+- The probe contributes nothing to the thumbmark or visitor identity.
+- It is only as private as the bundle. Anyone who loads the page can read the routine and replay its output; the UMD obfuscation only slows that down.
+- A low-entropy routine (`too_low`) barely distinguishes visitors. A randomized one (`too_unique`) is useless as a consistency check and will produce noise.
+- Keep `NAZR_CANVAS_PROBE_SCORING` off until the entropy report reads `ok`.
 
 ### `h2_automation`
 
