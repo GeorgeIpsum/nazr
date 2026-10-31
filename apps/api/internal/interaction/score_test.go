@@ -23,6 +23,7 @@ func TestScoreRules(t *testing.T) {
 		{"hidden", func(x *Trace) { x.Visible = false }, "hidden_document"},
 		{"no path", func(x *Trace) { x.Moves = 2 }, "no_pointer_path"},
 		{"straight", func(x *Trace) { x.Straightness = 0.98 }, "straight_path"},
+		{"perfectly straight", func(x *Trace) { x.Straightness = 1 }, "straight_path"},
 		{"touch ok", func(x *Trace) { x.PointerType, x.Moves, x.Straightness = "touch", 0, 1 }, ""},
 		{"keyboard ok", func(x *Trace) { x.Input, x.PointerType, x.Moves, x.Straightness = "keyboard", "", 0, 1 }, ""},
 		{"moves 201", func(x *Trace) { x.Moves = 201 }, "malformed_trace"},
@@ -39,7 +40,8 @@ func TestScoreRules(t *testing.T) {
 			if len(sig) != len(Rules()) {
 				t.Fatalf("signals has %d keys, want %d", len(sig), len(Rules()))
 			}
-			if ok != (c.fired == "") {
+			// straight_path is advisory: it fires but does not fail the attempt.
+			if wantOK := c.fired == "" || c.fired == "straight_path"; ok != wantOK {
 				t.Fatalf("ok = %v, signals %v", ok, sig)
 			}
 			if c.fired == "malformed_trace" {
@@ -58,10 +60,22 @@ func TestScoreRules(t *testing.T) {
 	}
 }
 
+func TestStraightPathWithNoPointerPathFails(t *testing.T) {
+	tr := base()
+	tr.Moves, tr.Straightness = 2, 1
+	ok, sig := Score(tr)
+	if ok || !sig["straight_path"] || !sig["no_pointer_path"] {
+		t.Fatalf("ok = %v, signals %v", ok, sig)
+	}
+}
+
 func TestRulesOrder(t *testing.T) {
 	var got []string
 	for _, r := range Rules() {
 		got = append(got, r.Signal)
+		if r.Advisory != (r.Signal == "straight_path") {
+			t.Errorf("%s advisory = %v", r.Signal, r.Advisory)
+		}
 	}
 	want := []string{"untrusted_event", "too_fast", "too_slow", "hidden_document", "no_pointer_path", "straight_path", "malformed_trace"}
 	if !slices.Equal(got, want) {
