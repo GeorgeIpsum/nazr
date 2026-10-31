@@ -4,6 +4,8 @@ export interface NazrWidget {
   ready: Promise<{ nonce: string }>;
   nonce?: string;
   token?: string;
+  /** Read-only for hosts: "pending" | "pass" | "interactive" | "failed". */
+  state: "pending" | "pass" | "interactive" | "failed";
   reset(): void;
 }
 
@@ -58,6 +60,16 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     const src = new URL("/widget/v1/frame", origin);
     src.search = new URLSearchParams({ k: apiKey }).toString();
 
+    let container: Element | null = null;
+    if (script.dataset.container) {
+      try {
+        container = doc.querySelector(script.dataset.container);
+      } catch {
+        container = null;
+      }
+    }
+    if (container) src.searchParams.set("i", "1");
+
     const fieldName = script.dataset.responseFieldName || "nazr-token";
     const form = script.closest("form");
     let input: HTMLInputElement | undefined;
@@ -89,7 +101,28 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     };
 
     const iframe = doc.createElement("iframe");
+    const collapse = () => {
+      iframe.width = "0";
+      iframe.height = "0";
+      iframe.style.position = "absolute";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.title = "nazr";
+    };
+    const expand = () => {
+      iframe.width = "300";
+      iframe.height = "65";
+      iframe.style.position = "static";
+      iframe.style.width = "300px";
+      iframe.style.height = "65px";
+      iframe.style.border = "0";
+      iframe.removeAttribute("aria-hidden");
+      iframe.title = "nazr verification";
+    };
     const widget: NazrWidget = {
+      state: "pending",
       ready: new Promise((r) => {
         resolveReady = r;
       }),
@@ -98,6 +131,8 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
         timer = undefined;
         widget.token = undefined;
         if (input) input.value = "";
+        widget.state = "pending";
+        collapse();
         iframe.src = src.href;
       },
     };
@@ -127,7 +162,12 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
             resolved = true;
             resolveReady({ nonce: msg.id });
           }
+        } else if (msg.type === "nazr:interactive") {
+          widget.state = "interactive";
+          expand();
+          callGlobal(script.dataset.interactiveCallback);
         } else if (msg.type === "nazr:token") {
+          if (widget.state !== "interactive") widget.state = "pass";
           win.clearTimeout(timer);
           timer = undefined;
           widget.token = msg.token;
@@ -144,6 +184,7 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
             }, delay);
           }
         } else if (msg.type === "nazr:error") {
+          widget.state = "failed";
           callGlobal(script.dataset.errorCallback, msg.reason);
         }
       } catch {
@@ -154,14 +195,12 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     const host = doc.createElement("div");
     const root = host.attachShadow({ mode: "closed" });
     iframe.src = src.href;
-    iframe.width = "0";
-    iframe.height = "0";
-    iframe.setAttribute("style", "position:absolute;width:0;height:0;border:0");
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.title = "nazr";
+    collapse();
     root.appendChild(iframe);
 
-    if (doc.body) {
+    if (container) {
+      container.appendChild(host);
+    } else if (doc.body) {
       doc.body.appendChild(host);
     } else {
       doc.addEventListener("DOMContentLoaded", () => doc.body?.appendChild(host), { once: true });

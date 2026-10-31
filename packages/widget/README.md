@@ -7,7 +7,7 @@ The browser side of the nazr widget. A host page embeds the loader from the nazr
 ```
 
 The loader mounts a hidden, cross-origin iframe inside a closed shadow root and exposes
-`window.__nazrWidget = { ready, nonce, token, reset }`. The nonce is the server-issued challenge
+`window.__nazrWidget = { ready, nonce, token, state, reset }`. The nonce is the server-issued challenge
 id, set asynchronously: `await window.__nazrWidget.ready` (it resolves with `{ nonce }`) before
 reading it. `data-nonce` is ignored with a console warning. The frame computes a thumbmark with
 `@nazr/thumbmark`, solves the proof-of-work in a worker and POSTs
@@ -19,6 +19,12 @@ When the script tag sits inside a `<form>`, the loader keeps a hidden input (nam
 `data-expired-callback` name global functions called with the token, the failure reason, and
 nothing. When a token expires the loader clears the input, calls the expired callback and calls
 `reset()`, which fetches a fresh challenge and token.
+
+`data-container` is a CSS selector for an element on the host page. When it resolves, the loader
+mounts there (instead of under `<body>`) and asks the frame for the click-to-verify step, which
+resizes the iframe to 300x65 and calls `data-interactive-callback` (no argument). The read-only
+`window.__nazrWidget.state` is `pending`, `pass`, `interactive` (stays so after the token) or
+`failed`; `reset()` collapses the frame and returns it to `pending`.
 
 ## Build outputs
 

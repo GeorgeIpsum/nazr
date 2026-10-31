@@ -399,3 +399,101 @@ describe("frame messages", () => {
     delete (win as unknown as Record<string, unknown>).onNazrErr;
   });
 });
+
+describe("interactive container", () => {
+  const g = win as unknown as Record<string, unknown>;
+  afterEach(() => {
+    delete g.onNazrInteractive;
+  });
+
+  function mountIn(attrs: Record<string, string>, withBox = true) {
+    const box = document.createElement("div");
+    box.id = "box";
+    if (withBox) document.body.appendChild(box);
+    return { box, ...mount({ "data-container": "#box", ...attrs }) };
+  }
+
+  it("appends the host to the container and adds i=1", () => {
+    const { box, iframe } = mountIn({});
+    expect(box.children).toHaveLength(1);
+    expect(new URL(iframe.src).searchParams.get("i")).toBe("1");
+  });
+
+  it("falls back to body without i when the container is missing or invalid", () => {
+    const { box, iframe } = mountIn({}, false);
+    expect(box.children).toHaveLength(0);
+    expect(iframe.src).not.toContain("i=1");
+    expect(document.body.lastElementChild?.tagName).toBe("DIV");
+    delete win.__nazrWidget;
+    const bad = mount({ "data-container": "###" });
+    expect(bad.iframe.src).not.toContain("i=1");
+  });
+
+  it("starts pending and hidden", () => {
+    const { iframe } = mountIn({});
+    expect(win.__nazrWidget?.state).toBe("pending");
+    expect(iframe.style.width).toBe("0px");
+    expect(iframe.style.position).toBe("absolute");
+    expect(iframe.getAttribute("aria-hidden")).toBe("true");
+    expect(iframe.title).toBe("nazr");
+  });
+
+  it("shows the box on nazr:interactive and calls the callback once", () => {
+    const cb = vi.fn();
+    g.onNazrInteractive = cb;
+    const { iframe } = mountIn({ "data-interactive-callback": "onNazrInteractive" });
+    send(iframe, { type: "nazr:interactive" });
+    expect(iframe.style.width).toBe("300px");
+    expect(iframe.style.height).toBe("65px");
+    expect(iframe.style.position).toBe("static");
+    expect(iframe.hasAttribute("aria-hidden")).toBe(false);
+    expect(iframe.title).toBe("nazr verification");
+    expect(win.__nazrWidget?.state).toBe("interactive");
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(cb).toHaveBeenCalledWith(undefined);
+  });
+
+  it("keeps interactive on a following token and fills the input", () => {
+    const { iframe, form } = mountIn({});
+    send(iframe, { type: "nazr:interactive" });
+    const token = jwt(Math.floor(Date.now() / 1000) + 60);
+    send(iframe, { type: "nazr:token", token });
+    expect(win.__nazrWidget?.state).toBe("interactive");
+    expect(form?.querySelector("input")?.value).toBe(token);
+  });
+
+  it("is pass on a token without nazr:interactive", () => {
+    const { iframe } = mountIn({});
+    send(iframe, { type: "nazr:token", token: jwt(Math.floor(Date.now() / 1000) + 60) });
+    expect(win.__nazrWidget?.state).toBe("pass");
+  });
+
+  it("is failed on nazr:error", () => {
+    const { iframe } = mountIn({});
+    send(iframe, { type: "nazr:error", reason: "interactive_failed" });
+    expect(win.__nazrWidget?.state).toBe("failed");
+  });
+
+  it("reset() collapses and returns to pending", () => {
+    const { iframe } = mountIn({});
+    send(iframe, { type: "nazr:interactive" });
+    win.__nazrWidget?.reset();
+    expect(win.__nazrWidget?.state).toBe("pending");
+    expect(iframe.style.width).toBe("0px");
+    expect(iframe.style.height).toBe("0px");
+    expect(iframe.style.position).toBe("absolute");
+    expect(iframe.getAttribute("width")).toBe("0");
+    expect(iframe.getAttribute("aria-hidden")).toBe("true");
+    expect(iframe.title).toBe("nazr");
+  });
+
+  it("survives the container being removed after nazr:interactive", () => {
+    const { box, iframe, form } = mountIn({});
+    send(iframe, { type: "nazr:interactive" });
+    box.remove();
+    const token = jwt(Math.floor(Date.now() / 1000) + 60);
+    expect(() => send(iframe, { type: "nazr:token", token })).not.toThrow();
+    expect(form?.querySelector("input")?.value).toBe(token);
+    expect(win.__nazrWidget?.state).toBe("interactive");
+  });
+});
