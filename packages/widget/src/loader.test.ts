@@ -319,9 +319,9 @@ describe("frame messages", () => {
       const { iframe } = mount();
       const now = Math.floor(Date.now() / 1000);
       send(iframe, { type: "nazr:token", token: jwt(now + 1, now) });
-      expect(setTimeout.mock.calls.at(-1)?.[1]).toBe(10_000);
+      expect(setTimeout.mock.calls[setTimeout.mock.calls.length - 1]?.[1]).toBe(10_000);
       send(iframe, { type: "nazr:token", token: jwt(now + 10 ** 9, now) });
-      expect(setTimeout.mock.calls.at(-1)?.[1]).toBe(2_147_483_647);
+      expect(setTimeout.mock.calls[setTimeout.mock.calls.length - 1]?.[1]).toBe(2_147_483_647);
     });
 
     it("arms no timer without iat", () => {
