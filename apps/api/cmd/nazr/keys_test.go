@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,23 +85,33 @@ func TestSigningRotateList(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
+	before := time.Now()
 	if code := signingCmd("rotate", nil, &out, &errb); code != 0 {
 		t.Fatalf("rotate exit %d: %s", code, errb.String())
 	}
-	kid := strings.TrimSpace(out.String())
-	if kid == "" || strings.Contains(kid, "\n") {
+	// "<kid> activates at <RFC3339>", one publish window ahead.
+	line := strings.TrimSpace(out.String())
+	kid, at, ok := strings.Cut(line, " activates at ")
+	if !ok || kid == "" || strings.Contains(line, "\n") {
 		t.Fatalf("rotate output %q", out.String())
+	}
+	activates, err := time.Parse(time.RFC3339, at)
+	if err != nil || activates.Before(before.Add(widgettoken.SigningKeyPublish-time.Minute)) ||
+		activates.After(time.Now().Add(widgettoken.SigningKeyPublish+time.Minute)) {
+		t.Fatalf("activates %q %v", at, err)
 	}
 	out.Reset()
 	if code := signingCmd("list", nil, &out, &errb); code != 0 {
 		t.Fatalf("list exit %d: %s", code, errb.String())
 	}
 	rows := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(rows) != 3 || strings.Fields(rows[0])[0] != "KID" {
+	if len(rows) != 3 || !slices.Equal(strings.Fields(rows[0]), []string{"KID", "CREATED", "ACTIVATES", "RETIRED"}) {
 		t.Fatalf("list output %q", out.String())
 	}
+	// The new key activates when the old one retires.
 	first, second := strings.Fields(rows[1]), strings.Fields(rows[2])
-	if first[0] != kid || first[2] != "-" || second[2] == "-" {
+	if len(first) != 4 || len(second) != 4 || first[0] != kid || first[2] != at || first[3] != "-" ||
+		second[3] != at || second[2] == "-" {
 		t.Fatalf("rows %q", rows)
 	}
 }

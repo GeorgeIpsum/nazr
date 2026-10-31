@@ -29,24 +29,37 @@ func TestSigningKeys(t *testing.T) {
 	if err != nil || got.Kid != "k1" || calls != 1 {
 		t.Fatalf("second ensure: %+v calls %d %v", got, calls, err)
 	}
+	// The first key activates as soon as it exists.
 	if got.PrivateKeyPEM != "pem-k1" || string(got.PublicJWK) != `{"kid": "k1"}` || string(got.HMACSecret) != "secret-k1" ||
-		!got.CreatedAt.Equal(k1.CreatedAt) || got.RetiredAt != nil {
+		!got.CreatedAt.Equal(k1.CreatedAt) || got.RetiredAt != nil || !got.ActivatesAt.Equal(k1.CreatedAt) {
 		t.Fatalf("round trip: %+v", got)
 	}
 
-	if err := s.RotateSigningKey(ctx, k2); err != nil {
+	before := time.Now()
+	if err := s.RotateSigningKey(ctx, k2, time.Hour); err != nil {
 		t.Fatal(err)
 	}
+	after := time.Now()
+	// within reports whether at is publish after the rotation, allowing for
+	// the database clock.
+	within := func(at time.Time) bool {
+		return !at.Before(before.Add(time.Hour-5*time.Second)) && !at.After(after.Add(time.Hour+5*time.Second))
+	}
+	// Both keys stay listed through the publish hour: k2 activates and k1
+	// retires one hour ahead.
 	list, err := s.ListSigningKeys(ctx, now.Add(-time.Hour))
-	if err != nil || len(list) != 2 || list[0].Kid != "k2" || list[0].RetiredAt != nil ||
-		list[1].Kid != "k1" || list[1].RetiredAt == nil {
+	if err != nil || len(list) != 2 || list[0].Kid != "k2" || list[0].RetiredAt != nil || !within(list[0].ActivatesAt) ||
+		list[1].Kid != "k1" || list[1].RetiredAt == nil || !within(*list[1].RetiredAt) || !list[1].ActivatesAt.Equal(k1.CreatedAt) {
 		t.Fatalf("list: %+v %v", list, err)
 	}
-	list, err = s.ListSigningKeys(ctx, now.Add(time.Hour))
+	list, err = s.ListSigningKeys(ctx, now.Add(2*time.Hour))
 	if err != nil || len(list) != 1 || list[0].Kid != "k2" {
 		t.Fatalf("list future: %+v %v", list, err)
 	}
-	n, err := s.DeleteRetiredSigningKeys(ctx, now.Add(time.Hour))
+	if n, err := s.DeleteRetiredSigningKeys(ctx, now.Add(time.Hour-time.Minute)); err != nil || n != 0 {
+		t.Fatalf("delete in publish hour: %d %v", n, err)
+	}
+	n, err := s.DeleteRetiredSigningKeys(ctx, now.Add(2*time.Hour))
 	if err != nil || n != 1 {
 		t.Fatalf("delete: %d %v", n, err)
 	}

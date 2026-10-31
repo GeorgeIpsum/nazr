@@ -244,6 +244,29 @@ func TestSiteverifyMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("retiring key in publish window", func(t *testing.T) {
+		// Mid-rotation: the outgoing key retires in the future and the new
+		// key has not activated, so tokens are still signed by the old one.
+		next, err := widgettoken.Generate(testNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.ActivatesAt = testNow.Add(30 * time.Minute)
+		nk, err := widgettoken.FromStored(next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retiring := testSigningKey
+		retireAt := testNow.Add(30 * time.Minute)
+		retiring.RetiredAt = &retireAt
+		e := newSiteverifyEnv(t, nil, widgettoken.NewStaticKeyring(retiring, nk))
+		id := e.seedReport(&svIP, "")
+		status, got := e.verify(t, map[string]string{"secret": e.secret, "token": svToken(t, retiring, keyID, id)})
+		if status != 200 || got["success"] != true {
+			t.Fatalf("status %d body %v", status, got)
+		}
+	})
+
 	t.Run("remoteip raw", func(t *testing.T) {
 		e := newSiteverifyEnv(t, nil, nil)
 		e.store.correlation = store.WidgetCorrelation{Matched: false}

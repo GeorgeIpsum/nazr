@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -1783,6 +1784,68 @@ func TestWidgetFrameChallenge(t *testing.T) {
 
 	e = newEnvWidgetSigning(t, nil, challengeFS(), nil)
 	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "signing_unavailable")
+
+	// A lone key that has not activated is not used (EnsureSigningKey never
+	// stores one; the route answers as if there were no key).
+	pending := testSigningKey
+	pending.ActivatesAt = testNow.Add(time.Minute)
+	e = newEnvWidgetSigning(t, nil, challengeFS(), widgettoken.NewStaticKeyring(pending))
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "signing_unavailable")
+}
+
+// TestWidgetSigningPublishWindow follows a rotation: during the publish hour
+// the outgoing key mints challenges and signs tokens, and both keys are in
+// the JWKS; after it the new key takes over.
+func TestWidgetSigningPublishWindow(t *testing.T) {
+	sk, err := widgettoken.Generate(testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchAt := testNow.Add(widgettoken.SigningKeyPublish)
+	sk.ActivatesAt = switchAt
+	next, err := widgettoken.FromStored(sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := testSigningKey
+	old.RetiredAt = &switchAt
+	e := newEnvWidgetSigning(t, nil, challengeFS(), widgettoken.NewStaticKeyring(old, next))
+	frameKid := func() string {
+		t.Helper()
+		w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+		if w.Code != 200 {
+			t.Fatalf("frame %d: %s", w.Code, w.Body.String())
+		}
+		payload, _, _ := strings.Cut(attr(t, w.Body.String(), "data-challenge"), ".")
+		pb, _ := base64.RawURLEncoding.DecodeString(payload)
+		var c widgettoken.Challenge
+		if err := json.Unmarshal(pb, &c); err != nil {
+			t.Fatal(err)
+		}
+		return c.Kid
+	}
+
+	if got := frameKid(); got != old.Kid {
+		t.Fatalf("frame kid in publish hour %q", got)
+	}
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/jwks.json", nil))
+	var jwks widgettoken.JWKS
+	if err := json.Unmarshal(w.Body.Bytes(), &jwks); err != nil || len(jwks.Keys) != 2 {
+		t.Fatalf("jwks %s %v", w.Body.String(), err)
+	}
+	ch, id := mintChallengeWith(t, e, old, "https://shop.example")
+	out := postReport(t, e, widgetBody(t, e, ch, id))
+	if out["verdict"] != "pass" {
+		t.Fatalf("outcome %v", out)
+	}
+	if c := parseTestToken(t, out["token"]); c.ID != id {
+		t.Fatalf("claims %+v", c)
+	}
+
+	e.now = switchAt
+	if got := frameKid(); got != next.Kid {
+		t.Fatalf("frame kid after publish hour %q", got)
+	}
 }
 
 func TestWidgetBundleServesWorker(t *testing.T) {

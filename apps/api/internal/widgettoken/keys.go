@@ -21,21 +21,26 @@ const (
 	// SigningKeyGrace is how long a retired key stays published and usable
 	// for verification.
 	SigningKeyGrace = 24 * time.Hour
+	// SigningKeyPublish is how long a rotated-in key is published in the
+	// JWKS before it starts signing: the JWKS cache time, so consumers have
+	// it before the first token it signs.
+	SigningKeyPublish = time.Hour
 	// SigningKeyRefresh is how often the keyring reloads from the database.
 	SigningKeyRefresh = 60 * time.Second
 )
 
-// Key is a parsed signing key.
+// Key is a parsed signing key. It signs from ActivatesAt until RetiredAt.
 type Key struct {
-	Kid       string
-	Private   *ecdsa.PrivateKey
-	Secret    []byte
-	CreatedAt time.Time
-	RetiredAt *time.Time
+	Kid         string
+	Private     *ecdsa.PrivateKey
+	Secret      []byte
+	CreatedAt   time.Time
+	RetiredAt   *time.Time
+	ActivatesAt time.Time
 }
 
 // Generate creates a new P-256 signing key, a random 22-character kid and a
-// 32-byte challenge HMAC secret, ready to store.
+// 32-byte challenge HMAC secret, ready to store. It activates at now.
 func Generate(now time.Time) (store.SigningKey, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -64,6 +69,7 @@ func Generate(now time.Time) (store.SigningKey, error) {
 		PublicJWK:     jwk,
 		HMACSecret:    secret,
 		CreatedAt:     now,
+		ActivatesAt:   now,
 	}, nil
 }
 
@@ -81,7 +87,8 @@ func FromStored(sk store.SigningKey) (Key, error) {
 	if !ok || priv.Curve != elliptic.P256() {
 		return Key{}, errors.New("widgettoken: signing key is not ECDSA P-256")
 	}
-	return Key{Kid: sk.Kid, Private: priv, Secret: sk.HMACSecret, CreatedAt: sk.CreatedAt, RetiredAt: sk.RetiredAt}, nil
+	return Key{Kid: sk.Kid, Private: priv, Secret: sk.HMACSecret, CreatedAt: sk.CreatedAt, RetiredAt: sk.RetiredAt,
+		ActivatesAt: sk.ActivatesAt}, nil
 }
 
 // Keyring is a concurrency-safe set of signing keys, newest first.
@@ -132,12 +139,14 @@ func (k *Keyring) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// Active returns the newest key that is not retired.
-func (k *Keyring) Active() (Key, bool) {
+// Active returns the newest key that signs at now: activated (ActivatesAt
+// at or before now) and not retired (RetiredAt nil or after now). During a
+// rotation's publish window that is the outgoing key.
+func (k *Keyring) Active(now time.Time) (Key, bool) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 	for _, key := range k.keys {
-		if key.RetiredAt == nil {
+		if !key.ActivatesAt.After(now) && (key.RetiredAt == nil || key.RetiredAt.After(now)) {
 			return key, true
 		}
 	}

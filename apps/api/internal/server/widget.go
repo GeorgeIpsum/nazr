@@ -155,7 +155,7 @@ func (s *server) handleWidgetFrame(wa *widgetAssets) http.HandlerFunc {
 		var active widgettoken.Key
 		ok := false
 		if s.Signing != nil {
-			active, ok = s.Signing.Active()
+			active, ok = s.Signing.Active(s.Now())
 		}
 		if !ok {
 			s.Logger.Error("server: no active widget signing key", "request_id", requestIDFrom(r.Context()))
@@ -396,11 +396,11 @@ func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
 	return widgetOutcome{Verdict: verdict, Token: s.signWidgetToken(r, key.ID, ch, now, verdictPass)}
 }
 
-// signWidgetToken signs a pass token for ch with the active key, or returns
-// "" (logged) when there is no active key or signing fails.
+// signWidgetToken signs a pass token for ch with the key active at now, or
+// returns "" (logged) when there is no active key or signing fails.
 func (s *server) signWidgetToken(r *http.Request, keyID string, ch widgettoken.Challenge, now time.Time, verdict string) string {
 	rid := requestIDFrom(r.Context())
-	active, ok := s.Signing.Active()
+	active, ok := s.Signing.Active(now)
 	if !ok {
 		s.Logger.Error("server: no active widget signing key", "request_id", rid)
 		return ""

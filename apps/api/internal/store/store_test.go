@@ -108,8 +108,9 @@ func newUnmigrated(t *testing.T) *Store {
 func newID() string { return ulid.Make().String() }
 
 // latestMigration is the highest migration in migrations/ (initial schema plus
-// the widget, widget-challenge and widget-interaction migrations).
-const latestMigration = 4
+// the widget, widget-challenge, widget-interaction and signing-activation
+// migrations).
+const latestMigration = 5
 
 func TestVisitorCountIncrement(t *testing.T) {
 	s := newStore(t)
@@ -168,6 +169,7 @@ func TestMigrateSchema(t *testing.T) {
 		{"api_keys", "secret_hash"}, {"api_keys", "secret_prefix"},
 		{"signing_keys", "kid"}, {"signing_keys", "private_key_pem"}, {"signing_keys", "public_jwk"},
 		{"signing_keys", "hmac_secret"}, {"signing_keys", "created_at"}, {"signing_keys", "retired_at"},
+		{"signing_keys", "activates_at"},
 	} {
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, c[0], c[1]).Scan(&n); err != nil || n != 1 {
