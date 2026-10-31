@@ -233,6 +233,26 @@ var widgetReportOptions = fingerprint.Options{Stabilize: []string{"private", "if
 type widgetOutcome struct {
 	Verdict string `json:"verdict"`
 	Token   string `json:"token,omitempty"`
+	// Interactive offers the second, harder challenge to an inconclusive
+	// visitor whose reputation alone held the pass back.
+	Interactive *interactiveOffer `json:"interactive,omitempty"`
+}
+
+// interactiveOffer is the stage "interactive" challenge the frame redeems
+// after the interactive step.
+type interactiveOffer struct {
+	Challenge string `json:"challenge"`
+	Bits      int    `json:"bits"`
+}
+
+// interactiveOffer mints the interactive-stage challenge for ch with the
+// secret of the key that signed ch: same id, expiry, key and origin, at the
+// configured extra difficulty.
+func (s *server) interactiveOffer(ch widgettoken.Challenge, secret []byte) *interactiveOffer {
+	next := ch
+	next.Bits = s.Cfg.PowBits + s.Cfg.WidgetInteractiveExtraBits
+	next.Stage = widgettoken.StageInteractive
+	return &interactiveOffer{Challenge: widgettoken.MintChallenge(secret, next), Bits: next.Bits}
 }
 
 // widgetReportBody is a decoded, bounds-checked report.
@@ -303,7 +323,8 @@ func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
 		k, ok := s.Signing.Lookup(kid)
 		return k.Secret, ok
 	}, now)
-	if err != nil {
+	// A staged challenge is redeemed at the interactive endpoint only.
+	if err != nil || ch.Stage != "" {
 		return invalid
 	}
 	// The difficulty is the challenge's, which nazr minted and MACed.
@@ -359,14 +380,20 @@ func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
 		return widgetOutcome{Verdict: verdict}
 	}
 	if verdict != verdictPass {
-		return widgetOutcome{Verdict: verdict}
+		out := widgetOutcome{Verdict: verdict}
+		if verdict == verdictInconclusive && !cls.Bot && s.Cfg.WidgetInteractive {
+			if k, ok := s.Signing.Lookup(ch.Kid); ok {
+				out.Interactive = s.interactiveOffer(ch, k.Secret)
+			}
+		}
+		return out
 	}
-	return widgetOutcome{Verdict: verdict, Token: s.signWidgetToken(r, key.ID, ch, now)}
+	return widgetOutcome{Verdict: verdict, Token: s.signWidgetToken(r, key.ID, ch, now, verdictPass)}
 }
 
 // signWidgetToken signs a pass token for ch with the active key, or returns
 // "" (logged) when there is no active key or signing fails.
-func (s *server) signWidgetToken(r *http.Request, keyID string, ch widgettoken.Challenge, now time.Time) string {
+func (s *server) signWidgetToken(r *http.Request, keyID string, ch widgettoken.Challenge, now time.Time, verdict string) string {
 	rid := requestIDFrom(r.Context())
 	active, ok := s.Signing.Active()
 	if !ok {
@@ -379,7 +406,7 @@ func (s *server) signWidgetToken(r *http.Request, keyID string, ch widgettoken.C
 	}
 	tok, err := widgettoken.Sign(active.Private, active.Kid, widgettoken.Claims{
 		Issuer: iss, Audience: keyID, ID: ch.ID, IssuedAt: now.Unix(),
-		Expires: now.Add(s.Cfg.WidgetTokenTTL).Unix(), Hostname: ch.Origin, Verdict: verdictPass,
+		Expires: now.Add(s.Cfg.WidgetTokenTTL).Unix(), Hostname: ch.Origin, Verdict: verdict,
 	})
 	if err != nil {
 		s.Logger.Error("server: sign widget token failed", "err", err, "request_id", rid)

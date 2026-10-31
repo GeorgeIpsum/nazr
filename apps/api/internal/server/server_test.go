@@ -1219,9 +1219,20 @@ func mintTestChallenge(t *testing.T, e *env, origin string) (string, string) {
 
 func mintChallengeWith(t *testing.T, e *env, k widgettoken.Key, origin string) (string, string) {
 	t.Helper()
+	return mintStagedChallenge(e, k, origin, e.cfg.PowBits, "")
+}
+
+// mintTestInteractiveChallenge mints a stage "interactive" challenge with the
+// given difficulty, as the report handler's offer would.
+func mintTestInteractiveChallenge(t *testing.T, e *env, origin string, bits int) (string, string) {
+	t.Helper()
+	return mintStagedChallenge(e, testSigningKey, origin, bits, widgettoken.StageInteractive)
+}
+
+func mintStagedChallenge(e *env, k widgettoken.Key, origin string, bits int, stage string) (string, string) {
 	id := ulid.Make().String()
 	ch := widgettoken.MintChallenge(k.Secret, widgettoken.Challenge{ID: id,
-		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: e.cfg.PowBits, Kid: k.Kid, Origin: origin})
+		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: bits, Kid: k.Kid, Origin: origin, Stage: stage})
 	return ch, id
 }
 
@@ -1367,6 +1378,86 @@ func TestWidgetReportInconclusive(t *testing.T) {
 		if cls["danger_level"] != float64(1) || cls["bot"] != false {
 			t.Fatalf("classification %v", cls)
 		}
+	}
+}
+
+func TestWidgetReportInteractiveOffer(t *testing.T) {
+	noLang := func(r *http.Request) { r.Header.Del("Accept-Language") }
+	setup := func(interactive bool) *env {
+		return newEnv(t, func(c *config.Config, _ *fakeStore) {
+			c.WidgetPassMaxDanger = 0
+			c.WidgetInteractive = interactive
+			c.WidgetInteractiveExtraBits = 4
+		})
+	}
+
+	e := setup(true)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	out := postReport(t, e, widgetBody(t, e, ch, id), noLang)
+	if out["verdict"] != "inconclusive" || out["token"] != nil {
+		t.Fatalf("outcome %v", out)
+	}
+	offer, _ := out["interactive"].(map[string]any)
+	if offer == nil || len(offer) != 2 || fmt.Sprint(offer["bits"]) != strconv.Itoa(e.cfg.PowBits+4) {
+		t.Fatalf("offer %v", out["interactive"])
+	}
+	got, err := widgettoken.ParseChallenge(offer["challenge"].(string), func(kid string) ([]byte, bool) {
+		return testSigningKey.Secret, kid == testSigningKey.Kid
+	}, e.now)
+	if err != nil {
+		t.Fatalf("offer challenge: %v", err)
+	}
+	orig, _ := widgettoken.ParseChallenge(ch, func(string) ([]byte, bool) { return testSigningKey.Secret, true }, e.now)
+	if got.Stage != widgettoken.StageInteractive || got.ID != id || got.Expires != orig.Expires ||
+		got.Origin != "https://shop.example" || got.Kid != testSigningKey.Kid || got.Bits != e.cfg.PowBits+4 {
+		t.Fatalf("offer %+v", got)
+	}
+	if rep := e.store.reports[0]; rep.Verdict != "inconclusive" || rep.TokenIssuedAt != nil {
+		t.Fatalf("report %+v", rep)
+	}
+
+	// A bot is not offered the step.
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	body := widgetBody(t, e, ch, id)
+	comps := body["components"].(map[string]any)
+	priv := maps.Clone(comps["privacy"].(map[string]any))
+	priv["webdriver"] = true
+	comps["privacy"] = priv
+	if out := postReport(t, e, body); out["verdict"] != "inconclusive" || out["interactive"] != nil {
+		t.Fatalf("webdriver outcome %v", out)
+	}
+
+	// Disabled.
+	e = setup(false)
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	if out := postReport(t, e, widgetBody(t, e, ch, id), noLang); out["verdict"] != "inconclusive" || out["interactive"] != nil {
+		t.Fatalf("disabled outcome %v", out)
+	}
+
+	// A pass carries a token and no offer.
+	e = newEnv(t, func(c *config.Config, _ *fakeStore) { c.WidgetInteractive = true })
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "pass" || out["interactive"] != nil {
+		t.Fatalf("pass outcome %v", out)
+	}
+
+	// A failed insert offers nothing.
+	e = setup(true)
+	e.store.reportErr = errBoom
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	if out := postReport(t, e, widgetBody(t, e, ch, id), noLang); out["verdict"] != "inconclusive" || out["interactive"] != nil {
+		t.Fatalf("store error outcome %v", out)
+	}
+}
+
+func TestWidgetReportRejectsStagedChallenge(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestInteractiveChallenge(t, e, "https://shop.example", e.cfg.PowBits)
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "invalid" || len(out) != 1 {
+		t.Fatalf("outcome %v", out)
+	}
+	if len(e.store.reports) != 0 {
+		t.Fatalf("stored %+v", e.store.reports)
 	}
 }
 
