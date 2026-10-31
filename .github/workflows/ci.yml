@@ -164,7 +164,7 @@ jobs:
         with:
           terraform_version: 1.14.x
           terraform_wrapper: false
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: v0.65.0
       - name: Format
