@@ -23,7 +23,7 @@ updates:
     groups:
       docker:
         patterns: ["*"]
-  - package-ecosystem: docker
+  - package-ecosystem: docker-compose
     directory: /deploy/compose
     schedule:
       interval: weekly
