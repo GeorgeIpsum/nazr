@@ -69,6 +69,7 @@ export class TraceRecorder {
 }
 
 export interface InteractiveUI {
+  /** A seam for a future entrance animation: it resolves immediately today, so the box is already shown. */
   shown: Promise<void>;
   activated: Promise<TraceSummary>;
   setState(s: "working" | "verified" | "failed"): void;

@@ -487,7 +487,10 @@ describe("interactive container", () => {
     const { box, iframe } = mountIn({}, false);
     expect(box.children).toHaveLength(0);
     expect(iframe.src).not.toContain("i=1");
-    expect(document.body.lastElementChild?.tagName).toBe("DIV");
+    const host = document.body.lastElementChild;
+    expect(host?.tagName).toBe("DIV");
+    expect(host?.parentElement).toBe(document.body);
+    expect(host).not.toBe(box);
     delete win.__nazrWidget;
     const bad = mount({ "data-container": "###" });
     expect(bad.iframe.src).not.toContain("i=1");
@@ -549,6 +552,23 @@ describe("interactive container", () => {
     expect(iframe.getAttribute("width")).toBe("0");
     expect(iframe.getAttribute("aria-hidden")).toBe("true");
     expect(iframe.title).toBe("nazr");
+  });
+
+  it("collapses to pending when the interactive token expires", () => {
+    vi.useFakeTimers();
+    try {
+      const { iframe } = mountIn({});
+      send(iframe, { type: "nazr:interactive" });
+      send(iframe, { type: "nazr:token", token: jwt(Math.floor(Date.now() / 1000) + 65) });
+      expect(win.__nazrWidget?.state).toBe("interactive");
+      vi.advanceTimersByTime(61_000);
+      expect(win.__nazrWidget?.state).toBe("pending");
+      expect(iframe.style.width).toBe("0px");
+      expect(iframe.style.height).toBe("0px");
+      expect(iframe.getAttribute("aria-hidden")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("survives the container being removed after nazr:interactive", () => {

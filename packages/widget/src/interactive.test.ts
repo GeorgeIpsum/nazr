@@ -209,6 +209,23 @@ describe("renderInteractive", () => {
     expect(await ui.activated).toMatchObject({ input: "pointer", pointer_type: "mouse" });
   });
 
+  it("records a real pointerdown and does not re-activate on the following click", async () => {
+    const ui = renderInteractive(document, () => 0);
+    await ui.shown;
+    const button = document.querySelector("button") as HTMLButtonElement;
+    const down = Object.assign(new Event("pointerdown", { bubbles: true }), {
+      pointerType: "mouse",
+      button: 0,
+    });
+    button.dispatchEvent(down);
+    const first = await ui.activated;
+    expect(first).toMatchObject({ input: "pointer", pointer_type: "mouse" });
+    // A later click (detail 0 would read as keyboard) must not change the settled result.
+    button.dispatchEvent(new MouseEvent("click", { detail: 0, bubbles: true }));
+    expect(await ui.activated).toBe(first);
+    expect(first.input).toBe("pointer");
+  });
+
   it("changes the button for each state", async () => {
     const ui = renderInteractive(document, () => 0);
     await ui.shown;
