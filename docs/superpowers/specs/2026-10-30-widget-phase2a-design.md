@@ -97,6 +97,10 @@ Host page (consumer origin)                     nazr origin
 > challenge minted for one key cannot be redeemed under another. A challenge
 > without `key` (minted before this change) is still accepted; it expires
 > within its 10-minute window.
+>
+> **Amendment, 2026-10-31.** The `key` field and longer ids make payloads
+> larger, so the challenge length bound in section 3.3 (and in the Phase 2b
+> `/widget/interact` parser) is 1..768 characters, not 1..512.
 
 ### 3.2 Proof-of-work
 

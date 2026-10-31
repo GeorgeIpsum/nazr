@@ -158,6 +158,6 @@ nazr lists refresh            # force-fetch all IP lists and print a table
 nazr version
 ```
 
-`signing rotate` takes effect after one hour, the JWKS cache time: the new key is published in the JWKS at once, so consumers fetch it during that hour, while the old key keeps signing until the hour is up and then stays valid for verification for the 24 h grace after.
+`signing rotate` takes effect after about an hour (62 minutes: the JWKS cache time plus two reload periods): the new key is published in the JWKS at once, so consumers fetch it during that time, while the old key keeps signing until then and stays valid for verification for the 24 h grace after. Rotation is not a compromise response, since the old key keeps signing for the publish window; for a compromised key, delete its row from `signing_keys` and restart (replicas reload within a minute and tokens it signed become invalid at once).
 
 `keys create` prints three lines: the API key, the siteverify secret and an `id  prefix  label` line. Only the first line is the API key, so scripts take it with `head -1`. Both secrets are shown once.

@@ -206,7 +206,7 @@ The widget is a loader plus a hidden cross-origin frame that reports to nazr; th
 Sent by the frame, same-origin to nazr, with the key in `x-api-key`:
 
 ```json
-{ "challenge": "<payload.mac, 1-512 chars>", "pow": "<1-32 decimal digits>", "components": {}, "clientHash": "<1-64 hex, optional>" }
+{ "challenge": "<payload.mac, 1-768 chars>", "pow": "<1-32 decimal digits>", "components": {}, "clientHash": "<1-64 hex, optional>" }
 ```
 
 ```json
@@ -229,7 +229,7 @@ Sent by the frame after the click-to-verify step, same-origin to nazr, with the 
 
 ```json
 {
-  "challenge": "<interactive challenge, 1-512 chars>",
+  "challenge": "<interactive challenge, 1-768 chars>",
   "pow": "<1-32 decimal digits>",
   "trace": {
     "shown_ms": 640, "click_ms": 2480, "input": "pointer", "trusted": true,
@@ -243,7 +243,7 @@ Sent by the frame after the click-to-verify step, same-origin to nazr, with the 
 ```
 
 - `verdict` is `interactive` (with `token`), `interactive_failed` or `invalid`. Only `interactive` carries a token; its `verdict` claim is `interactive`.
-- Checks run in this order and the first failure answers `invalid`: authentication and rate limit as for the report; the body (challenge 1 to 512 characters, `pow` 1 to 32 digits, `trace` an object whose fields are inside the bounds below); the challenge's MAC, key and expiry, `stage` equal to `interactive`, and `key` (when present) equal to the authenticating key's id; the proof-of-work at the challenge's `bits`. Then the trace is scored: any non-advisory rule that fired is `interactive_failed`, otherwise `interactive`.
+- Checks run in this order and the first failure answers `invalid`: authentication and rate limit as for the report; the body (challenge 1 to 768 characters, `pow` 1 to 32 digits, `trace` an object whose fields are inside the bounds below); the challenge's MAC, key and expiry, `stage` equal to `interactive`, and `key` (when present) equal to the authenticating key's id; the proof-of-work at the challenge's `bits`. Then the trace is scored: any non-advisory rule that fired is `interactive_failed`, otherwise `interactive`.
 - Trace bounds: `shown_ms` and `click_ms` 0 to 2^31; `moves` 0 to 200; `path_px` finite, 0 to 1,000,000; `straightness` finite, 0 to 1; `input` is `pointer` or `keyboard`; `pointer_type` is `mouse`, `touch`, `pen` or empty; strings at most 16 characters. Unknown trace keys are ignored.
 - The upgrade is a conditional update of the stored report, which must still be `inconclusive` with no token issued, so a challenge is redeemed once. A second call, a challenge for a report that never existed, or one already upgraded is `invalid`. A failed attempt is final for that challenge.
 - The rules and thresholds are in [signals.md](signals.md#interaction-rules). The stored report keeps the trace fields, the rules that fired and `elapsed_ms`.
