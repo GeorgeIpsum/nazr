@@ -167,7 +167,7 @@ func TestInteractFailedScore(t *testing.T) {
 func TestInteractInvalid(t *testing.T) {
 	cases := map[string]func(t *testing.T, e *env, b map[string]any, id string){
 		"passive challenge": func(t *testing.T, e *env, b map[string]any, id string) {
-			ch, _ := mintStagedChallengeID(e, id, e.cfg.PowBits, "")
+			ch := mintStagedChallengeID(e, id, e.cfg.PowBits, "")
 			b["challenge"], b["pow"] = ch, widgettoken.SolvePoW(id, e.cfg.PowBits)
 		},
 		"tampered mac": func(_ *testing.T, _ *env, b map[string]any, _ string) {
@@ -179,9 +179,11 @@ func TestInteractInvalid(t *testing.T) {
 			b["challenge"] = payload + "." + first + mac[1:]
 		},
 		"expired": func(_ *testing.T, e *env, _ map[string]any, _ string) { e.now = testNow.Add(11 * time.Minute) },
-		"wrong pow": func(_ *testing.T, _ *env, b map[string]any, id string) {
+		"wrong pow": func(_ *testing.T, e *env, b map[string]any, id string) {
+			// Solves the base bits but not the interactive bits, so checking
+			// the configured base difficulty instead of the challenge's fails.
 			for i := 0; ; i++ {
-				if c := strconv.Itoa(i); !widgettoken.VerifyPoW(id, c, interactBits) {
+				if c := strconv.Itoa(i); widgettoken.VerifyPoW(id, c, e.cfg.PowBits) && !widgettoken.VerifyPoW(id, c, interactBits) {
 					b["pow"] = c
 					return
 				}
@@ -218,7 +220,7 @@ func TestInteractInvalid(t *testing.T) {
 		if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "pass" {
 			t.Fatalf("seed %v", out)
 		}
-		staged, _ := mintStagedChallengeID(e, id, interactBits, widgettoken.StageInteractive)
+		staged := mintStagedChallengeID(e, id, interactBits, widgettoken.StageInteractive)
 		wantInteractInvalid(t, e, interactReqBody(t, staged, id, interactBits, cleanTrace()))
 		if e.store.upgradeCalls != 1 {
 			t.Fatalf("upgrade calls %d", e.store.upgradeCalls)
@@ -251,11 +253,11 @@ func wantInteractInvalid(t *testing.T, e *env, body map[string]any) {
 
 // mintStagedChallengeID mints a challenge for an existing id under
 // testSigningKey.
-func mintStagedChallengeID(e *env, id string, bits int, stage string) (string, string) {
+func mintStagedChallengeID(e *env, id string, bits int, stage string) string {
 	ch := widgettoken.MintChallenge(testSigningKey.Secret, widgettoken.Challenge{ID: id,
 		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: bits, Kid: testSigningKey.Kid,
 		Origin: "https://shop.example", Stage: stage})
-	return ch, id
+	return ch
 }
 
 func TestInteractStoreError(t *testing.T) {
