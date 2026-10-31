@@ -73,7 +73,7 @@ If your page sends a CSP, it must allow the nazr origin in `script-src` (the loa
 
 ## Token lifecycle
 
-1. **Challenge.** The frame document is served with a challenge minted by nazr: an HMAC-signed payload holding a ULID `id`, an expiry 10 minutes out, the required difficulty `bits` (`NAZR_POW_BITS`), the signing key id and the embedding origin read from the `Referer` header. The `id` is the nonce the loader exposes.
+1. **Challenge.** The frame document is served with a challenge minted by nazr: an HMAC-signed payload holding a ULID `id`, an expiry 10 minutes out, the required difficulty `bits` (`NAZR_POW_BITS`), the signing key id, the embedding origin read from the `Referer` header and the id of the API key the frame was served for. The `id` is the nonce the loader exposes. A challenge is only redeemed under the key it was minted for; challenges minted before the key id was added are accepted without it for their 10-minute window.
 2. **Proof-of-work.** A Web Worker finds the smallest decimal counter for which `sha256(id + ":" + counter)` has at least `bits` leading zero bits. With `NAZR_POW_BITS=0` any counter passes. The difficulty is the one in the signed challenge, so a client cannot lower it.
 3. **Report.** The frame posts `{challenge, pow, components, clientHash}` to `POST /widget/report`. nazr verifies the challenge, checks the proof-of-work, classifies the frame's own request, stores the report and answers with a verdict.
 4. **Token.** Only a `pass` carries a token, and so does an `interactive` verdict from the [interactive step](#interactive-step).
@@ -154,7 +154,7 @@ A token earned through the interactive step has `"verdict": "interactive"` and a
 
 The public keys are at `GET /widget/v1/jwks.json`. Verifying locally needs no secret and no round trip, but it cannot detect replay: the token stays valid until `exp`. Use siteverify when single use matters.
 
-Check the signature (ES256), `exp`, `aud` equal to your key's id, `hostname` equal to your site's origin, and that `verdict` is `pass` (or `interactive` if you accept the interactive step; see below). Cache the JWKS (the response is `Cache-Control: public, max-age=3600`) and refetch it once when a token carries an unknown `kid`: nazr publishes a new signing key right after `nazr signing rotate`, and the previous key stays published for 24 hours.
+Check the signature (ES256), `exp`, `aud` equal to your key's id, `hostname` equal to your site's origin, and that `verdict` is `pass` (or `interactive` if you accept the interactive step; see below). Cache the JWKS (the response is `Cache-Control: public, max-age=3600`) and refetch it once when a token carries an unknown `kid`: `nazr signing rotate` publishes the new signing key at once but only starts signing with it an hour later (the JWKS cache time), and the previous key stays published for 24 hours after that.
 
 Node, with `jose`:
 
@@ -246,7 +246,7 @@ An abandoned interactive challenge is not cancelled. The offer stays redeemable 
 
 ### After a failure
 
-`interactive_failed` and `invalid` leave the box in its failed state ("Verification failed"); the frame also answers `invalid` on its own once the interactive challenge expires before the click. Nothing retries by itself. Call `window.__nazrWidget.reset()` from `data-error-callback` (here `data-error-callback="onNazrError"`) to start a fresh passive run with a new challenge:
+`interactive_failed` and `invalid` leave the box in its failed state ("Verification failed"); the frame also answers `invalid` on its own once the interactive challenge expires before the click. It times this from the offer's `ttl_ms` (the time left by nazr's clock), not from its own clock, so a visitor whose clock is wrong is not cut short, and it stops the interactive proof-of-work worker at that moment. Nothing retries by itself. Call `window.__nazrWidget.reset()` from `data-error-callback` (here `data-error-callback="onNazrError"`) to start a fresh passive run with a new challenge:
 
 ```js
 function onNazrError(reason) {
@@ -320,7 +320,7 @@ Set `cache_api_call: false` when you pass a nonce. By default the client caches 
 
 ## What the summary shows
 
-`GET /admin/keys/{id}/widget` (admin token) summarises the key's reports and nonce-carrying `/thumbmark` events over the last 30 days; see [protocol.md](protocol.md#admin-api). A report matches the most recent `/thumbmark` event with the same key and nonce within 10 minutes, in either direction, so arrival order does not matter. The correlation verdict is computed when you read the summary and is advisory: it is not part of the danger score. The summary also counts the token outcomes: `pass`, `inconclusive`, `pow_failed`, `verified` (tokens spent at siteverify) and `replayed` (reports whose spent token was presented again). `interactive` and `interactive_failed` count reports upgraded by the interactive step; an upgraded report leaves the `inconclusive` count.
+`GET /admin/keys/{id}/widget` (admin token) summarises the key's reports and nonce-carrying `/thumbmark` events over the last 30 days; see [protocol.md](protocol.md#admin-api). A report matches the most recent `/thumbmark` event with the same key and nonce within 10 minutes, in either direction, so arrival order does not matter. The correlation verdict is computed when you read the summary and is advisory: it is not part of the danger score. The summary also counts the token outcomes: `pass`, `inconclusive`, `pow_failed`, `verified` (tokens spent at siteverify) and `replayed` (reports whose spent token was presented again). `interactive` and `interactive_failed` count reports upgraded by the interactive step; an upgraded report leaves the `inconclusive` count. `interaction_signals` breaks the `interactive_failed` reports down by the [interaction rules](signals.md#interaction-rules) that fired, for tuning; it is `{}` when there are none.
 
 For a matched pair the summary compares the client IP hash, the raw JA4 string and the raw `User-Agent` string. `ja4_unknown` counts matched reports where either side has no JA4 (every request in `plain` mode). A nonce reused across many reports yields many rows, each matched independently.
 
@@ -340,7 +340,7 @@ The server computes a `thumbmark` for each widget report with the frame client's
 
 ## Trust boundary and deployment
 
-- **Signing keys.** The server needs a signing key to serve frames, report and verify. `nazr serve` creates one on first start (guarded by a database advisory lock, so replicas do not race) and each replica reloads the set every 60 seconds. Rotate with `nazr signing rotate`, which prints the new `kid`; `nazr signing list` shows `KID`, `CREATED` and `RETIRED`. A retired key stays published in the JWKS and usable for challenges and verification for 24 hours, so tokens and open frames survive a rotation.
+- **Signing keys.** The server needs a signing key to serve frames, report and verify. `nazr serve` creates one on first start (guarded by a database advisory lock, so replicas do not race) and each replica reloads the set every 60 seconds. Rotate with `nazr signing rotate`, which prints `<kid> activates at <time>`; `nazr signing list` shows `KID`, `CREATED`, `ACTIVATES` and `RETIRED`. Rotation takes effect after one hour, the JWKS cache time: the new key is in the JWKS from the start, so consumers that cache the JWKS hold it before its first token, while the old key keeps signing until the hour is up. The old key then retires and stays published in the JWKS and usable for challenges and verification for 24 hours, so tokens and open frames survive a rotation.
 - **Plaintext in Postgres.** The signing keys' private halves and HMAC secrets are stored unencrypted in the database, alongside the API-key hashes. Whoever can read the database can mint tokens and challenges. Restrict database access and backups accordingly. Verify secrets, by contrast, are stored as SHA-256 hashes.
 - **The frame decides.** The verdict comes from the frame's own connection and the report it posts; the loader and your page only relay a token. A hostile page script can drop or replace the loader, but it cannot obtain a token for a visit the frame did not pass, and a token is single use at siteverify.
 

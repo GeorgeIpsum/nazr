@@ -90,6 +90,14 @@ Host page (consumer origin)                     nazr origin
   challenge id and the primary key (section 3.3).
 - The frame's CSP gains `worker-src 'self'` for the proof-of-work worker.
 
+> **Amendment, 2026-10-31.** The payload gains `key`, the id of the API key
+> the frame was served for, placed after `origin` (and before the Phase 2b
+> `stage`). `/widget/report` and `/widget/interact` answer `invalid` when a
+> challenge's `key` is present and differs from the authenticating key, so a
+> challenge minted for one key cannot be redeemed under another. A challenge
+> without `key` (minted before this change) is still accepted; it expires
+> within its 10-minute window.
+
 ### 3.2 Proof-of-work
 
 - Hashcash. The frame finds a decimal counter `c` such that

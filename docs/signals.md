@@ -119,11 +119,11 @@ The widget's [interactive step](widget.md#interactive-step) scores a small trace
 | `too_fast` | yes | `click_ms - shown_ms` is under 300 |
 | `too_slow` | yes | `click_ms - shown_ms` is over 600000 (ten minutes) |
 | `hidden_document` | yes | `visible` is false: the document was hidden at the click |
-| `no_pointer_path` | yes | a mouse or pen click with fewer than 3 pointer moves |
+| `no_pointer_path` | yes | a mouse or pen click with no pointer move over the frame (`moves` is 0): a teleported click |
 | `straight_path` | no | a mouse or pen click with `straightness` of at least 0.98 |
 | `malformed_trace` | yes | a field is outside its bounds, or `input` or `pointer_type` is not a listed value |
 
-`straight_path` is advisory: it is recorded but never fails the attempt, because the frame observes only moves over its own box, a path too short to judge. Touch and keyboard activations skip `no_pointer_path` and `straight_path`: a tap has no path and a keyboard user has no pointer. The thresholds are constants in the package, not configuration.
+`straight_path` is advisory: it is recorded but never fails the attempt, because the frame observes only moves over its own box, a path too short to judge. For the same reason `no_pointer_path` asks for a single move: a real cursor can cross into the small box and reach the button in one or two. The admin widget summary counts how often each rule fired on failed attempts (`interaction_signals`). Touch and keyboard activations skip `no_pointer_path` and `straight_path`: a tap has no path and a keyboard user has no pointer. The thresholds are constants in the package, not configuration.
 
 Trace bounds: `shown_ms` and `click_ms` are 0 to 2^31; `moves` is 0 to 200; `path_px` is finite and 0 to 1,000,000; `straightness` is finite and 0 to 1; `input` is `pointer` or `keyboard`; `pointer_type` is `mouse`, `touch`, `pen` or empty; strings are at most 16 characters. Any non-advisory rule that fires gives `interactive_failed`.
 

@@ -152,10 +152,12 @@ nazr keys create --label site --origins https://example.com --rate 120
 nazr keys list
 nazr keys revoke <id>
 nazr keys secret-rotate <id>  # new siteverify secret, printed once
-nazr signing rotate           # new widget signing key; prints its kid
-nazr signing list             # KID, CREATED, RETIRED
+nazr signing rotate           # new widget signing key; prints "<kid> activates at <time>"
+nazr signing list             # KID, CREATED, ACTIVATES, RETIRED
 nazr lists refresh            # force-fetch all IP lists and print a table
 nazr version
 ```
+
+`signing rotate` takes effect after one hour, the JWKS cache time: the new key is published in the JWKS at once, so consumers fetch it during that hour, while the old key keeps signing until the hour is up and then stays valid for verification for the 24 h grace after.
 
 `keys create` prints three lines: the API key, the siteverify secret and an `id  prefix  label` line. Only the first line is the API key, so scripts take it with `head -1`. Both secrets are shown once.
