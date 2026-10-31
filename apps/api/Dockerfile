@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # The build stage runs on the builder's own platform and cross-compiles (pure
 # Go, CGO off), so multi-arch release builds do not run the compiler under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
 ARG VERSION=dev
 ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOFLAGS=-mod=readonly GOWORK=off
