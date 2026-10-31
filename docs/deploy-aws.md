@@ -92,7 +92,7 @@ aws ecs execute-command --region <region> --cluster <cluster> \
   --container nazr --interactive --command "/nazr keys create --label first"
 ```
 
-The image is distroless and has no shell, but ECS Exec runs the given command directly, which works for the static `/nazr` binary; `--interactive` is required by the CLI even for a single command. The command inherits the task's environment (including `NAZR_DATABASE_URL`). To pick a specific task, list them with `aws ecs list-tasks --cluster <cluster> --service-name <service>`. Further keys can be managed through `/admin/keys` with the admin token:
+The image is distroless and has no shell, but ECS Exec runs the given command directly, which works for the static `/nazr` binary; `--interactive` is required by the CLI even for a single command. `keys create` prints the API key, then the key's siteverify secret, then an `id  prefix  label` line; only the first line is the API key, and both are shown once. The command inherits the task's environment (including `NAZR_DATABASE_URL`). To pick a specific task, list them with `aws ecs list-tasks --cluster <cluster> --service-name <service>`. Further keys can be managed through `/admin/keys` with the admin token:
 
 ```bash
 aws secretsmanager get-secret-value --secret-id "$(terraform output -raw admin_token_secret_arn)" \

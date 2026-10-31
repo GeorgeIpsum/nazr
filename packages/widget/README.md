@@ -3,13 +3,22 @@
 The browser side of the nazr widget. A host page embeds the loader from the nazr origin:
 
 ```html
-<script src="https://nazr.example/widget/v1/loader.js" data-api-key="nzr_..." data-nonce="..."></script>
+<script src="https://nazr.example/widget/v1/loader.js" data-api-key="nzr_..."></script>
 ```
 
 The loader mounts a hidden, cross-origin iframe inside a closed shadow root and exposes
-`window.__nazrWidget = { nonce, ready }`. `data-nonce` is optional; without it the loader
-generates one with `crypto.randomUUID()`. The frame computes a thumbmark with `@nazr/thumbmark`
-and POSTs `{ challenge, pow, components, clientHash }` to `/widget/report` on the nazr origin.
+`window.__nazrWidget = { ready, nonce, token, reset }`. The nonce is the server-issued challenge
+id, set asynchronously: `await window.__nazrWidget.ready` (it resolves with `{ nonce }`) before
+reading it. `data-nonce` is ignored with a console warning. The frame computes a thumbmark with
+`@nazr/thumbmark`, solves the proof-of-work in a worker and POSTs
+`{ challenge, pow, components, clientHash }` to `/widget/report` on the nazr origin; on a `pass`
+the server answers with a signed token.
+
+When the script tag sits inside a `<form>`, the loader keeps a hidden input (name `nazr-token`, or
+`data-response-field-name`) in sync with the token. `data-callback`, `data-error-callback` and
+`data-expired-callback` name global functions called with the token, the failure reason, and
+nothing. When a token expires the loader clears the input, calls the expired callback and calls
+`reset()`, which fetches a fresh challenge and token.
 
 ## Build outputs
 
@@ -38,4 +47,4 @@ The frame stays silent when the `k` query parameter or `data-challenge` is missi
 
 ## Embedding and docs
 
-The embedding guide, including correlating the page call with `nonce` and what the server-side summary detects, is [docs/widget.md](../../docs/widget.md). A runnable host page is `apps/demo/widget-host.html`. The package is private and consumed by `apps/api`: its build step (`sync-widget`) copies `dist/` into the Go embed directory, and `NAZR_WIDGET_DIR` serves a directory from disk instead.
+The embedding guide, including verifying the token, correlating the page call with `nonce` and what the server-side summary detects, is [docs/widget.md](../../docs/widget.md). A runnable host page is `apps/demo/widget-host.html`. The package is private and consumed by `apps/api`: its build step (`sync-widget`) copies `dist/` into the Go embed directory, and `NAZR_WIDGET_DIR` serves a directory from disk instead.

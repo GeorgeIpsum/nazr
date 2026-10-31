@@ -124,6 +124,12 @@ Host page (consumer origin)                     nazr origin
 
 ### 3.3 Report endpoint (`POST /widget/report`)
 
+> Phase 2a changed this route: the body is `{challenge, pow, components,
+> clientHash}` instead of `nonce`, the response is `200 {verdict, token?}`
+> instead of `204`, and the server thumbmark now uses the frame client's
+> default stabilization instead of an unfiltered merge. See
+> [the Phase 2a spec](2026-10-30-widget-phase2a-design.md#33-report-and-passive-verdict-post-widgetreport).
+
 - Goes through `auth.Middleware` like `/thumbmark`: key format, lookup,
   revocation, per-key rate limit (`rate_limit_per_minute` now covers page
   calls and widget reports together) and key touch all apply unchanged.

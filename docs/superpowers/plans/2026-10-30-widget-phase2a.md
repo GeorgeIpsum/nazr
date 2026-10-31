@@ -140,7 +140,7 @@ ALTER TABLE widget_reports DROP COLUMN pow_ok, DROP COLUMN verdict, DROP COLUMN 
     DROP COLUMN signals, DROP COLUMN token_issued_at, DROP COLUMN verified_at, DROP COLUMN replay_count;
 ```
 
-  `EnsureSigningKey`: `BEGIN; SELECT pg_advisory_xact_lock(7958769296894547822); SELECT active; INSERT if none; COMMIT` (the constant is `0x6e617a727369676e`, "nazrsign"). Detect `23505` with `errors.As(err, *pgconn.PgError)`.
+  `EnsureSigningKey`: `BEGIN; SELECT pg_advisory_xact_lock(7953773048894154606); SELECT active; INSERT if none; COMMIT` (the constant is `0x6e617a727369676e`, "nazrsign"). Detect `23505` with `errors.As(err, *pgconn.PgError)`.
 - [ ] **Step 4: Run** → PASS; `NAZR_TEST_REQUIRE_DB=1 go test ./internal/store/...` green.
 - [ ] **Step 5: Commit** `feat(api): signing keys, key secrets and widget verdict columns`.
 
