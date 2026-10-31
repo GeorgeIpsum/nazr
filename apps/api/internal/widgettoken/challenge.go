@@ -29,7 +29,12 @@ type Challenge struct {
 	Bits    int    `json:"bits"`
 	Kid     string `json:"kid"`
 	Origin  string `json:"origin"`
+	Stage   string `json:"stage,omitempty"`
 }
+
+// StageInteractive marks the second challenge minted for an id, solved after
+// the interactive step at a higher difficulty.
+const StageInteractive = "interactive"
 
 // MintChallenge returns "<payload>.<mac>", both base64url without padding.
 // The payload is the JSON of c; the MAC is HMAC-SHA256 under secret over the

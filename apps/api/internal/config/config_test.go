@@ -241,11 +241,47 @@ func TestWidgetChallengeConfig(t *testing.T) {
 			t.Errorf("%s=%s: Validate = %v, want error naming the variable", tc.name, tc.val, err)
 		}
 	}
-	for _, ok := range []map[string]string{{"NAZR_POW_BITS": "0"}, {"NAZR_POW_BITS": "32"}, {"NAZR_WIDGET_PASS_MAX_DANGER": "5"},
+	for _, ok := range []map[string]string{{"NAZR_POW_BITS": "0"}, {"NAZR_POW_BITS": "32", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "0"}, {"NAZR_WIDGET_PASS_MAX_DANGER": "5"},
 		{"NAZR_WIDGET_TOKEN_TTL": "1h"}} {
 		c, _ := Load(lookupFrom(ok))
 		if err := c.Validate(); err != nil {
 			t.Errorf("%v should validate: %v", ok, err)
 		}
+	}
+}
+
+func TestWidgetInteractiveConfig(t *testing.T) {
+	c, err := Load(lookupFrom(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WidgetInteractive || c.WidgetInteractiveExtraBits != 4 {
+		t.Errorf("defaults = %v %d, want true 4", c.WidgetInteractive, c.WidgetInteractiveExtraBits)
+	}
+	r := c.Redacted()
+	for k, want := range map[string]string{"NAZR_WIDGET_INTERACTIVE": "true", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "4"} {
+		if got, ok := r[k]; !ok || got != want {
+			t.Errorf("Redacted[%s] = %q (present %v), want %q", k, got, ok, want)
+		}
+	}
+	c, err = Load(lookupFrom(map[string]string{"NAZR_WIDGET_INTERACTIVE": "false"}))
+	if err != nil || c.WidgetInteractive {
+		t.Errorf("NAZR_WIDGET_INTERACTIVE=false: %v, %v", c.WidgetInteractive, err)
+	}
+	for _, env := range []map[string]string{
+		{"NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "-1"},
+		{"NAZR_POW_BITS": "30", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "4"},
+	} {
+		c, err := Load(lookupFrom(env))
+		if err != nil {
+			t.Fatalf("%v load: %v", env, err)
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS") {
+			t.Errorf("%v: Validate = %v, want error naming the variable", env, err)
+		}
+	}
+	c, _ = Load(lookupFrom(map[string]string{"NAZR_POW_BITS": "28", "NAZR_WIDGET_INTERACTIVE_EXTRA_BITS": "4"}))
+	if err := c.Validate(); err != nil {
+		t.Errorf("28+4 should validate: %v", err)
 	}
 }

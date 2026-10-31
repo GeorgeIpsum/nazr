@@ -1,6 +1,8 @@
 package widgettoken
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -93,5 +95,42 @@ func TestEmbeddingOrigin(t *testing.T) {
 		if got := EmbeddingOrigin(in); got != want {
 			t.Errorf("EmbeddingOrigin(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestChallengeStage(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	secret := bytes.Repeat([]byte{1}, 32)
+	lookup := func(string) ([]byte, bool) { return secret, true }
+
+	c := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: now.Unix() + 600, Bits: 22, Kid: "k1", Origin: "https://shop.example", Stage: StageInteractive}
+	got, err := ParseChallenge(MintChallenge(secret, c), lookup, now)
+	if err != nil || got != c || got.Stage != "interactive" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+
+	// A stage-less challenge keeps the 2a wire format byte for byte.
+	plain := Challenge{ID: "01HXABCDEFGHJKMNPQRSTVWXYZ", Expires: 1_700_000_600, Bits: 18, Kid: "k1", Origin: "https://shop.example"}
+	s := MintChallenge(secret, plain)
+	payload, _, _ := strings.Cut(s, ".")
+	pb, err := enc.DecodeString(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantJSON = `{"id":"01HXABCDEFGHJKMNPQRSTVWXYZ","exp":1700000600,"bits":18,"kid":"k1","origin":"https://shop.example"}`
+	if string(pb) != wantJSON {
+		t.Fatalf("payload = %s, want %s", pb, wantJSON)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(pb, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := m["stage"]; has {
+		t.Fatalf("stage-less payload has a stage key: %s", pb)
+	}
+	// Generated once with a throwaway print of MintChallenge, then pinned.
+	const wantMinted = "eyJpZCI6IjAxSFhBQkNERUZHSEpLTU5QUVJTVFZXWFlaIiwiZXhwIjoxNzAwMDAwNjAwLCJiaXRzIjoxOCwia2lkIjoiazEiLCJvcmlnaW4iOiJodHRwczovL3Nob3AuZXhhbXBsZSJ9.YMDbtcznQCCKIx1otSlxH8tmWnE9IdR9E6FYLxV8piA"
+	if s != wantMinted {
+		t.Fatalf("minted = %s", s)
 	}
 }

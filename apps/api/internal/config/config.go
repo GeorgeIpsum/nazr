@@ -75,6 +75,9 @@ type Config struct {
 	WidgetTokenTTL      time.Duration `env:"NAZR_WIDGET_TOKEN_TTL" envDefault:"5m"`
 	WidgetIssuer        string        `env:"NAZR_WIDGET_ISSUER"`
 	WidgetPassMaxDanger int           `env:"NAZR_WIDGET_PASS_MAX_DANGER" envDefault:"2"`
+
+	WidgetInteractive          bool `env:"NAZR_WIDGET_INTERACTIVE" envDefault:"true"`
+	WidgetInteractiveExtraBits int  `env:"NAZR_WIDGET_INTERACTIVE_EXTRA_BITS" envDefault:"4"` // added to NAZR_POW_BITS for the interactive stage
 }
 
 // AddrOff is the NAZR_HTTP_ADDR / NAZR_METRICS_ADDR value (case-insensitive)
@@ -163,6 +166,11 @@ func (c Config) Validate() error {
 	}
 	if c.WidgetPassMaxDanger < 0 || c.WidgetPassMaxDanger > 5 {
 		errs = append(errs, fmt.Errorf("NAZR_WIDGET_PASS_MAX_DANGER: %d is outside [0,5]", c.WidgetPassMaxDanger))
+	}
+	if c.WidgetInteractiveExtraBits < 0 {
+		errs = append(errs, fmt.Errorf("NAZR_WIDGET_INTERACTIVE_EXTRA_BITS: %d must be at least 0", c.WidgetInteractiveExtraBits))
+	} else if c.PowBits+c.WidgetInteractiveExtraBits > 32 {
+		errs = append(errs, fmt.Errorf("NAZR_WIDGET_INTERACTIVE_EXTRA_BITS: NAZR_POW_BITS + extra bits (%d) exceeds 32", c.PowBits+c.WidgetInteractiveExtraBits))
 	}
 	return errors.Join(errs...)
 }
