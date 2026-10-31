@@ -328,7 +328,7 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	scored := s.Cfg.CanvasProbeScoring && body.canvasProbe != ""
 	if scored {
 		dominant, established, err := s.Store.DominantCanvasProbe(ctx, key.ID, cohort,
-			time.Now().Add(-store.ProbeWindowDays*24*time.Hour), store.ProbeNMin)
+			s.Now().Add(-store.ProbeWindowDays*24*time.Hour), store.ProbeNMin)
 		if err != nil {
 			s.Logger.Error("server: dominant canvas probe failed", "err", err, "request_id", requestIDFrom(ctx))
 			established = false

@@ -982,6 +982,23 @@ func TestCanvasProbeScoringOn(t *testing.T) {
 	}
 }
 
+func TestCanvasProbeUsesInjectedClock(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, s *fakeStore) {
+		c.CanvasProbeScoring = true
+		s.domValue, s.domEstablished = "ffffff", true
+	})
+	e.now = testNow.Add(400 * 24 * time.Hour)
+	body := stockBody(t)
+	body["canvas_probe"] = "a1b2c3"
+	if w := e.do(thumbmarkReq(t, e.key, marshal(t, body))); w.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", w.Code, w.Body.String())
+	}
+	want := e.now.Add(-store.ProbeWindowDays * 24 * time.Hour)
+	if !e.store.domSince.Equal(want) {
+		t.Fatalf("window start %v, want %v (injected clock)", e.store.domSince, want)
+	}
+}
+
 func TestProbeVerdict(t *testing.T) {
 	for _, c := range []struct {
 		visitors, distinct int64
@@ -1003,16 +1020,25 @@ func TestProbeVerdict(t *testing.T) {
 	}
 }
 
+const probeKeyID = "11111111-2222-3333-4444-555555555555"
+
 func TestAdminCanvasProbeReport(t *testing.T) {
 	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
 	req := func(token string) *http.Request {
-		r := httptest.NewRequest("GET", "/admin/keys/key-1/canvas-probe", nil)
+		r := httptest.NewRequest("GET", "/admin/keys/"+probeKeyID+"/canvas-probe", nil)
 		if token != "" {
 			r.Header.Set("Authorization", "Bearer "+token)
 		}
 		return r
 	}
 	wantError(t, e.do(req("")), 403, "unauthorized")
+	e.store.entCalls = 0
+	bad := httptest.NewRequest("GET", "/admin/keys/not-a-uuid/canvas-probe", nil)
+	bad.Header.Set("Authorization", "Bearer s3cret")
+	wantError(t, e.do(bad), 404, "not_found")
+	if e.store.entCalls != 0 {
+		t.Fatalf("store reached %d times for malformed id", e.store.entCalls)
+	}
 
 	e.store.entVisitors, e.store.entDistinct = 100, 3
 	w := e.do(req("s3cret"))
@@ -1027,7 +1053,7 @@ func TestAdminCanvasProbeReport(t *testing.T) {
 		got["ratio"] != 0.03 || got["verdict"] != "too_low" {
 		t.Fatalf("body %v", got)
 	}
-	if e.store.entKeyID != "key-1" || !e.store.entSince.Equal(testNow.Add(-30*24*time.Hour)) {
+	if e.store.entKeyID != probeKeyID || !e.store.entSince.Equal(testNow.Add(-30*24*time.Hour)) {
 		t.Fatalf("args %q %v", e.store.entKeyID, e.store.entSince)
 	}
 

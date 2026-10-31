@@ -178,6 +178,10 @@ func probeVerdict(visitors, distinct int64) (ratio float64, verdict string) {
 // handleCanvasProbeReport reports how well a key's canvas probe discriminates
 // visitors. An unknown key simply has no events.
 func (s *server) handleCanvasProbeReport(w http.ResponseWriter, r *http.Request) {
+	if !store.ValidUUID(r.PathValue("id")) {
+		writeError(w, http.StatusNotFound, codeNotFound, "no such key")
+		return
+	}
 	since := s.Now().Add(-store.ProbeWindowDays * 24 * time.Hour)
 	visitors, distinct, err := s.Store.CanvasProbeEntropy(r.Context(), r.PathValue("id"), since)
 	if err != nil {

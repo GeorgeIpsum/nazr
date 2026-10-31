@@ -120,6 +120,9 @@ func (s *Store) TouchKey(ctx context.Context, id string) error {
 	return nil
 }
 
+// ValidUUID reports whether id is a canonical UUID string.
+func ValidUUID(id string) bool { return validUUID(id) }
+
 func validUUID(id string) bool {
 	if len(id) != 36 {
 		return false

@@ -55,7 +55,9 @@ type fakeStore struct {
 	domValue       string
 	domEstablished bool
 	domErr         error
+	domSince       time.Time
 
+	entCalls                 int
 	entVisitors, entDistinct int64
 	entErr                   error
 	entKeyID                 string
@@ -542,10 +544,11 @@ func filterLikeClient(server, client map[string]any, opts fingerprint.Options) m
 
 var errBoom = errors.New("boom")
 
-func (f *fakeStore) DominantCanvasProbe(_ context.Context, _, _ string, _ time.Time, _ int) (string, bool, error) {
+func (f *fakeStore) DominantCanvasProbe(_ context.Context, _, _ string, since time.Time, _ int) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.domCalls++
+	f.domSince = since
 	if f.domErr != nil {
 		return "", false, f.domErr
 	}
@@ -556,6 +559,7 @@ func (f *fakeStore) CanvasProbeEntropy(_ context.Context, keyID string, since ti
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.entKeyID, f.entSince = keyID, since
+	f.entCalls++
 	return f.entVisitors, f.entDistinct, f.entErr
 }
 
