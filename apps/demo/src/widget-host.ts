@@ -8,8 +8,15 @@ interface HostDone {
 
 declare global {
   interface Window {
-    __nazrWidget?: { nonce: string; ready: Promise<{ nonce: string }> };
+    __nazrWidget?: {
+      ready: Promise<{ nonce: string }>;
+      nonce?: string;
+      token?: string;
+      reset(): void;
+    };
     __nazrHostDone?: HostDone;
+    __nazrToken?: string;
+    __nazrOnToken?: (t: string) => void;
   }
 }
 
@@ -18,15 +25,22 @@ const apiKey = q.get("key") ?? "";
 const endpoint = (q.get("endpoint") ?? "").replace(/\/+$/, "");
 const status = document.getElementById("status") as HTMLElement;
 
+// Defined before the loader runs: data-callback names this global.
+window.__nazrOnToken = (t) => {
+  window.__nazrToken = t;
+};
+
 function loadWidget(): Promise<void> {
   return new Promise((resolve, reject) => {
     // A classic script: the loader reads document.currentScript synchronously.
     const s = document.createElement("script");
     s.src = `${endpoint}/widget/v1/loader.js`;
     s.dataset.apiKey = apiKey;
+    s.dataset.callback = "__nazrOnToken";
     s.onload = () => resolve();
     s.onerror = () => reject(new Error(`failed to load ${s.src}`));
-    document.head.appendChild(s);
+    // Inside the form, so the loader's closest("form") gets the hidden input.
+    (document.getElementById("nazr-form") as HTMLFormElement).appendChild(s);
   });
 }
 

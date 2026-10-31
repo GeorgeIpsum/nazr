@@ -33,6 +33,9 @@ importers:
       '@playwright/test':
         specifier: ^1.57.0
         version: 1.64.1
+      jose:
+        specifier: ^6.2.14
+        version: 6.2.14
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -2220,6 +2223,9 @@ packages:
 
   jose@5.10.0:
     resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+
+  jose@6.2.14:
+    resolution: {integrity: sha512-3JasLuki1NRLQvY4wCoC37KZk4qxoBx2k2aFqLxT84IezqW0bkJKnNtxnZj/Fu1xsQivoc/lytxaRHJoGLjJ1A==}
 
   js-string-escape@1.0.1:
     resolution: {integrity: sha512-Smw4xcfIQ5LVjAOuJCvN/zIodzA/BBSsluuoSykP+lUvScIi4U6RJLfwHet5cxFnCswUjISV8oAXaqaJDY3chg==}
@@ -5457,6 +5463,8 @@ snapshots:
       - ts-node
 
   jose@5.10.0: {}
+
+  jose@6.2.14: {}
 
   js-string-escape@1.0.1: {}
 
