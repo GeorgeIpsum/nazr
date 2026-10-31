@@ -4,22 +4,39 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: gomod
     directory: /apps/api
     schedule:
       interval: weekly
+    groups:
+      gomod:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: docker
     directory: /apps/api
     schedule:
       interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /deploy/compose
     schedule:
       interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: terraform
     directories:
       - /deploy/terraform/aws
@@ -27,3 +44,6 @@ updates:
       - /deploy/terraform/aws/examples/*
     schedule:
       interval: weekly
+    groups:
+      terraform:
+        patterns: ["*"]
