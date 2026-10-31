@@ -30,6 +30,8 @@ import (
 	"nazr/api/internal/store"
 	"nazr/api/internal/version"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgetassets"
+	"nazr/api/internal/widgettoken"
 )
 
 const (
@@ -129,6 +131,19 @@ func runServer(cfg config.Config, logw io.Writer) error {
 		}
 	}
 
+	sk, err := st.EnsureSigningKey(ctx, func() (store.SigningKey, error) { return widgettoken.Generate(time.Now()) })
+	if err != nil {
+		return fmt.Errorf("signing key: %w", err)
+	}
+	ring := widgettoken.NewKeyring(func(ctx context.Context) ([]store.SigningKey, error) {
+		return st.ListSigningKeys(ctx, time.Now().Add(-widgettoken.SigningKeyGrace))
+	})
+	if err := ring.Refresh(ctx); err != nil {
+		return fmt.Errorf("signing keyring: %w", err)
+	}
+	go ring.Run(ctx, widgettoken.SigningKeyRefresh)
+	logger.Info("widget signing key ready", "kid", sk.Kid)
+
 	intel, err := newIntel(cfg, logger)
 	if err != nil {
 		return err
@@ -147,10 +162,24 @@ func runServer(cfg config.Config, logw io.Writer) error {
 	keyCache := auth.NewKeyCache(60*time.Second, st.Redis())
 	resolver := &visitor.Resolver{Repo: st, Window: cfg.VisitorMatchWindow, Now: time.Now, NewID: newULID}
 
+	widget, err := widgetassets.Open(cfg.WidgetDir)
+	if err != nil {
+		return fmt.Errorf("widget assets: %w", err)
+	}
+	if !widgetassets.Present(widget) {
+		if cfg.WidgetDir != "" {
+			logger.Warn("widget assets not found in NAZR_WIDGET_DIR; widget routes disabled", "widget_dir", cfg.WidgetDir)
+		} else {
+			logger.Info("widget assets not embedded; widget routes disabled")
+		}
+		widget = nil
+	}
+
 	handler := server.New(server.Deps{
 		Cfg: cfg, Store: st, Intel: intel, Resolver: resolver, Limiter: limiter,
 		KeyCache: keyCache, Logger: logger, Version: version.Version,
-		Now: time.Now, Rand: rand.Float64,
+		Now: time.Now, Rand: rand.Float64, WidgetAssets: widget,
+		Signing: ring,
 	})
 
 	tlsCfg, acme, err := certs.Setup(ctx, cfg, logger)
@@ -298,6 +327,9 @@ func retention(ctx context.Context, st *store.Store, cfg config.Config, logger *
 			logger.Error("retention prune failed", "err", err)
 		} else if n > 0 {
 			logger.Info("retention pruned rows", "rows", n)
+		}
+		if _, err := st.DeleteRetiredSigningKeys(ctx, now.Add(-widgettoken.SigningKeyGrace)); err != nil && ctx.Err() == nil {
+			logger.Warn("retired signing key cleanup failed", "err", err)
 		}
 	}
 	prune()

@@ -210,3 +210,42 @@ func TestHTTPAddrOff(t *testing.T) {
 		t.Errorf("empty values = %q, %q, want the defaults", c.HTTPAddr, c.MetricsAddr)
 	}
 }
+
+func TestWidgetChallengeConfig(t *testing.T) {
+	c, err := Load(lookupFrom(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PowBits != 18 || c.WidgetTokenTTL != 5*time.Minute || c.WidgetIssuer != "" || c.WidgetPassMaxDanger != 2 {
+		t.Errorf("defaults = %d %v %q %d", c.PowBits, c.WidgetTokenTTL, c.WidgetIssuer, c.WidgetPassMaxDanger)
+	}
+	r := c.Redacted()
+	for k, want := range map[string]string{
+		"NAZR_POW_BITS": "18", "NAZR_WIDGET_TOKEN_TTL": "5m0s", "NAZR_WIDGET_ISSUER": "", "NAZR_WIDGET_PASS_MAX_DANGER": "2",
+	} {
+		if got, ok := r[k]; !ok || got != want {
+			t.Errorf("Redacted[%s] = %q (present %v), want %q", k, got, ok, want)
+		}
+	}
+	for _, tc := range []struct{ name, val string }{
+		{"NAZR_POW_BITS", "33"}, {"NAZR_POW_BITS", "-1"},
+		{"NAZR_WIDGET_PASS_MAX_DANGER", "6"}, {"NAZR_WIDGET_PASS_MAX_DANGER", "-1"},
+		{"NAZR_WIDGET_TOKEN_TTL", "0"}, {"NAZR_WIDGET_TOKEN_TTL", "-1m"}, {"NAZR_WIDGET_TOKEN_TTL", "2h"},
+		{"NAZR_WIDGET_TOKEN_TTL", "1h0m1s"},
+	} {
+		c, err := Load(lookupFrom(map[string]string{tc.name: tc.val}))
+		if err != nil {
+			t.Fatalf("%s=%s load: %v", tc.name, tc.val, err)
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.name) {
+			t.Errorf("%s=%s: Validate = %v, want error naming the variable", tc.name, tc.val, err)
+		}
+	}
+	for _, ok := range []map[string]string{{"NAZR_POW_BITS": "0"}, {"NAZR_POW_BITS": "32"}, {"NAZR_WIDGET_PASS_MAX_DANGER": "5"},
+		{"NAZR_WIDGET_TOKEN_TTL": "1h"}} {
+		c, _ := Load(lookupFrom(ok))
+		if err := c.Validate(); err != nil {
+			t.Errorf("%v should validate: %v", ok, err)
+		}
+	}
+}

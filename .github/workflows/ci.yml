@@ -135,15 +135,25 @@ jobs:
           cache-dependency-path: apps/api/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nazr/thumbmark build
+      - run: pnpm build --filter=@nazr/widget
       - run: pnpm --filter @nazr/demo build
       - run: pnpm --filter @nazr/api build
       - run: pnpm --filter @nazr/demo exec playwright install --with-deps chromium
       - run: pnpm --filter @nazr/demo test:e2e
+      # Only the obfuscation spec: the package's other e2e specs call a live
+      # third-party API.
+      - name: Obfuscated UMD bundle
+        working-directory: packages/thumbmark
+        run: |
+          bash scripts/make-testpage.sh
+          pnpm exec playwright test e2e/obfuscated-umd.spec.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: e2e-test-results
-          path: apps/demo/test-results
+          path: |
+            apps/demo/test-results
+            packages/thumbmark/test-results
           if-no-files-found: ignore
 
   terraform:

@@ -3,9 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "go build -ldflags \"-X nazr/api/internal/version.Version=$(git describe --tags --always)\" -o bin/nazr ./cmd/nazr",
+    "build": "node scripts/sync-widget.mjs && go build -ldflags \"-X nazr/api/internal/version.Version=$(git describe --tags --always)\" -o bin/nazr ./cmd/nazr",
+    "sync-widget": "node scripts/sync-widget.mjs",
     "test": "go test ./...",
     "lint": "test -z \"$(gofmt -l .)\" && go vet ./... && go tool staticcheck ./...",
     "typecheck": "go build ./..."
+  },
+  "devDependencies": {
+    "@nazr/widget": "workspace:*"
   }
 }

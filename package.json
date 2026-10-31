@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.27.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=26"
   },
   "scripts": {
     "build": "turbo run build",
@@ -15,7 +15,7 @@
     "smoke:compose": "bash deploy/compose/smoke.sh"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.2",
+    "@biomejs/biome": "^2.6.3",
     "turbo": "^2.11.10",
     "typescript": "^5.9.0"
   }

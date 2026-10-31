@@ -171,11 +171,26 @@ func (c *KeyCache) resolve(ctx context.Context, r KeyResolver, hash string) (*st
 	return k, nil
 }
 
+// MiddlewareOptions tunes MiddlewareOpts.
+type MiddlewareOptions struct {
+	// SkipOrigin disables the key's allowed_origins check. Key lookup,
+	// revocation, rate limiting and key touch still apply. It is for routes
+	// called from nazr's own origin (the widget iframe), where browsers send
+	// Origin on same-origin POSTs; origin scoping for the widget is enforced
+	// at the frame instead.
+	SkipOrigin bool
+}
+
 // Middleware authenticates requests by the x-api-key header, enforces origin
 // scoping and rate limits, and stores the key in the request context. If the
 // limiter errors (for example a Redis outage) the request is allowed and a
 // warning is logged: failing open is preferred over rejecting all traffic.
 func Middleware(r KeyResolver, l Limiter, defaultRate int, cache *KeyCache) func(http.Handler) http.Handler {
+	return MiddlewareOpts(r, l, defaultRate, cache, MiddlewareOptions{})
+}
+
+// MiddlewareOpts is Middleware with options.
+func MiddlewareOpts(r KeyResolver, l Limiter, defaultRate int, cache *KeyCache, o MiddlewareOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			ctx := req.Context()
@@ -203,7 +218,7 @@ func Middleware(r KeyResolver, l Limiter, defaultRate int, cache *KeyCache) func
 				WriteError(w, http.StatusForbidden, "key_revoked", "API key has been revoked")
 				return
 			}
-			if !OriginAllowed(req.Header.Get("Origin"), key.AllowedOrigins) {
+			if !o.SkipOrigin && !OriginAllowed(req.Header.Get("Origin"), key.AllowedOrigins) {
 				WriteError(w, http.StatusForbidden, "origin_not_allowed", "origin not allowed for this API key")
 				return
 			}

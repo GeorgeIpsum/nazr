@@ -15,7 +15,7 @@ Run from the repository root:
 pnpm install
 pnpm lint            # per-package linters (Biome, gofmt, go vet, staticcheck)
 pnpm lint:biome      # Biome across the whole repo
-pnpm typecheck
+pnpm typecheck       # builds dependency packages first, so it works on a fresh clone
 pnpm test
 pnpm build
 ```

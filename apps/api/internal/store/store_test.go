@@ -11,14 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/oklog/ulid/v2"
-	"github.com/pressly/goose/v3"
 	"github.com/testcontainers/testcontainers-go"
 	tcpg "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-
-	"nazr/api/migrations"
 )
 
 var (
@@ -111,31 +107,15 @@ func newUnmigrated(t *testing.T) *Store {
 
 func newID() string { return ulid.Make().String() }
 
-// latestMigration is the highest migration in migrations/.
-const latestMigration = 4
+// latestMigration is the highest migration in migrations/ (initial schema plus
+// the widget and widget-challenge migrations).
+const latestMigration = 3
 
-func TestVisitorCountBackfillAndIncrement(t *testing.T) {
-	s := newUnmigrated(t)
+func TestVisitorCountIncrement(t *testing.T) {
+	s := newStore(t)
 	ctx := context.Background()
-	db := stdlib.OpenDBFromPool(s.pool)
-	defer db.Close()
-	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.UpTo(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
 	var keyID string
 	if err := s.pool.QueryRow(ctx, `INSERT INTO api_keys (key_hash, prefix, label) VALUES ('h', 'pppppppp', 'l') RETURNING id::text`).Scan(&keyID); err != nil {
-		t.Fatal(err)
-	}
-	for range 3 {
-		if _, err := s.pool.Exec(ctx, `INSERT INTO visitors (id, api_key_id, first_seen, last_seen, request_count) VALUES ($1, $2::uuid, now(), now(), 0)`, newID(), keyID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	count := func() int64 {
@@ -145,8 +125,13 @@ func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 		}
 		return n
 	}
+	for range 3 {
+		if _, err := s.CreateVisitor(ctx, keyID, newID(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if n := count(); n != 3 {
-		t.Fatalf("backfilled visitor_count = %d, want 3", n)
+		t.Fatalf("visitor_count after 3 CreateVisitor = %d, want 3", n)
 	}
 	v := newID()
 	if _, err := s.CreateVisitor(ctx, keyID, v, time.Now()); err != nil {
@@ -163,6 +148,38 @@ func TestVisitorCountBackfillAndIncrement(t *testing.T) {
 	}
 	if _, total, err := s.RecordVisit(ctx, keyID, v, "tm", time.Now()); err != nil || total != 4 {
 		t.Fatalf("RecordVisit total = %d, err %v", total, err)
+	}
+}
+
+func TestMigrateSchema(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for _, c := range [][2]string{
+		{"events", "canvas_probe"}, {"events", "cohort"},
+		{"events", "ja3_hash"}, {"api_keys", "visitor_count"},
+		{"events", "nonce"},
+		{"widget_reports", "id"}, {"widget_reports", "api_key_id"}, {"widget_reports", "nonce"},
+		{"widget_reports", "thumbmark"}, {"widget_reports", "client_hash"}, {"widget_reports", "ip"},
+		{"widget_reports", "ip_hash"}, {"widget_reports", "ja4"}, {"widget_reports", "h2fp"},
+		{"widget_reports", "user_agent"}, {"widget_reports", "components"}, {"widget_reports", "created_at"},
+		{"widget_reports", "pow_ok"}, {"widget_reports", "verdict"}, {"widget_reports", "hostname"},
+		{"widget_reports", "classification"}, {"widget_reports", "signals"}, {"widget_reports", "token_issued_at"},
+		{"widget_reports", "verified_at"}, {"widget_reports", "replay_count"},
+		{"api_keys", "secret_hash"}, {"api_keys", "secret_prefix"},
+		{"signing_keys", "kid"}, {"signing_keys", "private_key_pem"}, {"signing_keys", "public_jwk"},
+		{"signing_keys", "hmac_secret"}, {"signing_keys", "created_at"}, {"signing_keys", "retired_at"},
+	} {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, c[0], c[1]).Scan(&n); err != nil || n != 1 {
+			t.Errorf("column %s.%s: count %d, err %v", c[0], c[1], n, err)
+		}
+	}
+	for _, idx := range []string{"events_thumbmark_created_idx", "events_probe_cohort_idx",
+		"events_nonce_idx", "widget_reports_key_nonce_idx", "widget_reports_created_idx", "api_keys_secret_hash_idx"} {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1`, idx).Scan(&n); err != nil || n != 1 {
+			t.Errorf("index %s: count %d, err %v", idx, n, err)
+		}
 	}
 }
 
@@ -345,6 +362,9 @@ func TestInsertEventAndPrune(t *testing.T) {
 		e := Event{ID: newID(), APIKeyID: k.ID, VisitorID: vid, Thumbmark: "tm", ClientHash: "ch",
 			IPHash: "iph", JA4: "j", JA4H: "jh", H2FP: "h2", UserAgent: "ua", Path: "/",
 			Classification: []byte(`{"bot":false}`), Signals: []byte(`[]`), CreatedAt: now.Add(-age)}
+		if i == 1 {
+			e.Nonce = "abc"
+		}
 		if i == 0 {
 			e.JA3Hash = "03117a8ed39ef02427ebbc39f121275c"
 			e.IP = &ip
@@ -372,6 +392,23 @@ func TestInsertEventAndPrune(t *testing.T) {
 	if rows.Err() != nil || len(ja3s) != 3 || ja3s[0] == nil || *ja3s[0] != "03117a8ed39ef02427ebbc39f121275c" ||
 		ja3s[1] != nil || ja3s[2] != nil {
 		t.Fatalf("ja3_hash rows %v (%v)", ja3s, rows.Err())
+	}
+	// events.nonce holds the nonce when given and NULL otherwise.
+	var nonces []*string
+	nrows, err := s.pool.Query(ctx, `SELECT nonce FROM events WHERE api_key_id = $1::uuid ORDER BY created_at`, k.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nrows.Close()
+	for nrows.Next() {
+		var v *string
+		if err := nrows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		nonces = append(nonces, v)
+	}
+	if nrows.Err() != nil || len(nonces) != 3 || nonces[0] != nil || nonces[1] == nil || *nonces[1] != "abc" || nonces[2] != nil {
+		t.Fatalf("nonce rows %v (%v)", nonces, nrows.Err())
 	}
 	if err := s.InsertClientLog(ctx, &k.ID, []byte(`{"m":"x"}`)); err != nil {
 		t.Fatal(err)
@@ -479,5 +516,95 @@ func TestRecordVisitConcurrentSharedThumbmark(t *testing.T) {
 	}
 	if maxSharing != n {
 		t.Fatalf("max sharing=%d", maxSharing)
+	}
+}
+
+func TestInsertEventCanvasProbeCohort(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "cp", Prefix: "cpcpcpcp"})
+	now := time.Now().UTC()
+	withID, withoutID := newID(), newID()
+	if err := s.InsertEvent(ctx, Event{ID: withID, APIKeyID: k.ID, VisitorID: newID(), Thumbmark: "tm",
+		IPHash: "iph", CanvasProbe: "deadbeef", Cohort: "chrome|chrome", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertEvent(ctx, Event{ID: withoutID, APIKeyID: k.ID, VisitorID: newID(), Thumbmark: "tm",
+		IPHash: "iph", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	var probe, cohort string
+	if err := s.pool.QueryRow(ctx, `SELECT canvas_probe, cohort FROM events WHERE id=$1`, withID).Scan(&probe, &cohort); err != nil ||
+		probe != "deadbeef" || cohort != "chrome|chrome" {
+		t.Fatalf("round trip: %q %q %v", probe, cohort, err)
+	}
+	var isNull bool
+	if err := s.pool.QueryRow(ctx, `SELECT canvas_probe IS NULL AND cohort IS NULL FROM events WHERE id=$1`, withoutID).Scan(&isNull); err != nil || !isNull {
+		t.Fatalf("expected NULLs: %v %v", isNull, err)
+	}
+}
+
+func seedProbes(t *testing.T, s *Store, keyID, cohort string, probe string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := s.InsertEvent(context.Background(), Event{ID: newID(), APIKeyID: keyID, VisitorID: newID(), Thumbmark: "tm",
+			IPHash: "iph", CanvasProbe: probe, Cohort: cohort, CreatedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDominantCanvasProbe(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "dom", Prefix: "domdomdo"})
+	since := time.Now().Add(-ProbeWindowDays * 24 * time.Hour)
+
+	seedProbes(t, s, k.ID, "big", "X", ProbeNMin)
+	seedProbes(t, s, k.ID, "big", "Y", 3)
+	v, ok, err := s.DominantCanvasProbe(ctx, k.ID, "big", since, ProbeNMin)
+	if err != nil || !ok || v != "X" {
+		t.Fatalf("established: %q %v %v", v, ok, err)
+	}
+
+	seedProbes(t, s, k.ID, "small", "X", ProbeNMin-5)
+	v, ok, err = s.DominantCanvasProbe(ctx, k.ID, "small", since, ProbeNMin)
+	if err != nil || ok || v != "" {
+		t.Fatalf("not established: %q %v %v", v, ok, err)
+	}
+}
+
+func TestCanvasProbeEntropy(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	k, _ := s.CreateKey(ctx, NewKey{Hash: "ent", Prefix: "ententxx"})
+	other, _ := s.CreateKey(ctx, NewKey{Hash: "ent2", Prefix: "entent22"})
+	now := time.Now().UTC()
+	ins := func(keyID, visitor, probe string, at time.Time) {
+		t.Helper()
+		if err := s.InsertEvent(ctx, Event{ID: newID(), APIKeyID: keyID, VisitorID: visitor, Thumbmark: "tm",
+			IPHash: "iph", CanvasProbe: probe, CreatedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// v1 twice with A; v2, v3 share B; v4 has C. -> 4 visitors, 3 probes.
+	ins(k.ID, "v1", "A", now)
+	ins(k.ID, "v1", "A", now)
+	ins(k.ID, "v2", "B", now)
+	ins(k.ID, "v3", "B", now)
+	ins(k.ID, "v4", "C", now)
+	// Excluded: NULL probe, old event, other key.
+	ins(k.ID, "v5", "", now)
+	ins(k.ID, "v6", "D", now.Add(-60*24*time.Hour))
+	ins(other.ID, "v7", "E", now)
+
+	since := now.Add(-ProbeWindowDays * 24 * time.Hour)
+	visitors, distinct, err := s.CanvasProbeEntropy(ctx, k.ID, since)
+	if err != nil || visitors != 4 || distinct != 3 {
+		t.Fatalf("got %d %d %v", visitors, distinct, err)
+	}
+	visitors, distinct, err = s.CanvasProbeEntropy(ctx, "00000000-0000-0000-0000-000000000000", since)
+	if err != nil || visitors != 0 || distinct != 0 {
+		t.Fatalf("empty: %d %d %v", visitors, distinct, err)
 	}
 }

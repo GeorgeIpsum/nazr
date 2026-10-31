@@ -9,12 +9,13 @@ import (
 
 // Error codes used in {"error","message"} bodies.
 const (
-	codeBadRequest       = "bad_request"
-	codePayloadTooLarge  = "payload_too_large"
-	codeStoreUnavailable = "store_unavailable"
-	codeInternal         = "internal"
-	codeNotFound         = "not_found"
-	codeRateLimited      = "rate_limited"
+	codeBadRequest         = "bad_request"
+	codePayloadTooLarge    = "payload_too_large"
+	codeStoreUnavailable   = "store_unavailable"
+	codeSigningUnavailable = "signing_unavailable"
+	codeInternal           = "internal"
+	codeNotFound           = "not_found"
+	codeRateLimited        = "rate_limited"
 )
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

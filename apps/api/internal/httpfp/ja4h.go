@@ -132,15 +132,23 @@ func JA4HFull(r *http.Request, headerOrder []string) string {
 	return a + "_" + hash12(names) + "_" + c + "_" + d
 }
 
-// JA4HStable returns the cookie-free form ja4h_a_ja4h_b: the first two parts
-// of JA4HFull. It is what the `header` component carries, so a cookie being
-// set or rotated does not change the thumbmark.
+// JA4HStable returns the cookie- and referer-independent form ja4h_a_ja4h_b:
+// the first two parts of JA4HFull with the cookie-present and referer-present
+// flags of part a forced to "n". It is what the `header` component carries, so
+// neither a cookie being set or rotated nor a different referrer changes the
+// thumbmark. The header count in part a already excludes Cookie and Referer.
 func JA4HStable(r *http.Request, headerOrder []string) string {
 	full := JA4HFull(r, headerOrder)
-	if i := strings.IndexByte(full, '_'); i >= 0 {
-		if j := strings.IndexByte(full[i+1:], '_'); j >= 0 {
-			return full[:i+1+j]
-		}
+	i := strings.IndexByte(full, '_')
+	if i < 0 {
+		return full
+	}
+	if j := strings.IndexByte(full[i+1:], '_'); j >= 0 {
+		full = full[:i+1+j]
+	}
+	// Part a is method (2) + version (2) + cookie flag + referer flag + ...
+	if i >= 6 {
+		full = full[:4] + "nn" + full[6:]
 	}
 	return full
 }

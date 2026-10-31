@@ -1,3 +1,4 @@
 bin
 .data
 testdata
+node_modules

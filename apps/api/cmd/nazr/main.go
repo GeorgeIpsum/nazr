@@ -18,7 +18,9 @@ const usage = `usage: nazr <command> [args]
 commands:
   serve [--print-config]       run the server
   migrate                      apply database migrations
-  keys create|list|revoke      manage API keys
+  keys create|list|revoke|secret-rotate
+                               manage API keys
+  signing rotate|list          manage widget signing keys
   lists refresh                refresh intelligence lists
   version                      print the version
 `
@@ -41,11 +43,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "migrate":
 		return migrate(stdout, stderr)
 	case "keys":
-		if len(args) < 2 || !slices.Contains([]string{"create", "list", "revoke"}, args[1]) {
+		if len(args) < 2 || !slices.Contains([]string{"create", "list", "revoke", "secret-rotate"}, args[1]) {
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
 		return keysCmd(args[1], args[2:], stdout, stderr)
+	case "signing":
+		if len(args) < 2 || !slices.Contains([]string{"rotate", "list"}, args[1]) {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		return signingCmd(args[1], args[2:], stdout, stderr)
 	case "lists":
 		if len(args) < 2 || args[1] != "refresh" {
 			fmt.Fprint(stderr, usage)

@@ -40,7 +40,9 @@ type thumbmarkBody struct {
 	version     string
 	path        string
 	visitorID   string
-	metadata    any // nil when absent, null, or over the size cap
+	canvasProbe string // side signal only; never part of the thumbmark
+	nonce       string // side signal only; never part of the thumbmark
+	metadata    any    // nil when absent, null, or over the size cap
 	metadataRaw json.RawMessage
 }
 
@@ -132,6 +134,21 @@ func isTooLarge(err error) bool {
 	return errors.As(err, &mbe) || errors.Is(err, fingerprint.ErrTooLarge)
 }
 
+// validCanvasProbe reports whether s is 1..64 hex digits; anything else is
+// treated as an absent probe.
+func validCanvasProbe(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func parseThumbmarkBody(raw map[string]any) (thumbmarkBody, error) {
 	var b thumbmarkBody
 	comps, ok := raw["components"].(map[string]any)
@@ -144,6 +161,12 @@ func parseThumbmarkBody(raw map[string]any) (thumbmarkBody, error) {
 	b.version, _ = raw["version"].(string)
 	b.path, _ = raw["path"].(string)
 	b.visitorID, _ = raw["visitorId"].(string)
+	if cp, _ := raw["canvas_probe"].(string); validCanvasProbe(cp) {
+		b.canvasProbe = cp
+	}
+	if n, _ := raw["nonce"].(string); validNonce(n) {
+		b.nonce = n
+	}
 	if md, present := raw["metadata"]; present && md != nil {
 		enc, err := marshalJSON(md)
 		size := 0
@@ -291,25 +314,32 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	merged := fingerprint.Merge(body.components, filterServer(sc, body.components, opts))
 	thumbmark := fingerprint.Hash(merged)
 
-	in := classify.Input{
-		IP:                    lookup,
-		HasTLS:                hasTLS,
-		UserAgent:             r.Header.Get("User-Agent"),
-		AcceptLanguagePresent: r.Header.Get("Accept-Language") != "",
-		JA4Families:           s.ja4Families(ctx, ja4),
+	in, h2fpStr := s.classifyInput(r, view, body.components, lookup, ja4)
+	braveFlag := false
+	if sys, ok := body.components["system"].(map[string]any); ok {
+		if br, ok := sys["browser"].(map[string]any); ok {
+			name, _ := br["name"].(string)
+			braveFlag = name == "Brave"
+		}
 	}
-	if loc, ok := body.components["locales"].(map[string]any); ok {
-		in.Timezone, _ = loc["timezone"].(string)
-	}
-	if priv, ok := body.components["privacy"].(map[string]any); ok {
-		in.Webdriver, _ = priv["webdriver"].(bool)
-	}
-	h2fpStr := ""
-	if view.H2 != nil {
-		h2fpStr = h2fp.Akamai(view.H2)
-		in.H2Fingerprint = h2fpStr
+	cohort := classify.CohortKey(in.UserAgent, braveFlag, in.JA4Families)
+	// A determination needs scoring on, a probe, and an established cohort;
+	// without one the signal is left out of the response.
+	scored := s.Cfg.CanvasProbeScoring && body.canvasProbe != ""
+	if scored {
+		dominant, established, err := s.Store.DominantCanvasProbe(ctx, key.ID, cohort,
+			time.Now().Add(-store.ProbeWindowDays*24*time.Hour), store.ProbeNMin)
+		if err != nil {
+			s.Logger.Error("server: dominant canvas probe failed", "err", err, "request_id", requestIDFrom(ctx))
+			established = false
+		}
+		in.CanvasProbeAnomaly = established && dominant != body.canvasProbe
+		scored = established
 	}
 	cls := classify.Classify(in)
+	if !scored {
+		delete(cls.Signals, "canvas_probe_anomaly")
+	}
 	classificationTotal.WithLabelValues(strconv.FormatBool(cls.Tor), strconv.FormatBool(cls.VPN),
 		strconv.FormatBool(cls.Bot), strconv.FormatBool(cls.Datacenter), strconv.FormatBool(cls.PrivateRelay)).Inc()
 
@@ -359,7 +389,10 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev := store.Event{
-		ID: rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
+		CanvasProbe: body.canvasProbe,
+		Nonce:       body.nonce,
+		Cohort:      cohort,
+		ID:          rid, APIKeyID: key.ID, VisitorID: vis.ID, Thumbmark: thumbmark, ClientHash: body.clientHash,
 		IPHash: ipHash, JA4: ja4, H2FP: h2fpStr, UserAgent: in.UserAgent, Path: body.path,
 		// The component (and so the hash) uses the cookie-free ja4h; the
 		// event keeps the complete fingerprint for analysis.
@@ -371,17 +404,10 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	if view.TLS != nil {
 		ev.JA3Hash = view.TLS.JA3Hash
 	}
-	if s.Cfg.StoreIP == "raw" && addr.IsValid() {
-		a := addr
-		ev.IP = &a
-	}
+	ev.IP = s.storedIP(addr)
 	ev.Classification, _ = marshalJSON(resp.Info.Classification)
 	ev.Signals, _ = marshalJSON(cls.Signals)
-	if s.Cfg.StoreComponents {
-		if b, err := marshalJSON(fingerprint.Merge(body.components, sc)); err == nil {
-			ev.Components = b
-		}
-	}
+	ev.Components = s.storedComponents(body.components, sc)
 	ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
 	if err := s.Store.InsertEvent(ictx, ev); err != nil {
 		s.Logger.Error("server: insert event failed", "err", err, "request_id", rid)
@@ -389,6 +415,27 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	cancel()
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// storedIP is the raw address to store under NAZR_STORE_IP=raw, else nil.
+func (s *server) storedIP(addr netip.Addr) *netip.Addr {
+	if s.Cfg.StoreIP != "raw" || !addr.IsValid() {
+		return nil
+	}
+	return &addr
+}
+
+// storedComponents is the merged client and unfiltered server components to
+// store under NAZR_STORE_COMPONENTS, else nil.
+func (s *server) storedComponents(client, server map[string]any) json.RawMessage {
+	if !s.Cfg.StoreComponents {
+		return nil
+	}
+	b, err := marshalJSON(fingerprint.Merge(client, server))
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (s *server) countParseErrors(ctx context.Context, view conn.HolderView) {
@@ -400,4 +447,29 @@ func (s *server) countParseErrors(ctx context.Context, view conn.HolderView) {
 		parseErrorsTotal.WithLabelValues("h2").Inc()
 		s.Logger.Warn("server: h2 fingerprint unavailable", "err", view.H2Error, "request_id", requestIDFrom(ctx))
 	}
+}
+
+// classifyInput builds the classifier input for a request from its connection
+// view, client components, IP lookup and JA4, and returns the h2 fingerprint
+// string ("" without HTTP/2).
+func (s *server) classifyInput(r *http.Request, view conn.HolderView, comps map[string]any, lookup ipintel.Lookup, ja4 string) (classify.Input, string) {
+	in := classify.Input{
+		IP:                    lookup,
+		HasTLS:                view.TLS != nil || ja4 != "", // same rule as handleThumbmark's hasTLS
+		UserAgent:             r.Header.Get("User-Agent"),
+		AcceptLanguagePresent: r.Header.Get("Accept-Language") != "",
+		JA4Families:           s.ja4Families(r.Context(), ja4),
+	}
+	if loc, ok := comps["locales"].(map[string]any); ok {
+		in.Timezone, _ = loc["timezone"].(string)
+	}
+	if priv, ok := comps["privacy"].(map[string]any); ok {
+		in.Webdriver, _ = priv["webdriver"].(bool)
+	}
+	h2fpStr := ""
+	if view.H2 != nil {
+		h2fpStr = h2fp.Akamai(view.H2)
+		in.H2Fingerprint = h2fpStr
+	}
+	return in, h2fpStr
 }
