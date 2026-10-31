@@ -12,6 +12,7 @@ declare global {
       ready: Promise<{ nonce: string }>;
       nonce?: string;
       token?: string;
+      state?: string;
       reset(): void;
     };
     __nazrHostDone?: HostDone;
@@ -37,6 +38,8 @@ function loadWidget(): Promise<void> {
     s.src = `${endpoint}/widget/v1/loader.js`;
     s.dataset.apiKey = apiKey;
     s.dataset.callback = "__nazrOnToken";
+    // An inconclusive report shows the interactive button in this box.
+    s.dataset.container = "#nazr-box";
     s.onload = () => resolve();
     s.onerror = () => reject(new Error(`failed to load ${s.src}`));
     // Inside the form, so the loader's closest("form") gets the hidden input.

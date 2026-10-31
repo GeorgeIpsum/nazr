@@ -135,6 +135,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       NAZR_ADMIN_TOKEN: "e2e-admin",
       NAZR_WIDGET_DIR: widgetDir,
       NAZR_POW_BITS: "12",
+      // Any danger point makes a report inconclusive, so the interactive e2e can
+      // earn one by dropping a single header.
+      NAZR_WIDGET_PASS_MAX_DANGER: "0",
     };
     execFileSync("mkdir", ["-p", env.NAZR_DATA_DIR]);
 

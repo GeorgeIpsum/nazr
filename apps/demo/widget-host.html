@@ -13,8 +13,11 @@
   </head>
   <body>
     <p id="status">loading the nazr widget…</p>
-    <!-- The loader fills a hidden nazr-token input in its closest form. -->
-    <form id="nazr-form"></form>
+    <!--
+      The loader fills a hidden nazr-token input in its closest form, and shows the
+      interactive "Verify you are human" step in #nazr-box when a report is inconclusive.
+    -->
+    <form id="nazr-form"><div id="nazr-box"></div></form>
     <script type="module" src="./src/widget-host.ts"></script>
   </body>
 </html>

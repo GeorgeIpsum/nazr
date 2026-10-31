@@ -18,6 +18,8 @@ interface WidgetSummary {
   pass: number;
   inconclusive: number;
   pow_failed: number;
+  interactive: number;
+  interactive_failed: number;
   verified: number;
   replayed: number;
 }
@@ -27,6 +29,16 @@ interface Siteverify {
   hostname?: string;
   verdict?: string;
   correlation?: { matched: boolean; ip_match: boolean; ja4_match: boolean; ua_match: boolean };
+  interaction?: {
+    input: string;
+    pointer_type: string;
+    trusted: boolean;
+    moves: number;
+    path_px: number;
+    straightness: number;
+    elapsed_ms: number;
+    signals: string[];
+  };
   error_codes: string[];
 }
 
@@ -225,4 +237,112 @@ test("widget issues a token that verifies against the JWKS and siteverify once",
   expect(summary.pass).toBeGreaterThanOrEqual(1);
   expect(summary.verified).toBeGreaterThanOrEqual(1);
   expect(summary.replayed).toBeGreaterThanOrEqual(1);
+});
+
+test("an inconclusive report earns a token through the interactive step", async ({ page }) => {
+  // Without Accept-Language the report scores missing_accept_language (danger 1),
+  // above the e2e pass threshold of 0, so the server offers the interactive step.
+  await page.route("**/widget/report", (route) => {
+    const headers = { ...route.request().headers() };
+    delete headers["accept-language"];
+    return route.continue({ headers });
+  });
+  const reportResponse = page.waitForResponse(
+    (r) => r.url().endsWith("/widget/report") && r.request().method() === "POST",
+  );
+  const interactResponse = page.waitForResponse(
+    (r) => r.url().endsWith("/widget/interact") && r.request().method() === "POST",
+  );
+  await openHost(page);
+
+  const report = await reportResponse;
+  expect(report.status()).toBe(200);
+  const outcome = (await report.json()) as {
+    verdict: string;
+    token?: string;
+    interactive?: { challenge: string; bits: number };
+  };
+  expect(outcome.verdict).toBe("inconclusive");
+  expect(outcome.token).toBeUndefined();
+  expect(typeof outcome.interactive?.challenge).toBe("string");
+
+  // The iframe sits in a closed shadow root, so only page.frames() reaches it.
+  const findFrame = () => page.frames().find((f) => f.url().includes("/widget/v1/frame"));
+  await expect.poll(() => findFrame() !== undefined).toBe(true);
+  const frame = findFrame() as NonNullable<ReturnType<typeof findFrame>>;
+  await expect
+    .poll(() => frame.evaluate(() => [innerWidth, innerHeight]), { timeout: 30_000 })
+    .toEqual([300, 65]);
+
+  const button = frame.locator("button");
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+  // The frame records only moves over itself, so both legs stay inside its 300x65
+  // viewport: enter at the top-left corner, dip to the bottom edge, then rise into
+  // the button. A single straight leg would fail the straightness check.
+  const inFrame = await button.evaluate((b) => b.getBoundingClientRect().toJSON());
+  const left = box.x - inFrame.x;
+  const top = box.y - inFrame.y;
+  await page.mouse.move(left + 5, top + 5);
+  await page.mouse.move(left + 40, top + 60, { steps: 10 });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 10 });
+  // A click under 300 ms after the button appears scores too_fast; pause like a reader.
+  await page.waitForTimeout(400);
+  await page.mouse.down();
+  await page.mouse.up();
+
+  await page.waitForFunction(
+    () => (window as unknown as { __nazrToken?: string }).__nazrToken != null,
+    undefined,
+    { timeout: 30_000 },
+  );
+  const interact = await interactResponse;
+  expect(interact.status()).toBe(200);
+  const upgraded = (await interact.json()) as { verdict: string; token?: string };
+  expect(upgraded.verdict).toBe("interactive");
+
+  const state = await page.evaluate(() => {
+    const w = window as unknown as {
+      __nazrWidget?: { nonce?: string; state?: string };
+      __nazrToken?: string;
+    };
+    const input = document.querySelector<HTMLInputElement>("form#nazr-form input[name=nazr-token]");
+    return {
+      token: w.__nazrToken as string,
+      nonce: w.__nazrWidget?.nonce,
+      widgetState: w.__nazrWidget?.state,
+      input: input?.value,
+    };
+  });
+  expect(state.token).toBe(upgraded.token);
+  expect(state.input).toBe(state.token);
+  expect(state.widgetState).toBe("interactive");
+
+  const keyId = e2eKeyId();
+  const jwks = JSON.parse(
+    execFileSync("curl", ["-ksS", "--fail", `${endpoint()}/widget/v1/jwks.json`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString(),
+  ) as JSONWebKeySet;
+  const { payload } = await jwtVerify(state.token, createLocalJWKSet(jwks), {
+    issuer: endpoint(),
+    audience: keyId,
+    algorithms: ["ES256"],
+  });
+  expect(payload.verdict).toBe("interactive");
+  expect(payload.jti).toBe(state.nonce);
+
+  const verified = siteverify(process.env.NAZR_E2E_SECRET as string, state.token);
+  expect(verified.status).toBe(200);
+  expect(verified.body).toMatchObject({
+    success: true,
+    verdict: "interactive",
+    interaction: { input: "pointer", trusted: true },
+  });
+  expect(verified.body.interaction?.moves).toBeGreaterThanOrEqual(3);
+
+  const summary = admin<WidgetSummary>(`/admin/keys/${keyId}/widget`);
+  expect(summary.interactive).toBeGreaterThanOrEqual(1);
 });
