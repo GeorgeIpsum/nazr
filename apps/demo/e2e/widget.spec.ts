@@ -90,6 +90,20 @@ function siteverify(secret: string, token: string): { status: number; body: Site
   return { status: Number(out.slice(nl + 1)), body: JSON.parse(out.slice(0, nl)) as Siteverify };
 }
 
+/** Verifies a widget token against the served JWKS for the given key. */
+async function verifyJwt(token: string, keyId: string) {
+  const jwks = JSON.parse(
+    execFileSync("curl", ["-ksS", "--fail", `${endpoint()}/widget/v1/jwks.json`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString(),
+  ) as JSONWebKeySet;
+  return jwtVerify(token, createLocalJWKSet(jwks), {
+    issuer: endpoint(),
+    audience: keyId,
+    algorithms: ["ES256"],
+  });
+}
+
 async function openHost(page: Page): Promise<void> {
   const q = new URLSearchParams({ key: apiKey(), endpoint: endpoint() });
   await page.goto(`/widget-host.html?${q}`);
@@ -170,6 +184,7 @@ test("widget issues a token that verifies against the JWKS and siteverify once",
     { timeout: 30_000 },
   );
 
+  const hostOrigin = new URL(page.url()).origin;
   const report = await reportResponse;
   expect(report.status()).toBe(200);
   const outcome = (await report.json()) as { verdict: string; token?: string };
@@ -198,27 +213,18 @@ test("widget issues a token that verifies against the JWKS and siteverify once",
   expect(state.input).toBe(state.token);
 
   const keyId = e2eKeyId();
-  const jwks = JSON.parse(
-    execFileSync("curl", ["-ksS", "--fail", `${endpoint()}/widget/v1/jwks.json`], {
-      stdio: ["ignore", "pipe", "pipe"],
-    }).toString(),
-  ) as JSONWebKeySet;
-  const { payload, protectedHeader } = await jwtVerify(state.token, createLocalJWKSet(jwks), {
-    issuer: endpoint(),
-    audience: keyId,
-    algorithms: ["ES256"],
-  });
+  const { payload, protectedHeader } = await verifyJwt(state.token, keyId);
   expect(protectedHeader.alg).toBe("ES256");
   expect(payload.jti).toBe(state.nonce);
   expect(payload.verdict).toBe("pass");
-  expect(payload.hostname).toBe("http://localhost:4173");
+  expect(payload.hostname).toBe(hostOrigin);
 
   const secret = process.env.NAZR_E2E_SECRET as string;
   const first = siteverify(secret, state.token);
   expect(first.status).toBe(200);
   expect(first.body).toMatchObject({
     success: true,
-    hostname: "http://localhost:4173",
+    hostname: hostOrigin,
     verdict: "pass",
     correlation: { matched: true, ip_match: true, ja4_match: true, ua_match: true },
     error_codes: [],
@@ -277,8 +283,7 @@ test("an inconclusive report earns a token through the interactive step", async 
   const button = frame.locator("button");
   await expect(button).toBeVisible();
   const box = await button.boundingBox();
-  expect(box).not.toBeNull();
-  if (!box) return;
+  if (!box) throw new Error("interactive button has no bounding box");
   // The frame records only moves over itself, so both legs stay inside its 300x65
   // viewport: enter at the top-left corner, dip to the bottom edge, then rise into
   // the button. A single straight leg would fail the straightness check.
@@ -321,16 +326,7 @@ test("an inconclusive report earns a token through the interactive step", async 
   expect(state.widgetState).toBe("interactive");
 
   const keyId = e2eKeyId();
-  const jwks = JSON.parse(
-    execFileSync("curl", ["-ksS", "--fail", `${endpoint()}/widget/v1/jwks.json`], {
-      stdio: ["ignore", "pipe", "pipe"],
-    }).toString(),
-  ) as JSONWebKeySet;
-  const { payload } = await jwtVerify(state.token, createLocalJWKSet(jwks), {
-    issuer: endpoint(),
-    audience: keyId,
-    algorithms: ["ES256"],
-  });
+  const { payload } = await verifyJwt(state.token, keyId);
   expect(payload.verdict).toBe("interactive");
   expect(payload.jti).toBe(state.nonce);
 
