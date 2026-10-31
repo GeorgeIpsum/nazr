@@ -13,13 +13,26 @@ declare global {
   }
 }
 
-function decodeExp(token: string): number | undefined {
+const readyTimeoutMs = 10_000;
+const expiryMarginMs = 5_000;
+const minExpiryMs = 10_000;
+const maxTimerMs = 2_147_483_647;
+
+/**
+ * How long after arrival the token should be treated as expired, from its own
+ * `exp - iat` so a skewed device clock does not matter. Undefined when either
+ * claim is missing or not a number.
+ */
+function expiryDelay(token: string): number | undefined {
   try {
     const payload = token.split(".")[1];
     if (!payload) return undefined;
     const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const exp = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="))).exp;
-    return typeof exp === "number" && Number.isFinite(exp) ? exp : undefined;
+    const { iat, exp } = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")));
+    if (typeof iat !== "number" || !Number.isFinite(iat)) return undefined;
+    if (typeof exp !== "number" || !Number.isFinite(exp)) return undefined;
+    const delay = (exp - iat) * 1000 - expiryMarginMs;
+    return Math.min(Math.max(delay, minExpiryMs), maxTimerMs);
   } catch {
     return undefined;
   }
@@ -51,6 +64,7 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     let timer: number | undefined;
     let resolveReady: (v: { nonce: string }) => void = () => {};
     let resolved = false;
+    let readyTimer: number | undefined;
 
     const callGlobal = (attr: string | undefined, arg?: string) => {
       try {
@@ -62,7 +76,7 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     };
     const setInput = (value: string) => {
       if (!form) return;
-      if (!input) {
+      if (!input?.isConnected) {
         input = Array.from(form.querySelectorAll("input")).find((i) => i.name === fieldName);
         if (!input) {
           input = doc.createElement("input");
@@ -89,6 +103,16 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
     };
     win.__nazrWidget = widget;
 
+    // If the frame never sends a challenge, settle ready anyway so the host's
+    // fingerprint call proceeds uncorrelated.
+    readyTimer = win.setTimeout(() => {
+      readyTimer = undefined;
+      if (resolved) return;
+      resolved = true;
+      resolveReady({ nonce: "" });
+      callGlobal(script.dataset.errorCallback, "network");
+    }, readyTimeoutMs);
+
     win.addEventListener("message", (event: MessageEvent) => {
       try {
         if (event.source !== iframe.contentWindow || event.origin !== origin) return;
@@ -97,6 +121,8 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
         if (!msg.type.startsWith("nazr:")) return;
         if (msg.type === "nazr:challenge") {
           widget.nonce = msg.id;
+          win.clearTimeout(readyTimer);
+          readyTimer = undefined;
           if (!resolved) {
             resolved = true;
             resolveReady({ nonce: msg.id });
@@ -107,18 +133,15 @@ export function mountWidget(doc: Document, win: Window & typeof globalThis): voi
           widget.token = msg.token;
           setInput(msg.token);
           callGlobal(script.dataset.callback, msg.token);
-          const exp = decodeExp(msg.token);
-          if (exp !== undefined) {
-            timer = win.setTimeout(
-              () => {
-                timer = undefined;
-                widget.token = undefined;
-                if (input) input.value = "";
-                callGlobal(script.dataset.expiredCallback);
-                widget.reset();
-              },
-              Math.max(0, exp * 1000 - Date.now()),
-            );
+          const delay = expiryDelay(msg.token);
+          if (delay !== undefined) {
+            timer = win.setTimeout(() => {
+              timer = undefined;
+              widget.token = undefined;
+              if (input) input.value = "";
+              callGlobal(script.dataset.expiredCallback);
+              widget.reset();
+            }, delay);
           }
         } else if (msg.type === "nazr:error") {
           callGlobal(script.dataset.errorCallback, msg.reason);

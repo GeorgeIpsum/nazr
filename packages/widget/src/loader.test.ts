@@ -51,8 +51,8 @@ function b64url(obj: unknown): string {
   return btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function jwt(exp: number): string {
-  return `${b64url({ alg: "ES256" })}.${b64url({ exp })}.sig`;
+function jwt(exp: number, iat: number = Math.floor(Date.now() / 1000)): string {
+  return `${b64url({ alg: "ES256" })}.${b64url({ iat, exp })}.sig`;
 }
 
 function mount(attrs: Record<string, string> = {}, inForm = true) {
@@ -173,6 +173,50 @@ describe("frame messages", () => {
     await expect(widget?.ready).resolves.toEqual({ nonce: "c1" });
   });
 
+  describe("ready timeout", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      delete (win as unknown as Record<string, unknown>).onNazrErr;
+    });
+
+    it("settles ready with an empty nonce after 10 s without a challenge", async () => {
+      const cb = vi.fn();
+      (win as unknown as Record<string, unknown>).onNazrErr = cb;
+      const { iframe } = mount({ "data-error-callback": "onNazrErr" });
+      const widget = win.__nazrWidget;
+      let settled: { nonce: string } | undefined;
+      widget?.ready.then((v) => {
+        settled = v;
+      });
+      vi.advanceTimersByTime(9_999);
+      await Promise.resolve();
+      expect(settled).toBeUndefined();
+      expect(cb).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      await expect(widget?.ready).resolves.toEqual({ nonce: "" });
+      expect(widget?.nonce).toBeUndefined();
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb).toHaveBeenCalledWith("network");
+      send(iframe, { type: "nazr:challenge", id: "late" });
+      expect(widget?.nonce).toBe("late");
+      await expect(widget?.ready).resolves.toEqual({ nonce: "" });
+    });
+
+    it("does not fire after a challenge arrives", async () => {
+      const cb = vi.fn();
+      (win as unknown as Record<string, unknown>).onNazrErr = cb;
+      const { iframe } = mount({ "data-error-callback": "onNazrErr" });
+      vi.advanceTimersByTime(5_000);
+      send(iframe, { type: "nazr:challenge", id: "c1" });
+      vi.advanceTimersByTime(60_000);
+      await expect(win.__nazrWidget?.ready).resolves.toEqual({ nonce: "c1" });
+      expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
   it("warns once and ignores data-nonce", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { iframe } = mount({ "data-nonce": "x" });
@@ -241,7 +285,8 @@ describe("frame messages", () => {
       (win as unknown as Record<string, unknown>).onNazr = expired;
       const { iframe, form } = mount({ "data-expired-callback": "onNazr" });
       const sets = spySrc(iframe);
-      send(iframe, { type: "nazr:token", token: jwt(exp()) });
+      // 65 s lifetime minus the 5 s margin.
+      send(iframe, { type: "nazr:token", token: jwt(exp() + 5) });
       vi.advanceTimersByTime(59_000);
       expect(expired).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1_000);
@@ -250,6 +295,56 @@ describe("frame messages", () => {
       expect(win.__nazrWidget?.token).toBeUndefined();
       expect(expired).toHaveBeenCalledTimes(1);
       expect(sets).toHaveLength(1);
+    });
+
+    it("times expiry from token lifetime, not the device clock", () => {
+      const expired = vi.fn();
+      (win as unknown as Record<string, unknown>).onNazr = expired;
+      const { iframe } = mount({ "data-expired-callback": "onNazr" });
+      // Device clock 10 minutes fast: the token already looks expired locally.
+      const now = Math.floor(Date.now() / 1000);
+      const token = jwt(now - 300, now - 600);
+      send(iframe, { type: "nazr:token", token });
+      vi.advanceTimersByTime(9_999);
+      expect(expired).not.toHaveBeenCalled();
+      expect(win.__nazrWidget?.token).toBe(token);
+      vi.advanceTimersByTime(300_000 - 5_000 - 9_999 - 1);
+      expect(expired).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(expired).toHaveBeenCalledTimes(1);
+    });
+
+    it("clamps short lifetimes to 10 s and huge ones to 2^31-1 ms", () => {
+      const setTimeout = vi.spyOn(win, "setTimeout");
+      const { iframe } = mount();
+      const now = Math.floor(Date.now() / 1000);
+      send(iframe, { type: "nazr:token", token: jwt(now + 1, now) });
+      expect(setTimeout.mock.calls.at(-1)?.[1]).toBe(10_000);
+      send(iframe, { type: "nazr:token", token: jwt(now + 10 ** 9, now) });
+      expect(setTimeout.mock.calls.at(-1)?.[1]).toBe(2_147_483_647);
+    });
+
+    it("arms no timer without iat", () => {
+      const { iframe } = mount();
+      const token = `${b64url({ alg: "ES256" })}.${b64url({ exp: exp() })}.sig`;
+      send(iframe, { type: "nazr:token", token });
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(win.__nazrWidget?.token).toBe(token);
+    });
+
+    it("re-creates the hidden input when the cached one was detached", () => {
+      const { iframe, form } = mount();
+      send(iframe, { type: "nazr:token", token: jwt(exp()) });
+      const first = form?.querySelector("input") as HTMLInputElement;
+      first.remove();
+      const next = jwt(exp() + 5);
+      send(iframe, { type: "nazr:token", token: next });
+      const inputs = Array.from(
+        form?.querySelectorAll<HTMLInputElement>('input[name="nazr-token"]') ?? [],
+      );
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0].value).toBe(next);
+      expect(inputs[0]).not.toBe(first);
     });
 
     it("keeps the token when exp cannot be decoded", () => {
