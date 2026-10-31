@@ -25,6 +25,20 @@ func GenerateKey() (plaintext, hash, prefix string) {
 	return plaintext, HashKey(plaintext), plaintext[len(keyPrefix) : len(keyPrefix)+8]
 }
 
+// SecretPrefix starts every key verify secret.
+const SecretPrefix = "nzs_"
+
+// GenerateSecret returns a new random verify secret, its SHA-256 hex hash and
+// the display prefix (the first 8 characters after "nzs_").
+func GenerateSecret() (plaintext, hash, prefix string) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("auth: crypto/rand failed: " + err.Error())
+	}
+	plaintext = SecretPrefix + strings.ToLower(keyEncoding.EncodeToString(b[:]))
+	return plaintext, HashKey(plaintext), plaintext[len(SecretPrefix) : len(SecretPrefix)+8]
+}
+
 // HashKey returns the SHA-256 hex digest of a plaintext key.
 func HashKey(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))

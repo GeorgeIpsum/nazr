@@ -15,6 +15,7 @@ import {
     tm_component_promises,
 } from "../factory";
 import { defaultOptions, type OptionsAfterDefaults, type optionsInterface } from "../options";
+import { computeCanvasProbe, isBlankProbe } from "../utils/canvasProbe";
 import { sendCollectBeacon } from "../utils/collect";
 import { hash } from "../utils/hash";
 import { logThumbmarkData } from "../utils/log";
@@ -104,9 +105,21 @@ export async function getThumbmark(
         } = await resolveClientComponents(allComponents, _options);
         allErrors.push(...componentErrors);
 
+        let probe: string | null = null;
+        if (_options.canvas_probe) {
+            probe = computeCanvasProbe(_options.canvas_probe);
+            // Only warn when a probe was produced (a null probe means no 2d
+            // context or a failure, which is not a "blank" draw).
+            if (probe !== null && isBlankProbe(_options.canvas_probe)) {
+                console.warn(
+                    "ThumbmarkJS: canvas_probe produced blank output and contributes no entropy.",
+                );
+            }
+        }
+
         const apiPromise =
             _options.api_key || _options.simple_request
-                ? getApiPromise(_options, clientComponentsResult)
+                ? getApiPromise(_options, clientComponentsResult, probe ?? undefined)
                 : null;
         let apiResult = null;
 

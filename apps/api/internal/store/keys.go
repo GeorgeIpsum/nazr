@@ -17,21 +17,27 @@ type APIKey struct {
 	CreatedAt          time.Time
 	RevokedAt          *time.Time
 	LastUsedAt         *time.Time
+	// SecretPrefix is the display prefix of the key's verify secret, or ""
+	// when it has none.
+	SecretPrefix string
 }
 
 // NewKey describes a key to create; Hash is the SHA-256 hex of the secret.
+// SecretHash and SecretPrefix describe the optional verify secret ("" stores NULL).
 type NewKey struct {
 	Hash, Prefix, Label string
+	SecretHash          string
+	SecretPrefix        string
 	AllowedOrigins      []string
 	RateLimitPerMinute  *int
 }
 
-const keyCols = `id::text, prefix, label, allowed_origins, rate_limit_per_minute, created_at, revoked_at, last_used_at`
+const keyCols = `id::text, prefix, label, allowed_origins, rate_limit_per_minute, created_at, revoked_at, last_used_at, coalesce(secret_prefix, '')`
 
 func scanKey(row pgx.Row) (APIKey, error) {
 	var k APIKey
 	err := row.Scan(&k.ID, &k.Prefix, &k.Label, &k.AllowedOrigins, &k.RateLimitPerMinute,
-		&k.CreatedAt, &k.RevokedAt, &k.LastUsedAt)
+		&k.CreatedAt, &k.RevokedAt, &k.LastUsedAt, &k.SecretPrefix)
 	if k.AllowedOrigins == nil {
 		k.AllowedOrigins = []string{}
 	}
@@ -45,9 +51,9 @@ func (s *Store) CreateKey(ctx context.Context, n NewKey) (APIKey, error) {
 		origins = []string{}
 	}
 	return scanKey(s.pool.QueryRow(ctx,
-		`INSERT INTO api_keys (key_hash, prefix, label, allowed_origins, rate_limit_per_minute)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING `+keyCols,
-		n.Hash, n.Prefix, n.Label, origins, n.RateLimitPerMinute))
+		`INSERT INTO api_keys (key_hash, prefix, label, allowed_origins, rate_limit_per_minute, secret_hash, secret_prefix)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')) RETURNING `+keyCols,
+		n.Hash, n.Prefix, n.Label, origins, n.RateLimitPerMinute, n.SecretHash, n.SecretPrefix))
 }
 
 // ListKeys returns all keys, oldest first.
@@ -130,4 +136,34 @@ func validUUID(id string) bool {
 		}
 	}
 	return true
+}
+
+// SetKeySecret stores the hash and display prefix of a key's verify secret,
+// replacing any earlier one. Unknown IDs return ErrNotFound.
+func (s *Store) SetKeySecret(ctx context.Context, id, hash, prefix string) error {
+	if !validUUID(id) {
+		return ErrNotFound
+	}
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE api_keys SET secret_hash = $2, secret_prefix = $3 WHERE id = $1::uuid`, id, hash, prefix)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FindKeyBySecretHash returns the key whose verify secret has the given hash,
+// including revoked keys, or nil, nil when absent.
+func (s *Store) FindKeyBySecretHash(ctx context.Context, hash string) (*APIKey, error) {
+	k, err := scanKey(s.pool.QueryRow(ctx, `SELECT `+keyCols+` FROM api_keys WHERE secret_hash = $1`, hash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
 }

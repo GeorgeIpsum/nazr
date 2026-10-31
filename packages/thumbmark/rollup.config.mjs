@@ -6,6 +6,7 @@ import resolve from "@rollup/plugin-node-resolve";
 import terser from "@rollup/plugin-terser";
 import typescript from "@rollup/plugin-typescript";
 import dts from "rollup-plugin-dts";
+import { obfuscate } from "./scripts/obfuscate.mjs";
 
 const config = [
     {
@@ -15,6 +16,13 @@ const config = [
             clearScreen: false, // Prevents the console from being cleared on each rebuild
         },
         input: "src/index.ts", // replace with your entry file
+        onwarn(warning, warn) {
+            // The UMD output deliberately has no source map (it is obfuscated);
+            // the TypeScript plugin warns whenever any output omits one.
+            if (warning.plugin === "typescript" && warning.message.includes("'sourcemap' option"))
+                return;
+            warn(warning);
+        },
         output: [
             {
                 // .cjs, not .cjs.js: package.json declares "type": "module", which makes Node
@@ -31,8 +39,12 @@ const config = [
             {
                 file: "dist/thumbmark.umd.js",
                 format: "umd",
-                sourcemap: true,
+                // Obfuscated drop-in bundle: a source map would undo it.
+                sourcemap: false,
                 name: "ThumbmarkJS",
+                // Output plugins run after terser, so this obfuscates the
+                // minified code. ESM and CJS above stay readable.
+                plugins: [obfuscate()],
             },
         ],
         plugins: [

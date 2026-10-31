@@ -45,14 +45,15 @@ func keysCmd(sub string, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "nazr keys create: --origins:", err)
 			return 2
 		}
-	case "revoke":
+	case "revoke", "secret-rotate":
 		if fs.NArg() != 1 {
-			fmt.Fprintln(stderr, "usage: nazr keys revoke <id>")
+			fmt.Fprintf(stderr, "usage: nazr keys %s <id>\n", sub)
 			return 2
 		}
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	s, code := openStore(ctx, stderr)
 	if s == nil {
 		return code
@@ -62,7 +63,8 @@ func keysCmd(sub string, args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "create":
 		plain, hash, prefix := auth.GenerateKey()
-		nk := store.NewKey{Hash: hash, Prefix: prefix, Label: label}
+		secret, secretHash, secretPrefix := auth.GenerateSecret()
+		nk := store.NewKey{Hash: hash, Prefix: prefix, Label: label, SecretHash: secretHash, SecretPrefix: secretPrefix}
 		for _, o := range strings.Split(origins, ",") {
 			if o = strings.TrimSpace(o); o != "" {
 				nk.AllowedOrigins = append(nk.AllowedOrigins, o)
@@ -77,6 +79,7 @@ func keysCmd(sub string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintln(stdout, plain)
+		fmt.Fprintln(stdout, secret)
 		fmt.Fprintf(stdout, "%s  %s  %s\n", k.ID, k.Prefix, k.Label)
 	case "list":
 		ks, err := s.ListKeys(ctx)
@@ -101,6 +104,17 @@ func keysCmd(sub string, args []string, stdout, stderr io.Writer) int {
 				k.CreatedAt.UTC().Format(time.RFC3339), revoked)
 		}
 		_ = tw.Flush()
+	case "secret-rotate":
+		secret, hash, prefix := auth.GenerateSecret()
+		if err := s.SetKeySecret(ctx, fs.Arg(0), hash, prefix); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				fmt.Fprintf(stderr, "nazr: no such key %q\n", fs.Arg(0))
+			} else {
+				fmt.Fprintln(stderr, "nazr:", err)
+			}
+			return 1
+		}
+		fmt.Fprintln(stdout, secret)
 	case "revoke":
 		if err := s.RevokeKey(ctx, fs.Arg(0)); err != nil {
 			if errors.Is(err, store.ErrNotFound) {

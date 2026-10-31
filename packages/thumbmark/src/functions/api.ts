@@ -165,6 +165,7 @@ async function callApiWithRetry(
 export const getApiPromise = (
     options: OptionsAfterDefaults,
     components: componentInterface,
+    canvasProbe?: string,
 ): Promise<apiResponse | null> => {
     // 1. If a result is already cached and caching is enabled, return it.
     if (options.cache_api_call) {
@@ -190,7 +191,14 @@ export const getApiPromise = (
     const endpoint = resolveApiEndpoint(options);
     const visitorId = getVisitorId(options);
     // Omit api_key from the body — in normal mode it goes in the x-api-key header; in simple_request mode it is proxy-injected.
-    const { api_key: _omitApiKey, ...optionsForBody } = options;
+    // Also omit canvas_probe so the draw callback / dimensions are never echoed back.
+    // nonce is likewise sent top-level only.
+    const {
+        api_key: _omitApiKey,
+        canvas_probe: _omitCanvasProbe,
+        nonce: _omitNonce,
+        ...optionsForBody
+    } = options;
     const requestBody: any = {
         components,
         options: optionsForBody,
@@ -201,6 +209,14 @@ export const getApiPromise = (
         // change with the page it was taken on.
         path: window?.location?.pathname,
     };
+    // Like `path`, a sibling of components (never inside): a side signal that
+    // must not enter clientHash.
+    if (canvasProbe) {
+        requestBody.canvas_probe = canvasProbe;
+    }
+    if (typeof options.nonce === "string" && options.nonce !== "") {
+        requestBody.nonce = options.nonce;
+    }
     if (visitorId) {
         requestBody.visitorId = visitorId;
     }

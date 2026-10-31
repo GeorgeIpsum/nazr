@@ -1,0 +1,8 @@
+{
+  "name": "@nazr/jb",
+  "description": "OOPS... no more agents",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/jb.cjs",
+  "module": "./dist/jb.esm.js"
+}

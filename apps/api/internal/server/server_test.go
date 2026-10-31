@@ -2,17 +2,22 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -25,6 +30,7 @@ import (
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/tlsfp"
+	"nazr/api/internal/widgettoken"
 )
 
 func TestStockBodyClientHash(t *testing.T) {
@@ -890,4 +896,801 @@ func TestReadyzIgnoresProberCancellation(t *testing.T) {
 	if w := e.do(httptest.NewRequest(http.MethodGet, "/readyz", nil)); w.Code != 200 {
 		t.Fatalf("next prober got cached %d: %s", w.Code, w.Body.String())
 	}
+}
+
+func postProbe(t *testing.T, probe any, set bool) (string, store.Event, int) {
+	t.Helper()
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	if set {
+		body["canvas_probe"] = probe
+	}
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		return "", store.Event{}, w.Code
+	}
+	resp := decodeResp(t, w)
+	if len(e.store.events) != 1 {
+		t.Fatalf("events %d", len(e.store.events))
+	}
+	tm, _ := resp["thumbmark"].(string)
+	return tm, e.store.events[0], w.Code
+}
+
+func TestThumbmarkCanvasProbe(t *testing.T) {
+	baseTM, baseEv, _ := postProbe(t, nil, false)
+	if baseEv.CanvasProbe != "" {
+		t.Fatalf("baseline probe %q", baseEv.CanvasProbe)
+	}
+	tm, ev, code := postProbe(t, "a1b2c3", true)
+	if code != http.StatusOK || ev.CanvasProbe != "a1b2c3" || ev.Cohort == "" {
+		t.Fatalf("code %d probe %q cohort %q", code, ev.CanvasProbe, ev.Cohort)
+	}
+	if tm != baseTM || tm == "" {
+		t.Fatalf("probe changed thumbmark: %q vs %q", tm, baseTM)
+	}
+	for name, v := range map[string]any{
+		"non-hex":  "NOT-HEX!!",
+		"too-long": strings.Repeat("ab", 100),
+		"numeric":  5,
+	} {
+		tm, ev, code := postProbe(t, v, true)
+		if code != http.StatusOK || ev.CanvasProbe != "" || tm != baseTM {
+			t.Fatalf("%s: code %d probe %q", name, code, ev.CanvasProbe)
+		}
+	}
+}
+
+func probeSignalResp(t *testing.T, scoring bool, dom string, established bool) (map[string]any, *fakeStore) {
+	t.Helper()
+	e := newEnv(t, func(c *config.Config, s *fakeStore) {
+		c.CanvasProbeScoring = scoring
+		s.domValue, s.domEstablished = dom, established
+	})
+	body := stockBody(t)
+	body["canvas_probe"] = "a1b2c3"
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", w.Code, w.Body.String())
+	}
+	return decodeResp(t, w), e.store
+}
+
+func TestCanvasProbeScoringOff(t *testing.T) {
+	resp, fs := probeSignalResp(t, false, "ffffff", true)
+	if _, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; ok {
+		t.Fatal("signal present with scoring off")
+	}
+	if fs.domCalls != 0 {
+		t.Fatalf("query ran %d times", fs.domCalls)
+	}
+}
+
+func TestCanvasProbeScoringOn(t *testing.T) {
+	resp, fs := probeSignalResp(t, true, "ffffff", true)
+	if path(resp, "info", "signals", "canvas_probe_anomaly") != true || fs.domCalls != 1 {
+		t.Fatalf("differs: %v calls %d", path(resp, "info", "signals"), fs.domCalls)
+	}
+	resp, _ = probeSignalResp(t, true, "a1b2c3", true)
+	if v, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; !ok || v != false {
+		t.Fatalf("matches: present=%v v=%v", ok, v)
+	}
+	resp, _ = probeSignalResp(t, true, "ffffff", false)
+	if _, ok := path(resp, "info", "signals").(map[string]any)["canvas_probe_anomaly"]; ok {
+		t.Fatal("signal present for unestablished cohort")
+	}
+}
+
+func TestProbeVerdict(t *testing.T) {
+	for _, c := range []struct {
+		visitors, distinct int64
+		ratio              float64
+		verdict            string
+	}{
+		{0, 0, 0, "insufficient_data"},
+		{10, 1, 0.1, "insufficient_data"},
+		{100, 3, 0.03, "too_low"},
+		{100, 5, 0.05, "too_low"},
+		{100, 98, 0.98, "too_unique"},
+		{100, 95, 0.95, "too_unique"},
+		{100, 50, 0.5, "ok"},
+	} {
+		r, v := probeVerdict(c.visitors, c.distinct)
+		if r != c.ratio || v != c.verdict {
+			t.Errorf("probeVerdict(%d,%d) = %v,%q want %v,%q", c.visitors, c.distinct, r, v, c.ratio, c.verdict)
+		}
+	}
+}
+
+func TestAdminCanvasProbeReport(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest("GET", "/admin/keys/key-1/canvas-probe", nil)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		return r
+	}
+	wantError(t, e.do(req("")), 403, "unauthorized")
+
+	e.store.entVisitors, e.store.entDistinct = 100, 3
+	w := e.do(req("s3cret"))
+	if w.Code != 200 {
+		t.Fatalf("report %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["window_days"] != float64(30) || got["visitors"] != float64(100) || got["distinct_probes"] != float64(3) ||
+		got["ratio"] != 0.03 || got["verdict"] != "too_low" {
+		t.Fatalf("body %v", got)
+	}
+	if e.store.entKeyID != "key-1" || !e.store.entSince.Equal(testNow.Add(-30*24*time.Hour)) {
+		t.Fatalf("args %q %v", e.store.entKeyID, e.store.entSince)
+	}
+
+	e.store.entErr = errBoom
+	if w := e.do(req("s3cret")); w.Code != 503 {
+		t.Fatalf("store error %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func postNonce(t *testing.T, nonce any, set bool) (string, store.Event, string) {
+	t.Helper()
+	e := newEnv(t, nil)
+	body := stockBody(t)
+	if set {
+		body["nonce"] = nonce
+	}
+	w := e.do(thumbmarkReq(t, e.key, marshal(t, body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+	if len(e.store.events) != 1 {
+		t.Fatalf("events %d", len(e.store.events))
+	}
+	tm, _ := resp["thumbmark"].(string)
+	return tm, e.store.events[0], w.Body.String()
+}
+
+func TestThumbmarkNonce(t *testing.T) {
+	baseTM, baseEv, _ := postNonce(t, nil, false)
+	if baseEv.Nonce != "" || baseTM == "" {
+		t.Fatalf("baseline nonce %q tm %q", baseEv.Nonce, baseTM)
+	}
+	tm, ev, raw := postNonce(t, "n-1", true)
+	if ev.Nonce != "n-1" || tm != baseTM {
+		t.Fatalf("nonce %q tm %q vs %q", ev.Nonce, tm, baseTM)
+	}
+	if strings.Contains(raw, "nonce") || strings.Contains(raw, "n-1") {
+		t.Fatalf("response leaks nonce: %s", raw)
+	}
+	for name, v := range map[string]any{
+		"numeric":  5,
+		"too-long": strings.Repeat("a", 65),
+		"control":  "a\tb",
+	} {
+		tm, ev, _ := postNonce(t, v, true)
+		if ev.Nonce != "" || tm != baseTM {
+			t.Fatalf("%s: nonce %q", name, ev.Nonce)
+		}
+	}
+}
+
+func widgetFS() fstest.MapFS {
+	return fstest.MapFS{
+		"loader.js":          {Data: []byte("/* loader */")},
+		"frame.abcd1234.js":  {Data: []byte("/* frame */")},
+		"frame.html":         {Data: []byte(`<script src="/widget/v1/{{.Bundle}}"></script>`)},
+		"worker.ef012345.js": {Data: []byte("/* worker */")},
+		"manifest.json":      {Data: []byte(`{"frame":"frame.abcd1234.js","worker":"worker.ef012345.js"}`)},
+	}
+}
+
+func TestWidgetRoutes404WithoutAssets(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, p := range []string{"/widget/v1/loader.js", "/widget/v1/frame?k=" + e.key, "/widget/v1/frame.abcd1234.js"} {
+		wantError(t, e.do(httptest.NewRequest("GET", p, nil)), 404, "not_found")
+	}
+}
+
+func TestWidgetLoaderAndBundle(t *testing.T) {
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/loader.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* loader */" {
+		t.Fatalf("loader %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("loader Content-Type %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("loader Cache-Control %q", cc)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("loader has no ETag")
+	}
+	r := httptest.NewRequest("GET", "/widget/v1/loader.js", nil)
+	r.Header.Set("If-None-Match", etag)
+	if w := e.do(r); w.Code != 304 || w.Body.Len() != 0 {
+		t.Fatalf("conditional loader %d %q", w.Code, w.Body.String())
+	}
+
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame.abcd1234.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* frame */" {
+		t.Fatalf("bundle %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("bundle Content-Type %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("bundle Cache-Control %q", cc)
+	}
+	for _, p := range []string{"/widget/v1/other.js", "/widget/v1/frame.html", "/widget/v1/manifest.json"} {
+		wantError(t, e.do(httptest.NewRequest("GET", p, nil)), 404, "not_found")
+	}
+}
+
+func TestWidgetFrame(t *testing.T) {
+	const csp = "; default-src 'none'; script-src 'self'; connect-src 'self'; worker-src 'self'"
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `src="/widget/v1/frame.abcd1234.js"`) {
+		t.Fatalf("frame %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("frame Content-Type %q", ct)
+	}
+	if got := w.Header().Get("Content-Security-Policy"); got != "frame-ancestors *"+csp {
+		t.Fatalf("frame CSP %q", got)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("frame Cache-Control %q", cc)
+	}
+	if _, ok := w.Header()["X-Frame-Options"]; ok {
+		t.Fatal("frame sets X-Frame-Options")
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) {
+		s.byID[keyID].AllowedOrigins = []string{"https://a.com", "https://*.b.com"}
+	}, widgetFS())
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if got := w.Header().Get("Content-Security-Policy"); w.Code != 200 || got != "frame-ancestors https://a.com https://*.b.com"+csp {
+		t.Fatalf("scoped frame %d CSP %q", w.Code, got)
+	}
+
+	unknown, _, _ := auth.GenerateKey()
+	for name, q := range map[string]string{"unknown": "?k=" + unknown, "malformed": "?k=nope", "missing": ""} {
+		w := e.do(httptest.NewRequest("GET", "/widget/v1/frame"+q, nil))
+		if w.Code != 403 || w.Body.Len() != 0 {
+			t.Fatalf("%s key: %d %q", name, w.Code, w.Body.String())
+		}
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) {
+		s.byID[keyID].RevokedAt = &testNow
+	}, widgetFS())
+	if w := e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)); w.Code != 403 || w.Body.Len() != 0 {
+		t.Fatalf("revoked key: %d %q", w.Code, w.Body.String())
+	}
+
+	e = newEnvWidget(t, func(_ *config.Config, s *fakeStore) { s.findErr = errBoom }, widgetFS())
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "store_unavailable")
+}
+
+func TestFrameAncestors(t *testing.T) {
+	for _, tc := range []struct {
+		in   []string
+		want string
+	}{
+		{nil, "*"},
+		{[]string{}, "*"},
+		{[]string{"*"}, "*"},
+		{[]string{"https://a.com", " https://b.com "}, "https://a.com https://b.com"},
+	} {
+		if got := frameAncestors(tc.in); got != tc.want {
+			t.Errorf("frameAncestors(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// widgetReportReq is a /widget/report POST carrying thumbmarkReq's headers
+// and an Origin the key is not scoped to.
+func widgetReportReq(t *testing.T, key string, body []byte) *http.Request {
+	t.Helper()
+	r := thumbmarkReq(t, key, body)
+	r.URL.Path, r.RequestURI = "/widget/report", "/widget/report"
+	r.Header.Set("Origin", "https://nazr.example")
+	return r
+}
+
+func widgetHolder(t *testing.T) *conn.Holder {
+	return fullHolderOrder(t, append(slices.Clone(testHeaderOrder), "Origin"))
+}
+
+// mintTestChallenge mints a challenge for origin under testSigningKey, as the
+// frame route would at e.now, and returns it with its id.
+func mintTestChallenge(t *testing.T, e *env, origin string) (string, string) {
+	t.Helper()
+	return mintChallengeWith(t, e, testSigningKey, origin)
+}
+
+func mintChallengeWith(t *testing.T, e *env, k widgettoken.Key, origin string) (string, string) {
+	t.Helper()
+	id := ulid.Make().String()
+	ch := widgettoken.MintChallenge(k.Secret, widgettoken.Challenge{ID: id,
+		Expires: e.now.Add(widgetMatchWindow).Unix(), Bits: e.cfg.PowBits, Kid: k.Kid, Origin: origin})
+	return ch, id
+}
+
+// widgetBody is a valid report body for challenge ch (id) with a solved
+// proof-of-work and the stock client's components.
+func widgetBody(t *testing.T, e *env, ch, id string) map[string]any {
+	t.Helper()
+	return map[string]any{"challenge": ch, "pow": widgettoken.SolvePoW(id, e.cfg.PowBits),
+		"components": stockBody(t)["components"], "clientHash": "abc123"}
+}
+
+// postReport sends body as a widget report through a full TLS + h2 holder
+// and returns the 200 JSON outcome.
+func postReport(t *testing.T, e *env, body map[string]any, mod ...func(r *http.Request)) map[string]any {
+	t.Helper()
+	r := widgetReportReq(t, e.key, marshal(t, body))
+	for _, m := range mod {
+		m(r)
+	}
+	w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("status %d type %q: %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	return decodeResp(t, w)
+}
+
+func parseTestToken(t *testing.T, tok any) widgettoken.Claims {
+	t.Helper()
+	s, _ := tok.(string)
+	c, err := widgettoken.Parse(s, func(kid string) (*ecdsa.PublicKey, bool) {
+		if kid != testSigningKey.Kid {
+			return nil, false
+		}
+		return &testSigningKey.Private.PublicKey, true
+	})
+	if err != nil {
+		t.Fatalf("token %q: %v", s, err)
+	}
+	return c
+}
+
+func TestWidgetReportPass(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	out := postReport(t, e, widgetBody(t, e, ch, id))
+	if out["verdict"] != "pass" || len(out) != 2 {
+		t.Fatalf("outcome %v", out)
+	}
+	c := parseTestToken(t, out["token"])
+	want := widgettoken.Claims{Issuer: "https://example.com", Audience: keyID, ID: id, IssuedAt: testNow.Unix(),
+		Expires: testNow.Add(5 * time.Minute).Unix(), Hostname: "https://shop.example", Verdict: "pass"}
+	if c != want {
+		t.Fatalf("claims %+v want %+v", c, want)
+	}
+	if len(e.store.reports) != 1 || len(e.repo.visitors) != 0 || len(e.store.events) != 0 {
+		t.Fatalf("reports %d visitors %v events %d", len(e.store.reports), e.repo.visitors, len(e.store.events))
+	}
+	rep := e.store.reports[0]
+	if rep.ID != id || rep.Nonce != id || !rep.PowOK || rep.Verdict != "pass" || rep.Hostname != "https://shop.example" ||
+		rep.TokenIssuedAt == nil || !rep.TokenIssuedAt.Equal(testNow) || rep.ClientHash != "abc123" || rep.APIKeyID != keyID {
+		t.Fatalf("report %+v", rep)
+	}
+	var cls map[string]any
+	if err := json.Unmarshal(rep.Classification, &cls); err != nil || cls["bot"] != false || cls["danger_level"] != float64(0) {
+		t.Fatalf("classification %s: %v", rep.Classification, err)
+	}
+	var sig map[string]bool
+	if err := json.Unmarshal(rep.Signals, &sig); err != nil || len(sig) == 0 {
+		t.Fatalf("signals %s: %v", rep.Signals, err)
+	}
+	if _, ok := sig["canvas_probe_anomaly"]; ok {
+		t.Fatalf("signals carry canvas_probe_anomaly: %s", rep.Signals)
+	}
+	if rep.IPHash != ipintel.Identifier(netip.MustParseAddr("203.0.113.42"), "salt") {
+		t.Fatalf("ip hash %q", rep.IPHash)
+	}
+	if rep.JA4 == "" || rep.H2FP == "" || rep.UserAgent != chromeUA {
+		t.Fatalf("ja4 %q h2fp %q ua %q", rep.JA4, rep.H2FP, rep.UserAgent)
+	}
+	if rep.IP == nil || rep.IP.String() != "203.0.113.42" || rep.Components != nil || !rep.CreatedAt.Equal(testNow) {
+		t.Fatalf("ip %v components %s created %v", rep.IP, rep.Components, rep.CreatedAt)
+	}
+
+	// The same components and connection through /thumbmark, stabilizing
+	// "private" and "iframe" like the frame client, hash the same.
+	tb := stockBody(t)
+	tb["options"] = map[string]any{"stabilize": []any{"private", "iframe"}}
+	r := thumbmarkReq(t, e.key, marshal(t, tb))
+	r.Header.Set("Origin", "https://nazr.example")
+	w := e.do(r.WithContext(WithHolder(r.Context(), widgetHolder(t))))
+	if w.Code != http.StatusOK {
+		t.Fatalf("thumbmark %d: %s", w.Code, w.Body.String())
+	}
+	if tm := decodeResp(t, w)["thumbmark"]; tm != rep.Thumbmark {
+		t.Fatalf("report thumbmark %q, /thumbmark %q", rep.Thumbmark, tm)
+	}
+
+	e = newEnv(t, func(c *config.Config, _ *fakeStore) {
+		c.WidgetIssuer, c.StoreComponents, c.StoreIP = "https://nazr.example", true, "hash"
+	})
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	if c := parseTestToken(t, postReport(t, e, widgetBody(t, e, ch, id))["token"]); c.Issuer != "https://nazr.example" {
+		t.Fatalf("issuer %q", c.Issuer)
+	}
+	rep = e.store.reports[0]
+	var comps map[string]any
+	if err := json.Unmarshal(rep.Components, &comps); err != nil || comps["tls"] == nil || comps["system"] == nil {
+		t.Fatalf("components %s: %v", rep.Components, err)
+	}
+	if rep.IP != nil || rep.IPHash == "" {
+		t.Fatalf("hash mode ip %v hash %q", rep.IP, rep.IPHash)
+	}
+}
+
+func TestWidgetReportInconclusive(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	body := widgetBody(t, e, ch, id)
+	comps := body["components"].(map[string]any)
+	priv := maps.Clone(comps["privacy"].(map[string]any))
+	priv["webdriver"] = true
+	comps["privacy"] = priv
+	if out := postReport(t, e, body); out["verdict"] != "inconclusive" || len(out) != 1 {
+		t.Fatalf("webdriver outcome %v", out)
+	}
+	if rep := e.store.reports[0]; rep.Verdict != "inconclusive" || rep.TokenIssuedAt != nil || !rep.PowOK {
+		t.Fatalf("report %+v", rep)
+	}
+
+	noLang := func(r *http.Request) { r.Header.Del("Accept-Language") }
+	for maxDanger, want := range map[int]string{0: "inconclusive", 2: "pass"} {
+		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.WidgetPassMaxDanger = maxDanger })
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		out := postReport(t, e, widgetBody(t, e, ch, id), noLang)
+		if out["verdict"] != want {
+			t.Fatalf("max danger %d: outcome %v, want %s", maxDanger, out, want)
+		}
+		if (out["token"] != nil) != (want == "pass") {
+			t.Fatalf("max danger %d: token %v", maxDanger, out["token"])
+		}
+		var cls map[string]any
+		_ = json.Unmarshal(e.store.reports[0].Classification, &cls)
+		if cls["danger_level"] != float64(1) || cls["bot"] != false {
+			t.Fatalf("classification %v", cls)
+		}
+	}
+}
+
+func TestWidgetReportPowFailed(t *testing.T) {
+	e := newEnv(t, nil)
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	bad := ""
+	for i := 0; ; i++ {
+		if c := strconv.Itoa(i); !widgettoken.VerifyPoW(id, c, e.cfg.PowBits) {
+			bad = c
+			break
+		}
+	}
+	body := widgetBody(t, e, ch, id)
+	body["pow"] = bad
+	if out := postReport(t, e, body); out["verdict"] != "pow_failed" || len(out) != 1 {
+		t.Fatalf("outcome %v", out)
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+	if rep := e.store.reports[0]; rep.PowOK || rep.Verdict != "pow_failed" || rep.TokenIssuedAt != nil || rep.ID != id {
+		t.Fatalf("report %+v", rep)
+	}
+}
+
+func TestWidgetReportInvalid(t *testing.T) {
+	invalid := func(t *testing.T, e *env, body map[string]any) {
+		t.Helper()
+		if out := postReport(t, e, body); out["verdict"] != "invalid" || len(out) != 1 {
+			t.Fatalf("outcome %v", out)
+		}
+		if len(e.store.reports) != 0 {
+			t.Fatalf("stored %+v", e.store.reports)
+		}
+	}
+	for name, mut := range map[string]func(e *env, b map[string]any){
+		"tampered mac": func(_ *env, b map[string]any) {
+			// Flip the MAC's first character: its last one carries
+			// padding bits a decoder may ignore.
+			payload, mac, _ := strings.Cut(b["challenge"].(string), ".")
+			first := "A"
+			if mac[0] == 'A' {
+				first = "B"
+			}
+			b["challenge"] = payload + "." + first + mac[1:]
+		},
+		"expired":           func(e *env, _ map[string]any) { e.now = testNow.Add(11 * time.Minute) },
+		"long challenge":    func(_ *env, b map[string]any) { b["challenge"] = strings.Repeat("a", 513) },
+		"empty challenge":   func(_ *env, b map[string]any) { b["challenge"] = "" },
+		"non-digit pow":     func(_ *env, b map[string]any) { b["pow"] = "12a" },
+		"long pow":          func(_ *env, b map[string]any) { b["pow"] = strings.Repeat("1", 33) },
+		"numeric pow":       func(_ *env, b map[string]any) { b["pow"] = 12 },
+		"missing comps":     func(_ *env, b map[string]any) { delete(b, "components") },
+		"string comps":      func(_ *env, b map[string]any) { b["components"] = "x" },
+		"numeric hash":      func(_ *env, b map[string]any) { b["clientHash"] = 5 },
+		"bad hash":          func(_ *env, b map[string]any) { b["clientHash"] = "zz" },
+		"empty hash":        func(_ *env, b map[string]any) { b["clientHash"] = "" },
+		"phase 1 body":      func(_ *env, b map[string]any) { delete(b, "challenge"); delete(b, "pow"); b["nonce"] = "n-1" },
+		"missing challenge": func(_ *env, b map[string]any) { delete(b, "challenge") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, nil)
+			ch, id := mintTestChallenge(t, e, "https://shop.example")
+			body := widgetBody(t, e, ch, id)
+			mut(e, body)
+			invalid(t, e, body)
+		})
+	}
+
+	t.Run("unknown kid", func(t *testing.T) {
+		e := newEnv(t, nil)
+		other := testSigningKey
+		other.Kid = "nope"
+		ch, id := mintChallengeWith(t, e, other, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+
+	t.Run("no signing", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, nil)
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+
+	t.Run("reused challenge", func(t *testing.T) {
+		e := newEnv(t, nil)
+		ch, id := mintTestChallenge(t, e, "https://shop.example")
+		body := widgetBody(t, e, ch, id)
+		first := postReport(t, e, body)
+		if first["verdict"] != "pass" {
+			t.Fatalf("first %v", first)
+		}
+		if out := postReport(t, e, body); out["verdict"] != "invalid" || len(out) != 1 {
+			t.Fatalf("second %v", out)
+		}
+		if len(e.store.reports) != 1 {
+			t.Fatalf("reports %d", len(e.store.reports))
+		}
+		parseTestToken(t, first["token"])
+	})
+
+	retired := testNow.Add(-time.Hour)
+	old := testSigningKey
+	old.Kid, old.Secret, old.CreatedAt, old.RetiredAt = "old", []byte("fedcba9876543210fedcba9876543210"), testNow.Add(-48*time.Hour), &retired
+	t.Run("retired key in grace", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, widgettoken.NewStaticKeyring(testSigningKey, old))
+		ch, id := mintChallengeWith(t, e, old, "https://shop.example")
+		out := postReport(t, e, widgetBody(t, e, ch, id))
+		if out["verdict"] != "pass" {
+			t.Fatalf("outcome %v", out)
+		}
+		if c := parseTestToken(t, out["token"]); c.ID != id {
+			t.Fatalf("claims %+v", c)
+		}
+	})
+	t.Run("retired key past grace", func(t *testing.T) {
+		e := newEnvWidgetSigning(t, nil, nil, widgettoken.NewStaticKeyring(testSigningKey))
+		ch, id := mintChallengeWith(t, e, old, "https://shop.example")
+		invalid(t, e, widgetBody(t, e, ch, id))
+	})
+}
+
+func TestWidgetReportStoreError(t *testing.T) {
+	e := newEnv(t, nil)
+	e.store.reportErr = errBoom
+	ch, id := mintTestChallenge(t, e, "https://shop.example")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "inconclusive" || len(out) != 1 {
+		t.Fatalf("outcome %v", out)
+	}
+}
+
+func TestWidgetReportScopedKey(t *testing.T) {
+	e := newEnv(t, func(_ *config.Config, s *fakeStore) { s.byID[keyID].AllowedOrigins = []string{"https://a.com"} })
+	ch, id := mintTestChallenge(t, e, "https://a.com")
+	if out := postReport(t, e, widgetBody(t, e, ch, id)); out["verdict"] != "pass" {
+		t.Fatalf("widget report %v", out)
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+	r := thumbmarkReq(t, e.key, marshal(t, stockBody(t)))
+	r.Header.Set("Origin", "https://nazr.example")
+	wantError(t, e.do(r), 403, "origin_not_allowed")
+}
+
+func TestWidgetReportRejectsBody(t *testing.T) {
+	// Each body is rejected by validation or size: 200 "invalid", nothing
+	// stored; "control" proves a valid body under the same limit is stored.
+	const limit = 1024
+	for name, body := range map[string]string{
+		"array":          `[]`,
+		"empty":          `{}`,
+		"not json":       `{`,
+		"over the limit": `{"challenge":"c","pow":"1","components":{"x":"` + strings.Repeat("a", 2*limit) + `"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
+			w := e.do(widgetReportReq(t, e.key, []byte(body)))
+			if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"verdict":"invalid"}` {
+				t.Fatalf("status %d: %q", w.Code, w.Body.String())
+			}
+			if len(e.store.reports) != 0 {
+				t.Fatalf("stored %+v", e.store.reports)
+			}
+		})
+	}
+
+	t.Run("control", func(t *testing.T) {
+		e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.BodyLimit = limit })
+		ch, id := mintTestChallenge(t, e, "")
+		body := map[string]any{"challenge": ch, "pow": widgettoken.SolvePoW(id, e.cfg.PowBits), "components": map[string]any{"a": 1}}
+		if b := marshal(t, body); len(b) > limit {
+			t.Fatalf("control body %d bytes exceeds the limit", len(b))
+		}
+		w := e.do(widgetReportReq(t, e.key, marshal(t, body)))
+		if w.Code != http.StatusOK || len(e.store.reports) != 1 {
+			t.Fatalf("status %d reports %d: %s", w.Code, len(e.store.reports), w.Body.String())
+		}
+	})
+
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.DefaultRateLimit = 1 })
+	ch, id := mintTestChallenge(t, e, "")
+	wantError(t, e.do(widgetReportReq(t, "", marshal(t, widgetBody(t, e, ch, id)))), 403, "unauthorized")
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t, e, ch, id)))); w.Code != http.StatusOK {
+		t.Fatalf("first %d", w.Code)
+	}
+	ch, id = mintTestChallenge(t, e, "")
+	if w := e.do(widgetReportReq(t, e.key, marshal(t, widgetBody(t, e, ch, id)))); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second %d, want 429", w.Code)
+	}
+	if len(e.store.reports) != 1 {
+		t.Fatalf("reports %d", len(e.store.reports))
+	}
+}
+
+func TestAdminWidgetSummary(t *testing.T) {
+	e := newEnv(t, func(c *config.Config, _ *fakeStore) { c.AdminToken = "s3cret" })
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest("GET", "/admin/keys/key-1/widget", nil)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		return r
+	}
+	wantError(t, e.do(req("")), 403, "unauthorized")
+
+	e.store.summary = store.WidgetSummary{Reports: 10, Matched: 7, Unmatched: 3, IPMismatch: 1, JA4Mismatch: 2, JA4Unknown: 4,
+		UAMismatch: 5, EventsUnmatched: 6, Pass: 7, Inconclusive: 2, PowFailed: 1, Verified: 3, Replayed: 1}
+	w := e.do(req("s3cret"))
+	if w.Code != 200 {
+		t.Fatalf("summary %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"window_days": float64(30), "reports": float64(10), "matched": float64(7), "unmatched": float64(3),
+		"events_unmatched": float64(6), "ip_mismatch": float64(1), "ja4_mismatch": float64(2), "ja4_unknown": float64(4), "ua_mismatch": float64(5),
+		"pass": float64(7), "inconclusive": float64(2), "pow_failed": float64(1), "verified": float64(3), "replayed": float64(1)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("body %v", got)
+	}
+	if e.store.summaryKeyID != "key-1" || e.store.summaryWindow != 10*time.Minute ||
+		!e.store.summarySince.Equal(testNow.Add(-30*24*time.Hour)) {
+		t.Fatalf("args %q %v %v", e.store.summaryKeyID, e.store.summarySince, e.store.summaryWindow)
+	}
+
+	e.store.summaryErr = errBoom
+	wantError(t, e.do(req("s3cret")), 503, "store_unavailable")
+}
+
+func challengeFS() fstest.MapFS {
+	fsys := widgetFS()
+	fsys["frame.html"] = &fstest.MapFile{Data: []byte(`<script src="/widget/v1/{{.Bundle}}" data-worker="/widget/v1/{{.Worker}}" data-challenge="{{.Challenge}}" data-pow-bits="{{.PowBits}}" data-origin="{{.Origin}}"></script>`)}
+	return fsys
+}
+
+func attr(t *testing.T, html, name string) string {
+	t.Helper()
+	m := regexp.MustCompile(name + `="([^"]*)"`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatalf("no %s attribute in %s", name, html)
+	}
+	return m[1]
+}
+
+func TestWidgetFrameChallenge(t *testing.T) {
+	e := newEnvWidget(t, nil, challengeFS())
+	r := httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)
+	r.Header.Set("Referer", "https://shop.example/cart")
+	w := e.do(r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	c, err := widgettoken.ParseChallenge(attr(t, body, "data-challenge"),
+		func(kid string) ([]byte, bool) { return testSigningKey.Secret, kid == "test" }, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ID) != 26 || c.Expires != testNow.Add(10*time.Minute).Unix() || c.Bits != e.cfg.PowBits ||
+		c.Kid != "test" || c.Origin != "https://shop.example" {
+		t.Fatalf("challenge %+v", c)
+	}
+	if got := attr(t, body, "data-pow-bits"); got != strconv.Itoa(e.cfg.PowBits) {
+		t.Fatalf("pow bits %q", got)
+	}
+	if got := attr(t, body, "data-worker"); got != "/widget/v1/worker.ef012345.js" {
+		t.Fatalf("worker %q", got)
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.HasSuffix(csp, "; worker-src 'self'") {
+		t.Fatalf("csp %q", csp)
+	}
+
+	w = e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil))
+	if w.Code != 200 || attr(t, w.Body.String(), "data-origin") != "" {
+		t.Fatalf("no referer: %d %s", w.Code, w.Body.String())
+	}
+
+	e = newEnvWidgetSigning(t, nil, challengeFS(), nil)
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/frame?k="+e.key, nil)), 503, "signing_unavailable")
+}
+
+func TestWidgetBundleServesWorker(t *testing.T) {
+	e := newEnvWidget(t, nil, widgetFS())
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/worker.ef012345.js", nil))
+	if w.Code != 200 || w.Body.String() != "/* worker */" {
+		t.Fatalf("worker %d %q", w.Code, w.Body.String())
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control %q", cc)
+	}
+	for name, mf := range map[string]string{
+		"missing":      `{"frame":"frame.abcd1234.js"}`,
+		"empty":        `{"frame":"frame.abcd1234.js","worker":""}`,
+		"missing file": `{"frame":"frame.abcd1234.js","worker":"nope.js"}`,
+	} {
+		fsys := widgetFS()
+		fsys["manifest.json"] = &fstest.MapFile{Data: []byte(mf)}
+		e := newEnvWidget(t, nil, fsys)
+		for _, p := range []string{"/widget/v1/loader.js", "/widget/v1/frame?k=" + e.key, "/widget/v1/frame.abcd1234.js"} {
+			if w := e.do(httptest.NewRequest("GET", p, nil)); w.Code != 404 {
+				t.Fatalf("%s %s: %d", name, p, w.Code)
+			}
+		}
+	}
+}
+
+func TestJWKS(t *testing.T) {
+	e := newEnv(t, nil)
+	w := e.do(httptest.NewRequest("GET", "/widget/v1/jwks.json", nil))
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "public, max-age=3600" ||
+		w.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("jwks %d %v", w.Code, w.Header())
+	}
+	var got struct {
+		Keys []struct{ Kid, Kty, Crv string }
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Keys) != 1 || got.Keys[0].Kid != "test" || got.Keys[0].Kty != "EC" || got.Keys[0].Crv != "P-256" {
+		t.Fatalf("keys %+v", got.Keys)
+	}
+	e = newEnvWidgetSigning(t, nil, nil, nil)
+	wantError(t, e.do(httptest.NewRequest("GET", "/widget/v1/jwks.json", nil)), 404, "not_found")
 }

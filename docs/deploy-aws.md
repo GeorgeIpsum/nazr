@@ -21,9 +21,12 @@ nazr fingerprints the TLS ClientHello (JA4) and the HTTP/2 connection preface, a
     terraform apply -target=module.nazr.module.service.aws_ecr_repository.this   # examples; drop "module.nazr." at the root
     REPO=$(aws ecr describe-repositories --repository-names nazr --query 'repositories[0].repositoryUri' --output text)
     aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
+    pnpm install && pnpm build --filter=@nazr/widget && pnpm --filter @nazr/api sync-widget   # embed the widget
     docker buildx build --platform linux/arm64 -t "$REPO:v1.0.0" --push apps/api
     terraform apply
     ```
+
+    The sync step copies the built [widget](widget.md) into the Docker context before the build, as the release workflow does. Without it the image still works, but its widget routes (`/widget/v1/*`) return 404.
 
   Tasks run on **ARM64 (Graviton)** by default, which is about 20% cheaper per vCPU. This needs the multi-arch (`linux/amd64` + `linux/arm64`) image published by the release workflow; for an amd64-only image set `cpu_architecture = "X86_64"`.
 - The AWS CLI with the Session Manager plugin for the first-key command ([install the plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)).
@@ -89,7 +92,7 @@ aws ecs execute-command --region <region> --cluster <cluster> \
   --container nazr --interactive --command "/nazr keys create --label first"
 ```
 
-The image is distroless and has no shell, but ECS Exec runs the given command directly, which works for the static `/nazr` binary; `--interactive` is required by the CLI even for a single command. The command inherits the task's environment (including `NAZR_DATABASE_URL`). To pick a specific task, list them with `aws ecs list-tasks --cluster <cluster> --service-name <service>`. Further keys can be managed through `/admin/keys` with the admin token:
+The image is distroless and has no shell, but ECS Exec runs the given command directly, which works for the static `/nazr` binary; `--interactive` is required by the CLI even for a single command. `keys create` prints the API key, then the key's siteverify secret, then an `id  prefix  label` line; only the first line is the API key, and both are shown once. The command inherits the task's environment (including `NAZR_DATABASE_URL`). To pick a specific task, list them with `aws ecs list-tasks --cluster <cluster> --service-name <service>`. Further keys can be managed through `/admin/keys` with the admin token:
 
 ```bash
 aws secretsmanager get-secret-value --secret-id "$(terraform output -raw admin_token_secret_arn)" \

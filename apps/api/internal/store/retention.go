@@ -17,6 +17,7 @@ func (s *Store) Prune(ctx context.Context, eventsBefore, logsBefore time.Time, b
 		before time.Time
 	}{
 		{`DELETE FROM events WHERE id IN (SELECT id FROM events WHERE created_at < $1 LIMIT $2)`, eventsBefore},
+		{`DELETE FROM widget_reports WHERE id IN (SELECT id FROM widget_reports WHERE created_at < $1 LIMIT $2)`, eventsBefore},
 		{`DELETE FROM client_logs WHERE id IN (SELECT id FROM client_logs WHERE created_at < $1 LIMIT $2)`, logsBefore},
 	} {
 		for {

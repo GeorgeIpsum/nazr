@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nazr widget host</title>
+    <!--
+      Embedding example and e2e fixture: widget-host.html?key=<api key>&endpoint=<api origin>
+      loads the nazr widget inside a form, then makes the page's own /thumbmark call
+      with the widget's nonce so the server can correlate the two. The widget's
+      token lands in the form's hidden nazr-token input and in window.__nazrToken.
+    -->
+  </head>
+  <body>
+    <p id="status">loading the nazr widget…</p>
+    <!-- The loader fills a hidden nazr-token input in its closest form. -->
+    <form id="nazr-form"></form>
+    <script type="module" src="./src/widget-host.ts"></script>
+  </body>
+</html>

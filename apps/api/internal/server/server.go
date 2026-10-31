@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgettoken"
 )
 
 // StoreAPI is the subset of *store.Store the server uses.
@@ -30,10 +32,18 @@ type StoreAPI interface {
 	HasRecentEvent(ctx context.Context, ipHash, thumbmark string, since time.Time) (bool, error)
 	RecordUAJA4(ctx context.Context, ja4, family string, now time.Time) error
 	UAJA4Families(ctx context.Context, ja4 string, min int) ([]string, error)
+	DominantCanvasProbe(ctx context.Context, keyID, cohort string, since time.Time, minSample int) (string, bool, error)
+	CanvasProbeEntropy(ctx context.Context, keyID string, since time.Time) (visitors, distinct int64, err error)
+	InsertWidgetReport(ctx context.Context, r store.WidgetReport) error
+	WidgetSummary(ctx context.Context, keyID string, since time.Time, window time.Duration) (store.WidgetSummary, error)
 	InsertClientLog(ctx context.Context, keyID *string, body json.RawMessage) error
 	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
 	ListKeys(ctx context.Context) ([]store.APIKey, error)
 	RevokeKey(ctx context.Context, id string) error
+	FindKeyBySecretHash(ctx context.Context, hash string) (*store.APIKey, error)
+	SetKeySecret(ctx context.Context, id, hash, prefix string) error
+	MarkWidgetVerified(ctx context.Context, keyID, id string) (store.WidgetReport, error)
+	WidgetReportCorrelation(ctx context.Context, keyID, id string, window time.Duration) (store.WidgetCorrelation, error)
 }
 
 // IntelAPI is the subset of *ipintel.Service the server uses.
@@ -49,7 +59,8 @@ var (
 )
 
 // Deps are the server's collaborators. Logger, Now and Rand default to
-// slog.Default, time.Now and math/rand/v2.Float64.
+// slog.Default, time.Now and math/rand/v2.Float64. WidgetAssets is the built
+// widget (widgetassets.Open); nil leaves the widget routes unregistered (404).
 type Deps struct {
 	Cfg      config.Config
 	Store    StoreAPI
@@ -61,6 +72,11 @@ type Deps struct {
 	Version  string
 	Now      func() time.Time
 	Rand     func() float64
+
+	WidgetAssets fs.FS
+
+	// Signing holds the widget token signing keys.
+	Signing *widgettoken.Keyring
 }
 
 type server struct {
@@ -88,6 +104,9 @@ func New(d Deps) http.Handler {
 	thumb := s.globalCORS(s.bodyLimit(authMW(s.keyCORS(http.HandlerFunc(s.handleThumbmark)))))
 	mux.Handle("POST /thumbmark", s.route("thumbmark", thumb))
 	mux.Handle("OPTIONS /thumbmark", s.route("preflight", http.HandlerFunc(s.preflight)))
+	// The widget frame runs on nazr's own origin, so origin scoping is skipped.
+	reportMW := auth.MiddlewareOpts(d.Store, d.Limiter, d.Cfg.DefaultRateLimit, d.KeyCache, auth.MiddlewareOptions{SkipOrigin: true})
+	mux.Handle("POST /widget/report", s.route("widget_report", s.bodyLimit(reportMW(http.HandlerFunc(s.handleWidgetReport)))))
 	mux.Handle("POST /beacon", s.route("beacon", s.globalCORS(http.HandlerFunc(s.handleBeacon))))
 	mux.Handle("OPTIONS /beacon", s.route("preflight", http.HandlerFunc(s.preflight)))
 	mux.Handle("POST /log", s.route("log", s.globalCORS(http.HandlerFunc(s.handleLog))))
@@ -101,7 +120,26 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleListKeys))))
 	mux.Handle("POST /admin/keys", s.route("admin", admin(http.HandlerFunc(s.handleCreateKey))))
 	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
+	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
+	mux.Handle("GET /admin/keys/{id}/widget", s.route("admin", admin(http.HandlerFunc(s.handleWidgetSummary))))
+	mux.Handle("POST /admin/keys/{id}/secret", s.route("admin", admin(http.HandlerFunc(s.handleRotateSecret))))
 
+	if d.Signing != nil {
+		mux.Handle("GET /widget/v1/jwks.json", s.route("widget_jwks", s.globalCORS(http.HandlerFunc(s.handleWidgetJWKS))))
+		// Server-to-server: authenticated by the key's secret, so no CORS
+		// and no x-api-key.
+		mux.Handle("POST /widget/v1/siteverify", s.route("widget_siteverify", s.bodyLimit(http.HandlerFunc(s.handleSiteverify))))
+	}
+	if d.WidgetAssets != nil {
+		if wa, err := newWidgetAssets(d.WidgetAssets); err != nil {
+			d.Logger.Error("server: widget assets unusable; widget routes disabled", "err", err)
+		} else {
+			// The literal loader.js and frame patterns win over {bundle}.
+			mux.Handle("GET /widget/v1/loader.js", s.route("widget", s.handleWidgetLoader(wa)))
+			mux.Handle("GET /widget/v1/frame", s.route("widget", s.handleWidgetFrame(wa)))
+			mux.Handle("GET /widget/v1/{bundle}", s.route("widget", s.handleWidgetBundle(wa)))
+		}
+	}
 	if d.Cfg.DemoDir != "" {
 		mux.Handle("GET /demo/", s.route("demo", demoHandler(d.Cfg.DemoDir)))
 	}

@@ -14,6 +14,8 @@ func TestValidateOrigins(t *testing.T) {
 		"shop.example", "https://", "https://a.test/path", "https://a.test?q=1", "https://a.test#f",
 		"https://user@a.test", "https://a.*.test", "https://*", "https://*.", "*.example.com",
 		"https://a.test:0", "https://a.test:99999", "https://a.test:", "mailto:a@b.test", "**",
+		// CSP separators would split a frame-ancestors source list.
+		"https://a.test;script-src", "https://a.test,https://b.test", "https://a'.test", "https://*.a;b.test",
 	} {
 		err := ValidateOrigins([]string{"https://ok.test", bad})
 		if err == nil || !strings.Contains(err.Error(), bad) {
