@@ -1,0 +1,22 @@
+# Run the published image with built-in ACME instead of the self-signed cert.
+#   docker compose -f docker-compose.yml -f compose.ghcr.yml up -d
+# Set NAZR_ACME_DOMAINS and NAZR_ACME_EMAIL in .env. NAZR_HTTP_ADDR must stay
+# :80: it serves the ACME HTTP-01 challenge. The cert file variables are
+# cleared here because nazr prefers cert files over ACME and the base file's
+# ${VAR:-default} cannot be emptied from .env.
+services:
+  api:
+    build: !reset null
+    image: ghcr.io/georgeipsum/nazr:${NAZR_VERSION:-latest}
+    environment:
+      NAZR_TLS_CERT_FILE: ""
+      NAZR_TLS_KEY_FILE: ""
+      NAZR_ACME_DOMAINS: ${NAZR_ACME_DOMAINS:?set NAZR_ACME_DOMAINS in .env}
+      NAZR_ACME_EMAIL: ${NAZR_ACME_EMAIL:?set NAZR_ACME_EMAIL in .env}
+      NAZR_ACME_DIR: /data/acme
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        required: false

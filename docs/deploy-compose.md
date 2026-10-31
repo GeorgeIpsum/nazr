@@ -85,6 +85,17 @@ docker compose -f deploy/compose/docker-compose.yml logs -f api
 
 Logs are JSON by default (`NAZR_LOG_FORMAT=text` for readable output). The `nazrdata` volume (`/data`) holds downloaded IP lists and MaxMind databases, so they survive restarts; PostgreSQL data lives in `pgdata`. Set `NAZR_MAXMIND_ACCOUNT_ID` and `NAZR_MAXMIND_LICENSE_KEY` to enable GeoLite2 downloads.
 
+## Running the published image
+
+`deploy/compose/compose.ghcr.yml` is an override that runs the released image (`ghcr.io/georgeipsum/nazr:${NAZR_VERSION:-latest}`) instead of building from source, and uses nazr's built-in ACME (Let's Encrypt) instead of the self-signed certificate. Set `NAZR_ACME_DOMAINS` and `NAZR_ACME_EMAIL` in `deploy/compose/.env`, point the domain's DNS at the host, then:
+
+```bash
+cd deploy/compose
+docker compose -f docker-compose.yml -f compose.ghcr.yml up -d
+```
+
+The override clears `NAZR_TLS_CERT_FILE` and `NAZR_TLS_KEY_FILE` (nazr prefers cert files over ACME, and an empty value in `.env` would fall back to the base file's default), stores the ACME account and certificate under `/data/acme` on the `nazrdata` volume, and drops the `certgen` dependency. Ports 80 and 443 must be reachable from the internet, and `NAZR_HTTP_ADDR` must stay `:80`: it serves the ACME HTTP-01 challenge.
+
 ## Teardown
 
 ```bash
