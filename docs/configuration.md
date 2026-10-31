@@ -6,7 +6,7 @@ nazr is configured entirely through `NAZR_*` environment variables. Inspect the 
 nazr serve --print-config
 ```
 
-Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, or ACME domains combined with inline PEM) stop startup with an error.
+Unset secrets print empty. The listing below is that output from an empty environment (`env -i PATH=$PATH HOME=$HOME nazr serve --print-config`), annotated. Durations use Go syntax (`720h`, `30m`); lists are comma separated; booleans are `true` or `false`. Invalid values (bad `NAZR_TLS_MODE`, `NAZR_STORE_IP`, a sample rate outside 0-1, a non-positive body limit, ACME domains combined with inline PEM, `NAZR_POW_BITS` outside 0-32, a `NAZR_WIDGET_TOKEN_TTL` not greater than 0 or above 1h, or `NAZR_WIDGET_PASS_MAX_DANGER` outside 0-5) stop startup with an error.
 
 Secrets (redacted in `--print-config` and in the debug log): `NAZR_DATABASE_URL`, `NAZR_REDIS_URL`, `NAZR_TLS_KEY_PEM`, `NAZR_MAXMIND_LICENSE_KEY`, `NAZR_ADMIN_TOKEN`, `NAZR_IP_HASH_SALT`, `NAZR_JA4DB_TOKEN`.
 
@@ -40,7 +40,7 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_CANVAS_PROBE_SCORING` | bool | `false` | Enable opt-in canvas-probe anomaly scoring (the `canvas_probe_anomaly` signal). Storage of the probe and the admin entropy report are unaffected by it; see [signals.md](signals.md#consumer-canvas-probe-and-the-entropy-report) |
 | `NAZR_DATA_DIR` | path | `/data` | Cache for downloaded IP lists. Use a persistent volume |
 | `NAZR_DEMO_DIR` | path | empty | Serve static files at `/demo/` when set |
-| `NAZR_WIDGET_DIR` | path | empty (the embedded widget) | Serve the widget assets from this directory instead of the ones embedded in the binary, for development. The directory holds `loader.js`, `frame.html`, `manifest.json` and the frame bundle, as built by `@nazr/widget`. See [widget.md](widget.md) |
+| `NAZR_WIDGET_DIR` | path | empty (the embedded widget) | Serve the widget assets from this directory instead of the ones embedded in the binary, for development. The directory holds `loader.js`, `frame.html`, `manifest.json`, the frame bundle and the proof-of-work worker bundle, as built by `@nazr/widget`. See [widget.md](widget.md) |
 | `NAZR_AUTO_MIGRATE` | bool | `true` | Apply database migrations on `serve` start. `nazr migrate` does it explicitly |
 | `NAZR_LOG_LEVEL` | string | `info` | `debug`, `info`, `warn`, `error` |
 | `NAZR_LOG_FORMAT` | `json`, `text` | `json` | Log encoding |
@@ -72,6 +72,17 @@ Related: [protocol.md](protocol.md), [signals.md](signals.md).
 | `NAZR_STORE_COMPONENTS` | bool | `false` | Persist the full merged components with each event and each widget report |
 | `NAZR_EVENT_RETENTION` | duration | `2160h` (90 days) | Events and widget reports older than this are pruned hourly; `0` keeps them forever |
 | `NAZR_LOG_RETENTION` | duration | `0s` | Enables storing `/log` bodies and sets their retention; `0` discards them |
+
+## Widget
+
+| Variable | Type | Default | Meaning |
+|---|---|---|---|
+| `NAZR_POW_BITS` | int 0-32 | `18` | Leading zero bits of `sha256(id + ":" + counter)` the frame must find before it can get a token. Each extra bit doubles the expected work; 18 is a fraction of a second on a laptop. `0` disables proof-of-work (any counter passes), which tests use |
+| `NAZR_WIDGET_TOKEN_TTL` | duration | `5m` | Lifetime of an issued token. Must be greater than 0 and at most `1h`: tokens must expire well inside the 24 h signing-key grace minus the 1 h JWKS cache. The loader also clamps its own expiry timer |
+| `NAZR_WIDGET_ISSUER` | string | empty (`https://<Host>` of the request) | The token's `iss` claim. Set it in production: the default derives from the request `Host`. It is required when the `Host` seen by nazr is not the public name |
+| `NAZR_WIDGET_PASS_MAX_DANGER` | int 0-5 | `2` | Highest classification danger level that still earns a token. Bots never pass, whatever their level |
+
+Trust boundary: the signing keys' private halves and their HMAC secrets are stored in plaintext in Postgres, so anyone who can read the database can mint tokens. The server creates the first signing key on its first `serve`; see [the trust boundary](widget.md#trust-boundary-and-deployment). `NAZR_WIDGET_DIR` (in Core) also applies. How the widget works is in [widget.md](widget.md).
 
 ## Reference output
 
@@ -107,6 +118,7 @@ NAZR_MAXMIND_ACCOUNT_ID=
 NAZR_MAXMIND_EDITIONS=GeoLite2-City,GeoLite2-ASN
 NAZR_MAXMIND_LICENSE_KEY=
 NAZR_METRICS_ADDR=127.0.0.1:9090
+NAZR_POW_BITS=18
 NAZR_PROXY_PROTOCOL=false
 NAZR_REDIS_URL=
 NAZR_STORE_COMPONENTS=false
@@ -122,6 +134,9 @@ NAZR_UA_JA4_MIN_OBSERVATIONS=20
 NAZR_VISITOR_MATCH_WINDOW=720h0m0s
 NAZR_VPN_URLS=
 NAZR_WIDGET_DIR=
+NAZR_WIDGET_ISSUER=
+NAZR_WIDGET_PASS_MAX_DANGER=2
+NAZR_WIDGET_TOKEN_TTL=5m0s
 ```
 
 ## Subcommands
@@ -132,6 +147,11 @@ nazr migrate                  # apply database migrations
 nazr keys create --label site --origins https://example.com --rate 120
 nazr keys list
 nazr keys revoke <id>
+nazr keys secret-rotate <id>  # new siteverify secret, printed once
+nazr signing rotate           # new widget signing key; prints its kid
+nazr signing list             # KID, CREATED, RETIRED
 nazr lists refresh            # force-fetch all IP lists and print a table
 nazr version
 ```
+
+`keys create` prints three lines: the API key, the siteverify secret and an `id  prefix  label` line. Only the first line is the API key, so scripts take it with `head -1`. Both secrets are shown once.

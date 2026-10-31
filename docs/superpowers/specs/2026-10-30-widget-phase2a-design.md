@@ -129,14 +129,18 @@ Steps, in order:
    time comparison, then `exp`. Failure → `invalid`.
 3. Verify the proof-of-work. Failure → `pow_failed`. The report is still
    stored (`pow_ok=false`) so the admin summary can count it.
-4. Compute the server components and the widget thumbmark exactly as in
-   Phase 1, then build `classify.Input` from the frame's own request the way
+4. Compute the server components and the widget thumbmark with the frame
+   client's default stabilization (`["private", "iframe"]`) rather than
+   Phase 1's unfiltered merge, so the stored thumbmark is comparable with the
+   frame's `clientHash`. Then build `classify.Input` from the frame's own request the way
    `/thumbmark` does: `IP` lookup, `HasTLS`, `UserAgent`,
    `AcceptLanguagePresent`, `JA4Families`, `H2Fingerprint`, `Timezone` from
    `components.locales.timezone`, `Webdriver` from
    `components.privacy.webdriver`. `CanvasProbeAnomaly` stays false and the
    `canvas_probe_anomaly` signal is dropped from the output, as on an
-   unscored `/thumbmark`.
+   unscored `/thumbmark`. Automated browsers (Playwright-style, where
+   `navigator.webdriver` is true) are classified as bots and therefore end in
+   `inconclusive`.
 5. Verdict: `pass` when `pow_ok`, `!Bot` and `DangerLevel <=
    NAZR_WIDGET_PASS_MAX_DANGER` (default 2); otherwise `inconclusive`.
 6. Insert the `widget_reports` row with `id = challenge id` and
@@ -426,6 +430,8 @@ outcome as one of the messages above. `fetch` failure or a non-200 status is
 - **PoW counter that satisfies `bits-1` but not `bits`**: `pow_failed`,
   stored with `pow_ok=false`, no token.
 - **`NAZR_POW_BITS=0`**: any counter passes; e2e in `plain` mode uses it.
+- **Automated browser (`navigator.webdriver`).** Classified as a bot, so the
+  verdict is `inconclusive` and no token is issued.
 - **Siteverify matrix.** Wrong secret, revoked key, bad signature, wrong
   `aud`, expired, unknown `jti`, second call (`replayed`), `remoteip`
   mismatch. Each yields exactly one error code and `success:false`.
@@ -447,9 +453,10 @@ outcome as one of the messages above. `fetch` failure or a non-200 status is
   defaults (`verdict=''`, `pow_ok=false`), are counted under none of the new
   verdict buckets, and never issued tokens.
 - A Phase 1 loader still in a browser cache (at most 300 s) requests the
-  frame with `n`, which is ignored; its frame posts the Phase 1 body, which
-  the new handler answers with `200 {verdict:"invalid"}`. Harmless and
-  short-lived.
+  frame with `n`, which is ignored. The frame document is `no-store`, so it
+  gets the new frame, which earns a token the old loader ignores. The page
+  call carries the old loader's own nonce, so correlation is unmatched for
+  at most 300 s. Harmless and short-lived.
 - Hosts that read `window.__nazrWidget.nonce` synchronously after the script
   tag get `undefined`; the Phase 1 guide's Promise form is the supported
   one.

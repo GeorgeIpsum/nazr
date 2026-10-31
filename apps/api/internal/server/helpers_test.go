@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -26,6 +29,7 @@ import (
 	"nazr/api/internal/store"
 	"nazr/api/internal/tlsfp"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgettoken"
 )
 
 // ---- fake store ----
@@ -58,15 +62,24 @@ type fakeStore struct {
 	entSince                 time.Time
 
 	reports       []store.WidgetReport
+	reportErr     error
 	summary       store.WidgetSummary
 	summaryErr    error
 	summaryKeyID  string
 	summarySince  time.Time
 	summaryWindow time.Duration
+
+	secrets        map[string]*store.APIKey // by secret hash
+	secretCalls    int
+	markCalls      int
+	markErr        error
+	correlation    store.WidgetCorrelation
+	correlationErr error
+	corrArgs       [3]string // keyID, id, window
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{keys: map[string]*store.APIKey{}, byID: map[string]*store.APIKey{}}
+	return &fakeStore{keys: map[string]*store.APIKey{}, byID: map[string]*store.APIKey{}, secrets: map[string]*store.APIKey{}}
 }
 
 func (f *fakeStore) addKey(hash string, k *store.APIKey) {
@@ -148,10 +161,13 @@ func (f *fakeStore) CreateKey(_ context.Context, n store.NewKey) (store.APIKey, 
 	k := &store.APIKey{
 		ID: "00000000-0000-4000-8000-00000000000" + string(rune('0'+f.seq)), Prefix: n.Prefix, Label: n.Label,
 		AllowedOrigins: n.AllowedOrigins, RateLimitPerMinute: n.RateLimitPerMinute,
-		CreatedAt: time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC), SecretPrefix: n.SecretPrefix,
 	}
 	f.keys[n.Hash] = k
 	f.byID[k.ID] = k
+	if n.SecretHash != "" {
+		f.secrets[n.SecretHash] = k
+	}
 	return *k, nil
 }
 
@@ -280,6 +296,7 @@ func defaultConfig(t *testing.T) config.Config {
 		t.Fatal(err)
 	}
 	cfg.IPHashSalt = "salt"
+	cfg.PowBits = 8 // keeps SolvePoW fast in tests
 	return cfg
 }
 
@@ -300,7 +317,29 @@ func newEnvWidget(t *testing.T, mut func(c *config.Config, s *fakeStore), fsys f
 	return newEnvWith(t, mut, nil, fsys)
 }
 
+// testSigningKey is the widget signing key every test env uses, kid "test".
+var testSigningKey = func() widgettoken.Key {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return widgettoken.Key{Kid: "test", Private: priv, Secret: []byte("0123456789abcdef0123456789abcdef"),
+		CreatedAt: testNow.Add(-time.Hour)}
+}()
+
+// newEnvWidgetSigning is newEnvWidget with an explicit signing keyring (nil
+// for none).
+func newEnvWidgetSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), fsys fs.FS, ring *widgettoken.Keyring) *env {
+	t.Helper()
+	return newEnvWithSigning(t, mut, nil, fsys, ring)
+}
+
 func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS) *env {
+	t.Helper()
+	return newEnvWithSigning(t, mut, cache, widget, widgettoken.NewStaticKeyring(testSigningKey))
+}
+
+func newEnvWithSigning(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *auth.KeyCache, widget fs.FS, ring *widgettoken.Keyring) *env {
 	t.Helper()
 	e := &env{t: t, store: newFakeStore(), repo: newFakeRepo(), cfg: defaultConfig(t), rand: 1, now: testNow,
 		intel: &fakeIntel{
@@ -320,7 +359,7 @@ func newEnvWith(t *testing.T, mut func(c *config.Config, s *fakeStore), cache *a
 		Cfg: e.cfg, Store: e.store, Intel: e.intel,
 		Resolver: &visitor.Resolver{Repo: e.repo, Window: e.cfg.VisitorMatchWindow, Now: func() time.Time { return testNow },
 			NewID: func() string { ids++; return visID[:24] + string(rune('A'+ids)) + "Z" }},
-		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget,
+		Limiter: auth.NewMemoryLimiter(time.Now), KeyCache: cache, WidgetAssets: widget, Signing: ring,
 		Logger: slog.New(slog.DiscardHandler), Version: "test-1.0", Now: func() time.Time { return e.now }, Rand: func() float64 { return e.rand },
 	})
 	return e
@@ -487,6 +526,14 @@ func (f *fakeStore) CanvasProbeEntropy(_ context.Context, keyID string, since ti
 func (f *fakeStore) InsertWidgetReport(_ context.Context, r store.WidgetReport) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.reportErr != nil {
+		return f.reportErr
+	}
+	for _, have := range f.reports {
+		if have.ID == r.ID {
+			return store.ErrDuplicateReport
+		}
+	}
 	f.reports = append(f.reports, r)
 	return nil
 }
@@ -496,4 +543,74 @@ func (f *fakeStore) WidgetSummary(_ context.Context, keyID string, since time.Ti
 	defer f.mu.Unlock()
 	f.summaryKeyID, f.summarySince, f.summaryWindow = keyID, since, window
 	return f.summary, f.summaryErr
+}
+
+func (f *fakeStore) FindKeyBySecretHash(_ context.Context, hash string) (*store.APIKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.secretCalls++
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.secrets[hash], nil
+}
+
+// SetKeySecret replaces the key's secret hash in the secrets index.
+func (f *fakeStore) SetKeySecret(_ context.Context, id, hash, prefix string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.byID[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	for h, have := range f.secrets {
+		if have == k {
+			delete(f.secrets, h)
+		}
+	}
+	f.secrets[hash] = k
+	k.SecretPrefix = prefix
+	return nil
+}
+
+// secretHashOf returns the secret hash stored for key id, or "".
+func (f *fakeStore) secretHashOf(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for h, k := range f.secrets {
+		if k.ID == id {
+			return h
+		}
+	}
+	return ""
+}
+
+func (f *fakeStore) MarkWidgetVerified(_ context.Context, keyID, id string) (store.WidgetReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markCalls++
+	if f.markErr != nil {
+		return store.WidgetReport{}, f.markErr
+	}
+	for i := range f.reports {
+		r := &f.reports[i]
+		if r.ID != id || r.APIKeyID != keyID {
+			continue
+		}
+		if r.VerifiedAt != nil {
+			r.ReplayCount++
+			return store.WidgetReport{}, store.ErrAlreadyVerified
+		}
+		now := time.Now()
+		r.VerifiedAt = &now
+		return *r, nil
+	}
+	return store.WidgetReport{}, store.ErrNotFound
+}
+
+func (f *fakeStore) WidgetReportCorrelation(_ context.Context, keyID, id string, window time.Duration) (store.WidgetCorrelation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.corrArgs = [3]string{keyID, id, window.String()}
+	return f.correlation, f.correlationErr
 }

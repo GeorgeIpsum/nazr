@@ -69,6 +69,12 @@ type Config struct {
 	StoreComponents    bool          `env:"NAZR_STORE_COMPONENTS" envDefault:"false"`
 	EventRetention     time.Duration `env:"NAZR_EVENT_RETENTION" envDefault:"2160h"`
 	LogRetention       time.Duration `env:"NAZR_LOG_RETENTION"`
+
+	// Widget challenge and tokens.
+	PowBits             int           `env:"NAZR_POW_BITS" envDefault:"18"` // leading zero bits; 0 disables proof-of-work
+	WidgetTokenTTL      time.Duration `env:"NAZR_WIDGET_TOKEN_TTL" envDefault:"5m"`
+	WidgetIssuer        string        `env:"NAZR_WIDGET_ISSUER"`
+	WidgetPassMaxDanger int           `env:"NAZR_WIDGET_PASS_MAX_DANGER" envDefault:"2"`
 }
 
 // AddrOff is the NAZR_HTTP_ADDR / NAZR_METRICS_ADDR value (case-insensitive)
@@ -147,6 +153,16 @@ func (c Config) Validate() error {
 	}
 	if c.BodyLimit <= 0 {
 		errs = append(errs, fmt.Errorf("NAZR_BODY_LIMIT: %d must be greater than 0", c.BodyLimit))
+	}
+	if c.PowBits < 0 || c.PowBits > 32 {
+		errs = append(errs, fmt.Errorf("NAZR_POW_BITS: %d is outside [0,32]", c.PowBits))
+	}
+	// Tokens must expire well inside the signing-key grace minus the JWKS cache.
+	if c.WidgetTokenTTL <= 0 || c.WidgetTokenTTL > time.Hour {
+		errs = append(errs, fmt.Errorf("NAZR_WIDGET_TOKEN_TTL: %v must be greater than 0 and at most 1h", c.WidgetTokenTTL))
+	}
+	if c.WidgetPassMaxDanger < 0 || c.WidgetPassMaxDanger > 5 {
+		errs = append(errs, fmt.Errorf("NAZR_WIDGET_PASS_MAX_DANGER: %d is outside [0,5]", c.WidgetPassMaxDanger))
 	}
 	return errors.Join(errs...)
 }

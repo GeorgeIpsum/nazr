@@ -334,3 +334,16 @@ func TestMiddlewareSkipOrigin(t *testing.T) {
 		}
 	})
 }
+
+func TestGenerateSecret(t *testing.T) {
+	plain, hash, prefix := GenerateSecret()
+	if !regexp.MustCompile(`^nzs_[a-z2-7]{52}$`).MatchString(plain) {
+		t.Fatalf("bad secret %q", plain)
+	}
+	if hash != HashKey(plain) || prefix != plain[4:12] || SecretPrefix != "nzs_" {
+		t.Fatalf("hash %q prefix %q", hash, prefix)
+	}
+	if p2, _, _ := GenerateSecret(); p2 == plain {
+		t.Fatal("secrets must be random")
+	}
+}

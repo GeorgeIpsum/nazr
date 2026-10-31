@@ -134,6 +134,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       NAZR_LOG_FORMAT: "text",
       NAZR_ADMIN_TOKEN: "e2e-admin",
       NAZR_WIDGET_DIR: widgetDir,
+      NAZR_POW_BITS: "12",
     };
     execFileSync("mkdir", ["-p", env.NAZR_DATA_DIR]);
 
@@ -160,8 +161,12 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
 
     const created = execFileSync(bin, ["keys", "create", "--label", "e2e"], { env }).toString();
-    const apiKey = created.split("\n")[0].trim();
+    const lines = created.split("\n");
+    const apiKey = lines[0].trim();
     if (!apiKey) throw new Error("keys create printed no key");
+    const secret = (lines[1] ?? "").trim();
+    if (!/^nzs_[a-z2-7]{52}$/.test(secret)) throw new Error("keys create printed no widget secret");
+    process.env.NAZR_E2E_SECRET = secret;
     process.env.NAZR_E2E_KEY = apiKey;
     process.env.NAZR_E2E_ENDPOINT = ENDPOINT;
     process.env.NAZR_E2E_ADMIN_TOKEN = "e2e-admin";

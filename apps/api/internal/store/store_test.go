@@ -108,8 +108,8 @@ func newUnmigrated(t *testing.T) *Store {
 func newID() string { return ulid.Make().String() }
 
 // latestMigration is the highest migration in migrations/ (initial schema plus
-// the widget migration).
-const latestMigration = 2
+// the widget and widget-challenge migrations).
+const latestMigration = 3
 
 func TestVisitorCountIncrement(t *testing.T) {
 	s := newStore(t)
@@ -162,6 +162,12 @@ func TestMigrateSchema(t *testing.T) {
 		{"widget_reports", "thumbmark"}, {"widget_reports", "client_hash"}, {"widget_reports", "ip"},
 		{"widget_reports", "ip_hash"}, {"widget_reports", "ja4"}, {"widget_reports", "h2fp"},
 		{"widget_reports", "user_agent"}, {"widget_reports", "components"}, {"widget_reports", "created_at"},
+		{"widget_reports", "pow_ok"}, {"widget_reports", "verdict"}, {"widget_reports", "hostname"},
+		{"widget_reports", "classification"}, {"widget_reports", "signals"}, {"widget_reports", "token_issued_at"},
+		{"widget_reports", "verified_at"}, {"widget_reports", "replay_count"},
+		{"api_keys", "secret_hash"}, {"api_keys", "secret_prefix"},
+		{"signing_keys", "kid"}, {"signing_keys", "private_key_pem"}, {"signing_keys", "public_jwk"},
+		{"signing_keys", "hmac_secret"}, {"signing_keys", "created_at"}, {"signing_keys", "retired_at"},
 	} {
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, c[0], c[1]).Scan(&n); err != nil || n != 1 {
@@ -169,7 +175,7 @@ func TestMigrateSchema(t *testing.T) {
 		}
 	}
 	for _, idx := range []string{"events_thumbmark_created_idx", "events_probe_cohort_idx",
-		"events_nonce_idx", "widget_reports_key_nonce_idx", "widget_reports_created_idx"} {
+		"events_nonce_idx", "widget_reports_key_nonce_idx", "widget_reports_created_idx", "api_keys_secret_hash_idx"} {
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1`, idx).Scan(&n); err != nil || n != 1 {
 			t.Errorf("index %s: count %d, err %v", idx, n, err)

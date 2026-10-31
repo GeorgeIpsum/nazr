@@ -21,6 +21,7 @@ import (
 	"nazr/api/internal/ipintel"
 	"nazr/api/internal/store"
 	"nazr/api/internal/visitor"
+	"nazr/api/internal/widgettoken"
 )
 
 // StoreAPI is the subset of *store.Store the server uses.
@@ -39,6 +40,10 @@ type StoreAPI interface {
 	CreateKey(ctx context.Context, n store.NewKey) (store.APIKey, error)
 	ListKeys(ctx context.Context) ([]store.APIKey, error)
 	RevokeKey(ctx context.Context, id string) error
+	FindKeyBySecretHash(ctx context.Context, hash string) (*store.APIKey, error)
+	SetKeySecret(ctx context.Context, id, hash, prefix string) error
+	MarkWidgetVerified(ctx context.Context, keyID, id string) (store.WidgetReport, error)
+	WidgetReportCorrelation(ctx context.Context, keyID, id string, window time.Duration) (store.WidgetCorrelation, error)
 }
 
 // IntelAPI is the subset of *ipintel.Service the server uses.
@@ -69,6 +74,9 @@ type Deps struct {
 	Rand     func() float64
 
 	WidgetAssets fs.FS
+
+	// Signing holds the widget token signing keys.
+	Signing *widgettoken.Keyring
 }
 
 type server struct {
@@ -114,7 +122,14 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /admin/keys/{id}", s.route("admin", admin(http.HandlerFunc(s.handleRevokeKey))))
 	mux.Handle("GET /admin/keys/{id}/canvas-probe", s.route("admin", admin(http.HandlerFunc(s.handleCanvasProbeReport))))
 	mux.Handle("GET /admin/keys/{id}/widget", s.route("admin", admin(http.HandlerFunc(s.handleWidgetSummary))))
+	mux.Handle("POST /admin/keys/{id}/secret", s.route("admin", admin(http.HandlerFunc(s.handleRotateSecret))))
 
+	if d.Signing != nil {
+		mux.Handle("GET /widget/v1/jwks.json", s.route("widget_jwks", s.globalCORS(http.HandlerFunc(s.handleWidgetJWKS))))
+		// Server-to-server: authenticated by the key's secret, so no CORS
+		// and no x-api-key.
+		mux.Handle("POST /widget/v1/siteverify", s.route("widget_siteverify", s.bodyLimit(http.HandlerFunc(s.handleSiteverify))))
+	}
 	if d.WidgetAssets != nil {
 		if wa, err := newWidgetAssets(d.WidgetAssets); err != nil {
 			d.Logger.Error("server: widget assets unusable; widget routes disabled", "err", err)

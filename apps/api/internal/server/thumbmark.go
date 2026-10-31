@@ -314,24 +314,7 @@ func (s *server) handleThumbmark(w http.ResponseWriter, r *http.Request) {
 	merged := fingerprint.Merge(body.components, filterServer(sc, body.components, opts))
 	thumbmark := fingerprint.Hash(merged)
 
-	in := classify.Input{
-		IP:                    lookup,
-		HasTLS:                hasTLS,
-		UserAgent:             r.Header.Get("User-Agent"),
-		AcceptLanguagePresent: r.Header.Get("Accept-Language") != "",
-		JA4Families:           s.ja4Families(ctx, ja4),
-	}
-	if loc, ok := body.components["locales"].(map[string]any); ok {
-		in.Timezone, _ = loc["timezone"].(string)
-	}
-	if priv, ok := body.components["privacy"].(map[string]any); ok {
-		in.Webdriver, _ = priv["webdriver"].(bool)
-	}
-	h2fpStr := ""
-	if view.H2 != nil {
-		h2fpStr = h2fp.Akamai(view.H2)
-		in.H2Fingerprint = h2fpStr
-	}
+	in, h2fpStr := s.classifyInput(r, view, body.components, lookup, ja4)
 	braveFlag := false
 	if sys, ok := body.components["system"].(map[string]any); ok {
 		if br, ok := sys["browser"].(map[string]any); ok {
@@ -464,4 +447,29 @@ func (s *server) countParseErrors(ctx context.Context, view conn.HolderView) {
 		parseErrorsTotal.WithLabelValues("h2").Inc()
 		s.Logger.Warn("server: h2 fingerprint unavailable", "err", view.H2Error, "request_id", requestIDFrom(ctx))
 	}
+}
+
+// classifyInput builds the classifier input for a request from its connection
+// view, client components, IP lookup and JA4, and returns the h2 fingerprint
+// string ("" without HTTP/2).
+func (s *server) classifyInput(r *http.Request, view conn.HolderView, comps map[string]any, lookup ipintel.Lookup, ja4 string) (classify.Input, string) {
+	in := classify.Input{
+		IP:                    lookup,
+		HasTLS:                view.TLS != nil || ja4 != "", // same rule as handleThumbmark's hasTLS
+		UserAgent:             r.Header.Get("User-Agent"),
+		AcceptLanguagePresent: r.Header.Get("Accept-Language") != "",
+		JA4Families:           s.ja4Families(r.Context(), ja4),
+	}
+	if loc, ok := comps["locales"].(map[string]any); ok {
+		in.Timezone, _ = loc["timezone"].(string)
+	}
+	if priv, ok := comps["privacy"].(map[string]any); ok {
+		in.Webdriver, _ = priv["webdriver"].(bool)
+	}
+	h2fpStr := ""
+	if view.H2 != nil {
+		h2fpStr = h2fp.Akamai(view.H2)
+		in.H2Fingerprint = h2fpStr
+	}
+	return in, h2fpStr
 }
