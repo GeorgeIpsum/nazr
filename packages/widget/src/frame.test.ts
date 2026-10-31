@@ -24,7 +24,7 @@ interface Opts {
   search?: string;
   challenge?: string | null;
   fetchImpl?: () => Promise<Response>;
-  solveImpl?: (id: string, bits: number) => Promise<string>;
+  solveImpl?: (id: string, bits: number, signal?: AbortSignal) => Promise<string>;
 }
 
 function makeDeps(o: Opts = {}) {
@@ -184,8 +184,9 @@ describe("reportFromFrame interactive step", () => {
     ]);
     expect(solve.mock.calls).toEqual([
       [ID, 8],
-      [ID, 12],
+      [ID, 12, expect.any(AbortSignal)],
     ]);
+    expect((solve.mock.calls[1] as unknown[])[2]).toHaveProperty("aborted", false);
     expect(fetch).toHaveBeenCalledTimes(2);
     const [url, init] = fetch.mock.calls[1] as unknown as [string, RequestInit];
     expect(url).toBe("/widget/interact");
@@ -294,23 +295,35 @@ describe("reportFromFrame interactive step", () => {
     expect(messages[2]).toEqual({ type: "nazr:error", reason: "network" });
   });
 
-  it("fails with invalid once the staged challenge expires before the click", async () => {
-    vi.useFakeTimers({ now: 1_000_000_000_000 });
+  it("fails with invalid once the offer's ttl_ms passes before the click", async () => {
+    // The frame's clock is far from the challenge's exp: only ttl_ms counts.
+    vi.useFakeTimers({ now: 5_000_000_000_000 });
     try {
       const staged = `${b64url(JSON.stringify({ id: ID, exp: 1_000_000_060, bits: 12 }))}.mac`;
-      const { deps, fetch, messages } = makeDeps({
+      // The interactive solve never finishes on its own: only the abort ends its worker.
+      const { deps, fetch, solve, messages } = makeDeps({
         search: "?k=nzr_x&i=1",
         fetchImpl: sequence({
           verdict: "inconclusive",
-          interactive: { challenge: staged, bits: 12 },
+          interactive: { challenge: staged, bits: 12, ttl_ms: 60_000 },
         }),
+        solveImpl: (_id, bits, signal) =>
+          bits === 12
+            ? new Promise<string>((_, reject) => {
+                signal?.addEventListener("abort", () => reject(signal.reason));
+              })
+            : Promise.resolve("42"),
       });
       const done = reportFromFrame(deps);
       const b = await button();
       await vi.advanceTimersByTimeAsync(59_000);
       expect(messages).toHaveLength(2);
+      const signal = (solve.mock.calls[1] as unknown[])[2] as AbortSignal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal.aborted).toBe(false);
       await vi.advanceTimersByTimeAsync(1_000);
       await done;
+      expect(signal.aborted).toBe(true);
       expect(messages).toEqual([
         { type: "nazr:challenge", id: ID },
         { type: "nazr:interactive" },
@@ -321,6 +334,35 @@ describe("reportFromFrame interactive step", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(messages).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["without ttl_ms", {}],
+    ["with a string ttl_ms", { ttl_ms: "60000" }],
+  ])("arms no expiry timer for an offer %s", async (_name, extra) => {
+    vi.useFakeTimers();
+    try {
+      // An exp long past would have expired the box under the old wall-clock check.
+      const staged = `${b64url(JSON.stringify({ id: ID, exp: 1, bits: 12 }))}.mac`;
+      const { deps, fetch, messages } = makeDeps({
+        search: "?k=nzr_x&i=1",
+        fetchImpl: sequence(
+          { verdict: "inconclusive", interactive: { challenge: staged, bits: 12, ...extra } },
+          { verdict: "interactive", token: "t.o.k" },
+        ),
+      });
+      const done = reportFromFrame(deps);
+      const b = await button();
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(messages).toHaveLength(2);
+      press(b);
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(messages[2]).toEqual({ type: "nazr:token", token: "t.o.k" });
     } finally {
       vi.useRealTimers();
     }

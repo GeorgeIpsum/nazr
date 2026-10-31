@@ -15,7 +15,8 @@ export interface FrameDeps {
   location: Location;
   fetch: typeof fetch;
   getThumbmark: typeof getThumbmark;
-  solve: (id: string, bits: number) => Promise<string>;
+  /** Solves the proof-of-work; an abort on signal stops the work and rejects. */
+  solve: (id: string, bits: number, signal?: AbortSignal) => Promise<string>;
   post: (msg: FrameMessage) => void;
   doc: Document | null;
   now: () => number;
@@ -24,6 +25,8 @@ export interface FrameDeps {
 interface InteractiveOffer {
   challenge: string;
   bits: number;
+  /** The challenge's remaining life by the server's clock; absent when the server sent none. */
+  ttlMs?: number;
 }
 
 const REASONS = ["inconclusive", "pow_failed", "invalid"] as const;
@@ -32,13 +35,18 @@ const INTERACT_REASONS = ["interactive_failed", "invalid"] as const;
 
 function asOffer(v: unknown): InteractiveOffer | null {
   if (typeof v !== "object" || v === null) return null;
-  const { challenge, bits } = v as { challenge?: unknown; bits?: unknown };
+  const { challenge, bits, ttl_ms } = v as {
+    challenge?: unknown;
+    bits?: unknown;
+    ttl_ms?: unknown;
+  };
   if (typeof challenge !== "string" || challenge === "" || typeof bits !== "number") return null;
-  return { challenge, bits };
+  const ttlMs = typeof ttl_ms === "number" && Number.isFinite(ttl_ms) ? ttl_ms : undefined;
+  return { challenge, bits, ttlMs };
 }
 
 /** Decodes the payload segment (base64url JSON) before the first dot; null when malformed. */
-function challengePayload(challenge: string): { id?: unknown; exp?: unknown } | null {
+function challengePayload(challenge: string): { id?: unknown } | null {
   try {
     let b64 = challenge.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
     while (b64.length % 4) b64 += "=";
@@ -129,22 +137,27 @@ async function interact(
   deps.post({ type: "nazr:interactive" });
   const ui = renderInteractive(doc, deps.now);
   await ui.shown;
-  const solution = deps.solve(id, offer.bits);
-  // Observed below, after the click; keep an early failure from surfacing as unhandled.
+  const abort = new AbortController();
+  const solution = deps.solve(id, offer.bits, abort.signal);
+  // Observed below, after the click; keep an early failure (or the abort) from surfacing as
+  // unhandled.
   solution.catch(() => {});
 
-  // The staged challenge's exp is wall-clock seconds; once it passes the server would answer
-  // invalid, so fail the box then instead of waiting for a click that cannot succeed.
-  const exp = challengePayload(offer.challenge)?.exp;
+  // ttl_ms is how long the staged challenge has left by the server's clock; once it passes the
+  // server would answer invalid, so fail the box then instead of waiting for a click that
+  // cannot succeed. The frame's own clock is never compared with exp, so a skewed clock cannot
+  // cut the box short. Without ttl_ms no timer is armed.
+  const ttl = offer.ttlMs;
   let expiry: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<null>((resolve) => {
-    if (typeof exp !== "number" || !Number.isFinite(exp)) return;
-    const ms = Math.min(Math.max(0, exp * 1000 - Date.now()), maxTimerMs);
-    expiry = setTimeout(() => resolve(null), ms);
+    if (ttl === undefined) return;
+    expiry = setTimeout(() => resolve(null), Math.min(Math.max(0, ttl), maxTimerMs));
   });
   const trace = await Promise.race([ui.activated, expired]);
   clearTimeout(expiry);
   if (trace === null) {
+    // Nothing will redeem the solution now, so stop the worker.
+    abort.abort();
     ui.setState("failed");
     deps.post({ type: "nazr:error", reason: "invalid" });
     return;

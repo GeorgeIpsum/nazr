@@ -243,16 +243,20 @@ type widgetOutcome struct {
 type interactiveOffer struct {
 	Challenge string `json:"challenge"`
 	Bits      int    `json:"bits"`
+	// TTLMS is the challenge's remaining life in milliseconds by the
+	// server's clock, so the frame can time it out without trusting its own.
+	TTLMS int64 `json:"ttl_ms"`
 }
 
 // interactiveOffer mints the interactive-stage challenge for ch with the
 // secret of the key that signed ch: same id, expiry, signing key, API key and
-// origin, at the configured extra difficulty.
-func (s *server) interactiveOffer(ch widgettoken.Challenge, secret []byte) *interactiveOffer {
+// origin, at the configured extra difficulty. now is the handler's clock.
+func (s *server) interactiveOffer(ch widgettoken.Challenge, secret []byte, now time.Time) *interactiveOffer {
 	next := ch
 	next.Bits = s.Cfg.PowBits + s.Cfg.WidgetInteractiveExtraBits
 	next.Stage = widgettoken.StageInteractive
-	return &interactiveOffer{Challenge: widgettoken.MintChallenge(secret, next), Bits: next.Bits}
+	ttl := max(ch.Expires*1000-now.UnixMilli(), 0)
+	return &interactiveOffer{Challenge: widgettoken.MintChallenge(secret, next), Bits: next.Bits, TTLMS: ttl}
 }
 
 // widgetReportBody is a decoded, bounds-checked report.
@@ -388,7 +392,7 @@ func (s *server) processWidgetReport(r *http.Request) widgetOutcome {
 		out := widgetOutcome{Verdict: verdict}
 		if verdict == verdictInconclusive && !cls.Bot && s.Cfg.WidgetInteractive {
 			if k, ok := s.Signing.Lookup(ch.Kid); ok {
-				out.Interactive = s.interactiveOffer(ch, k.Secret)
+				out.Interactive = s.interactiveOffer(ch, k.Secret, now)
 			}
 		}
 		return out

@@ -1404,7 +1404,9 @@ func TestWidgetReportInteractiveOffer(t *testing.T) {
 		t.Fatalf("outcome %v", out)
 	}
 	offer, _ := out["interactive"].(map[string]any)
-	if offer == nil || len(offer) != 2 || fmt.Sprint(offer["bits"]) != strconv.Itoa(e.cfg.PowBits+4) {
+	// ttl_ms is the challenge's remaining life by the server's clock.
+	if offer == nil || len(offer) != 3 || fmt.Sprint(offer["bits"]) != strconv.Itoa(e.cfg.PowBits+4) ||
+		fmt.Sprint(offer["ttl_ms"]) != "600000" {
 		t.Fatalf("offer %v", out["interactive"])
 	}
 	got, err := widgettoken.ParseChallenge(offer["challenge"].(string), func(kid string) ([]byte, bool) {
@@ -1422,6 +1424,15 @@ func TestWidgetReportInteractiveOffer(t *testing.T) {
 	if rep := e.store.reports[0]; rep.Verdict != "inconclusive" || rep.TokenIssuedAt != nil {
 		t.Fatalf("report %+v", rep)
 	}
+
+	// Reported four minutes after the frame minted it: six minutes left.
+	ch, id = mintTestChallenge(t, e, "https://shop.example")
+	e.now = testNow.Add(4 * time.Minute)
+	out = postReport(t, e, widgetBody(t, e, ch, id), noLang)
+	if offer, _ := out["interactive"].(map[string]any); offer == nil || fmt.Sprint(offer["ttl_ms"]) != "360000" {
+		t.Fatalf("late offer %v", out["interactive"])
+	}
+	e.now = testNow
 
 	// A bot is not offered the step.
 	ch, id = mintTestChallenge(t, e, "https://shop.example")
