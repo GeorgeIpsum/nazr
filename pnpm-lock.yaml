@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@types/node':
+      specifier: 26.6.5
+      version: 26.6.5
+
 importers:
 
   .:
@@ -79,7 +85,7 @@ importers:
         specifier: ^21.1.6
         version: 21.1.7
       '@types/node':
-        specifier: ^26.6.5
+        specifier: 'catalog:'
         version: 26.6.5
       '@types/ua-parser-js':
         specifier: ^0.7.39
