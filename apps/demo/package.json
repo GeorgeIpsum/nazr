@@ -16,8 +16,8 @@
     "@nazr/thumbmark": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "^1.57.0",
-    "jose": "^6.2.14",
+    "@playwright/test": "^1.65.0",
+    "jose": "^6.2.16",
     "typescript": "^5.9.0",
     "vite": "^6.0.0",
     "vitest": "^3.0.0"
