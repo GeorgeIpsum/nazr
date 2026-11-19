@@ -15,8 +15,8 @@
     "smoke:compose": "bash deploy/compose/smoke.sh"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.3",
-    "turbo": "^2.11.10",
+    "@biomejs/biome": "^2.6.8",
+    "turbo": "^2.11.11",
     "typescript": "^5.9.0"
   }
 }
